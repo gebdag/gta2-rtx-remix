@@ -432,17 +432,46 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope, 
 
     // The far side of a flat panel: the opposite face's tile, on the panel's own
     // plane, facing the other way.
+    //
+    // The corners have to be in the slot order belonging to the face whose tile
+    // is being drawn, not the one whose plane it borrows. Each orientation table
+    // is written against its own face's slot order, and left and right number
+    // their corners in opposite directions - left starts at the foot, right at
+    // the top - so handing one the other's ordering turns the artwork upside
+    // down. The game keeps them straight by giving each side its own helper:
+    // FUN_00470060 draws the left tile in left order, FUN_00470250 the right
+    // tile in right order.
     if (backOfPanel(block.right, block.left)) {
-        builder->AddFace(block.right, leftCorners, kEast, kRightFlags);
+        builder->AddFace(block.right,
+                         {{{xWest, yNW, zNorth},     // v0 top    (x, y)
+                           {xWest, base, zNorth},    // v1 bottom (x, y)
+                           {xWest, base, zSouth},    // v2 bottom (x, y+1)
+                           {xWest, ySW, zSouth}}},   // v3 top    (x, y+1)
+                         kEast, kRightFlags);
     }
     if (backOfPanel(block.left, block.right)) {
-        builder->AddFace(block.left, rightCorners, kWest, kLeftFlags);
+        builder->AddFace(block.left,
+                         {{{xEast, base, zNorth},    // v0 bottom (x+1, y)
+                           {xEast, yNE, zNorth},     // v1 top    (x+1, y)
+                           {xEast, ySE, zSouth},     // v2 top    (x+1, y+1)
+                           {xEast, base, zSouth}}},  // v3 bottom (x+1, y+1)
+                         kWest, kLeftFlags);
     }
     if (backOfPanel(block.bottom, block.top)) {
-        builder->AddFace(block.bottom, topCorners, kSouth, kBottomFlags);
+        builder->AddFace(block.bottom,
+                         {{{xWest, yNW, zNorth},     // v0 top    (x,   y)
+                           {xEast, yNE, zNorth},     // v1 top    (x+1, y)
+                           {xEast, base, zNorth},    // v2 bottom (x+1, y)
+                           {xWest, base, zNorth}}},  // v3 bottom (x,   y)
+                         kSouth, kBottomFlags);
     }
     if (backOfPanel(block.top, block.bottom)) {
-        builder->AddFace(block.top, bottomCorners, kNorth, kTopFlags);
+        builder->AddFace(block.top,
+                         {{{xWest, base, zSouth},    // v0 bottom (x,   y+1)
+                           {xEast, base, zSouth},    // v1 bottom (x+1, y+1)
+                           {xEast, ySE, zSouth},     // v2 top    (x+1, y+1)
+                           {xWest, ySW, zSouth}}},   // v3 top    (x,   y+1)
+                         kNorth, kTopFlags);
     }
 }
 
