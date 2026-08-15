@@ -1,0 +1,12 @@
+# Build output
+build/
+build_plain/
+*.obj
+*.exp
+*.lib
+*.pdb
+*.ilk
+*.dll
+
+# Local shortcuts
+*.lnk

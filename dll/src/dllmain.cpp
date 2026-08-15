@@ -1,0 +1,503 @@
+// gta2dx9.dll - in-process renderer for GTA2, loaded via the `rendername`
+// registry value.
+//
+// Two modes, selected by gta2dx9.ini next to the game:
+//   backend=3dfx.dll  mode=proxy     forward everything to the original renderer
+//   mode=takeover                    own the device and draw the world ourselves
+//
+// Proxy is the default so a bad build can never leave the game unbootable.
+//
+// Every export is __stdcall: the originals end in `ret N`. The argument counts
+// below come from those epilogues, and getting one wrong unbalances the stack.
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <intrin.h>
+
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+
+#include "game_access.h"
+#include "live_geometry.h"
+#include "log.h"
+#include "texture_store.h"
+#include "world_view.h"
+
+using gta2dx9::Log;
+
+namespace {
+
+enum class Mode { Proxy, Takeover };
+
+Mode g_mode = Mode::Proxy;
+char g_backendName[MAX_PATH] = "3dfx.dll";
+HMODULE g_backend = nullptr;
+void* g_system = nullptr;
+gta2dx9::WorldView g_world;
+bool g_worldFailed = false;
+
+// gbh_GetGlobals hands the game a counter block; the original exposes polys and
+// texture swaps drawn this frame.
+struct Globals {
+    int polygons = 0;
+    int textureSwaps = 0;
+    int spare[6] = {};
+} g_globals;
+
+void PathBesideGame(const char* leaf, char* out, size_t size) {
+    GetModuleFileNameA(nullptr, out, static_cast<DWORD>(size));
+    char* slash = strrchr(out, '\\');
+    if (slash) strcpy(slash + 1, leaf);
+    else strncpy(out, leaf, size - 1);
+}
+
+#define SLOT(name) void* g_p_##name = nullptr;
+SLOT(gbh_InitDLL) SLOT(gbh_CloseDLL) SLOT(gbh_Init) SLOT(gbh_DrawTile) SLOT(gbh_DrawTilePart)
+SLOT(gbh_DrawQuad) SLOT(gbh_DrawQuadClipped) SLOT(gbh_DrawTriangle) SLOT(gbh_Plot)
+SLOT(gbh_SetWindow) SLOT(gbh_PrintBitmap) SLOT(gbh_SetColourDepth) SLOT(gbh_GetGlobals)
+SLOT(gbh_ConvertColour) SLOT(gbh_RegisterTexture) SLOT(gbh_BeginScene) SLOT(gbh_EndScene)
+SLOT(gbh_BeginLevel) SLOT(gbh_EndLevel) SLOT(ConvertColourBank) SLOT(DrawLine)
+SLOT(MakeScreenTable) SLOT(SetShadeTableA) SLOT(gbh_UnlockTexture) SLOT(gbh_RegisterPalette)
+SLOT(gbh_FreePalette) SLOT(gbh_FreeTexture) SLOT(gbh_AssignPalette) SLOT(gbh_LockTexture)
+SLOT(gbh_GetUsedCache) SLOT(gbh_SetCamera) SLOT(gbh_ResetLights) SLOT(gbh_AddLight)
+SLOT(gbh_SetAmbient) SLOT(gbh_InitImageTable) SLOT(gbh_FreeImageTable) SLOT(gbh_LoadImage)
+SLOT(gbh_BlitImage) SLOT(gbh_BlitBuffer) SLOT(gbh_DrawFlatRect) SLOT(gbh_CloseScreen)
+SLOT(gbh_Convert16BitGraphic)
+#undef SLOT
+
+struct Binding { const char* name; void** slot; };
+
+const Binding kBindings[] = {
+#define BIND(name) {#name, &g_p_##name},
+    BIND(gbh_InitDLL) BIND(gbh_CloseDLL) BIND(gbh_Init) BIND(gbh_DrawTile) BIND(gbh_DrawTilePart)
+    BIND(gbh_DrawQuad) BIND(gbh_DrawQuadClipped) BIND(gbh_DrawTriangle) BIND(gbh_Plot)
+    BIND(gbh_SetWindow) BIND(gbh_PrintBitmap) BIND(gbh_SetColourDepth) BIND(gbh_GetGlobals)
+    BIND(gbh_ConvertColour) BIND(gbh_RegisterTexture) BIND(gbh_BeginScene) BIND(gbh_EndScene)
+    BIND(gbh_BeginLevel) BIND(gbh_EndLevel) BIND(ConvertColourBank) BIND(DrawLine)
+    BIND(MakeScreenTable) BIND(SetShadeTableA) BIND(gbh_UnlockTexture) BIND(gbh_RegisterPalette)
+    BIND(gbh_FreePalette) BIND(gbh_FreeTexture) BIND(gbh_AssignPalette) BIND(gbh_LockTexture)
+    BIND(gbh_GetUsedCache) BIND(gbh_SetCamera) BIND(gbh_ResetLights) BIND(gbh_AddLight)
+    BIND(gbh_SetAmbient) BIND(gbh_InitImageTable) BIND(gbh_FreeImageTable) BIND(gbh_LoadImage)
+    BIND(gbh_BlitImage) BIND(gbh_BlitBuffer) BIND(gbh_DrawFlatRect) BIND(gbh_CloseScreen)
+    BIND(gbh_Convert16BitGraphic)
+#undef BIND
+};
+
+void LoadConfig() {
+    char ini[MAX_PATH];
+    PathBesideGame("gta2dx9.ini", ini, sizeof(ini));
+    GetPrivateProfileStringA("renderer", "backend", "3dfx.dll", g_backendName,
+                             sizeof(g_backendName), ini);
+    char mode[32] = {};
+    GetPrivateProfileStringA("renderer", "mode", "proxy", mode, sizeof(mode), ini);
+    g_mode = _stricmp(mode, "takeover") == 0 ? Mode::Takeover : Mode::Proxy;
+
+    // Tenths of a degree, because the ini API only reads integers.
+    const int pitch = GetPrivateProfileIntA("camera", "pitch_tenths", -900, ini);
+    const int fov = GetPrivateProfileIntA("camera", "fov_tenths", 400, ini);
+    const bool gameTiles = GetPrivateProfileIntA("renderer", "use_game_tiles", 1, ini) != 0;
+    g_world.Configure(pitch / 10.0f, fov / 10.0f, gameTiles);
+
+    Log("mode=%s backend=%s", g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName);
+}
+
+bool BindBackend() {
+    g_backend = LoadLibraryA(g_backendName);
+    if (!g_backend) {
+        Log("FATAL: cannot load backend '%s' (error %lu)", g_backendName, GetLastError());
+        return false;
+    }
+    int missing = 0;
+    for (const Binding& binding : kBindings) {
+        *binding.slot = reinterpret_cast<void*>(GetProcAddress(g_backend, binding.name));
+        if (!*binding.slot) ++missing;
+    }
+    Log("backend bound, %d missing", missing);
+    return true;
+}
+
+bool Proxying() { return g_mode == Mode::Proxy; }
+
+template <typename Fn>
+Fn Backend(void* slot) { return reinterpret_cast<Fn>(slot); }
+
+using gta2dx9::TextureRecord;
+
+WNDPROC g_originalWndProc = nullptr;
+
+// Alt+F4 does not necessarily reach gbh_CloseScreen, so the device is also
+// released straight off the window's own close message. Without this the game
+// exits its loop while D3D9 still holds the window, leaving the process alive
+// and the desktop in a half-torn-down state.
+LRESULT CALLBACK ClosingWndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_CLOSE || message == WM_DESTROY) {
+        Log("window closing (msg %u): releasing renderer", message);
+        g_world.Shutdown();
+    }
+    return CallWindowProc(g_originalWndProc, window, message, wparam, lparam);
+}
+
+void HookWindowClose(HWND window) {
+    if (g_originalWndProc || !window) return;
+    g_originalWndProc = reinterpret_cast<WNDPROC>(
+        SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ClosingWndProc)));
+}
+
+}  // namespace
+
+extern "C" {
+
+__declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
+    g_system = system;
+    Log("gbh_InitDLL(system=%p)", system);
+    LoadConfig();
+    if (Proxying()) {
+        if (BindBackend() && g_p_gbh_InitDLL) {
+            Backend<void(__stdcall*)(void*)>(g_p_gbh_InitDLL)(system);
+        }
+        Log("proxy live");
+    } else {
+        Log("takeover mode: the original renderer is not loaded");
+    }
+}
+
+// Both teardown paths release the device. The game closes the screen before it
+// destroys its window, and leaving a live D3D9 device attached to a window that
+// is going away keeps the process alive after Alt+F4 with the display left in a
+// half-torn-down state.
+__declspec(dllexport) void __stdcall gbh_CloseScreen(void* param) {
+    g_world.Shutdown();
+    if (Proxying() && g_p_gbh_CloseScreen) {
+        Backend<void(__stdcall*)(void*)>(g_p_gbh_CloseScreen)(param);
+    }
+}
+
+__declspec(dllexport) void __stdcall gbh_CloseDLL() {
+    g_world.Shutdown();
+    if (Proxying() && g_p_gbh_CloseDLL) Backend<void(__stdcall*)()>(g_p_gbh_CloseDLL)();
+}
+
+__declspec(dllexport) int __stdcall gbh_Init(int param) {
+    if (Proxying() && g_p_gbh_Init) return Backend<int(__stdcall*)(int)>(g_p_gbh_Init)(param);
+
+    HWND window = game::MainWindow();
+    RECT client = {};
+    GetClientRect(window, &client);
+    const int width = client.right > 0 ? client.right : 640;
+    const int height = client.bottom > 0 ? client.bottom : 480;
+
+    std::string error;
+    if (!g_world.Initialize(window, width, height, &error)) {
+        Log("world view init failed: %s", error.c_str());
+        g_worldFailed = true;
+        return 0;  // Report success anyway; a black frame beats aborting the game.
+    }
+    HookWindowClose(window);
+    Log("world view up on hwnd %p at %dx%d", window, width, height);
+    return 0;
+}
+
+// Intercepted rather than ignored: the texture the game passes identifies the
+// tile it believes belongs at the cell it is drawing, which is the ground truth
+// our own map walk is checked against.
+__declspec(dllexport) void __stdcall gbh_DrawTile(unsigned flags, void* texture, float* vertices,
+                                                  unsigned char shade) {
+    if (Proxying() && g_p_gbh_DrawTile) {
+        Backend<void(__stdcall*)(unsigned, void*, float*, unsigned char)>(g_p_gbh_DrawTile)(
+            flags, texture, vertices, shade);
+        return;
+    }
+    g_world.CheckDrawnTile(texture);
+}
+
+__declspec(dllexport) void __stdcall gbh_BeginScene() {
+    if (Proxying() && g_p_gbh_BeginScene) { Backend<void(__stdcall*)()>(g_p_gbh_BeginScene)(); return; }
+    g_world.BeginFrame();
+}
+
+__declspec(dllexport) void __stdcall gbh_EndScene() {
+    if (Proxying() && g_p_gbh_EndScene) { Backend<void(__stdcall*)()>(g_p_gbh_EndScene)(); return; }
+    if (!g_worldFailed) g_world.RenderFrame();
+}
+
+__declspec(dllexport) void __stdcall gbh_BeginLevel() {
+    if (Proxying() && g_p_gbh_BeginLevel) { Backend<void(__stdcall*)()>(g_p_gbh_BeginLevel)(); return; }
+    g_world.InvalidateWorld();
+}
+
+__declspec(dllexport) void __stdcall gbh_EndLevel() {
+    if (Proxying() && g_p_gbh_EndLevel) { Backend<void(__stdcall*)()>(g_p_gbh_EndLevel)(); return; }
+    g_world.InvalidateWorld();
+}
+
+__declspec(dllexport) void __stdcall gbh_SetCamera(float minX, float minY, float maxX, float maxY) {
+    if (Proxying() && g_p_gbh_SetCamera) {
+        Backend<void(__stdcall*)(float, float, float, float)>(g_p_gbh_SetCamera)(minX, minY, maxX, maxY);
+        return;
+    }
+    g_world.SetVisibleTileBounds(minX, minY, maxX, maxY);
+}
+
+__declspec(dllexport) void* __stdcall gbh_RegisterTexture(unsigned short width, unsigned short height,
+                                                          void* pixels, int palette, char flag) {
+    if (Proxying() && g_p_gbh_RegisterTexture) {
+        return Backend<void*(__stdcall*)(unsigned short, unsigned short, void*, int, char)>(
+            g_p_gbh_RegisterTexture)(width, height, pixels, palette, flag);
+    }
+    TextureRecord* record = static_cast<TextureRecord*>(calloc(1, sizeof(TextureRecord)));
+    if (record) {
+        record->width = width;
+        record->height = height;
+        record->palette = static_cast<uint16_t>(palette);
+        record->paletteLow = static_cast<uint8_t>(palette);
+        record->pixels = pixels;
+    }
+    return record;
+}
+
+__declspec(dllexport) void __stdcall gbh_FreeTexture(void* texture) {
+    if (Proxying() && g_p_gbh_FreeTexture) { Backend<void(__stdcall*)(void*)>(g_p_gbh_FreeTexture)(texture); return; }
+    gta2dx9::ForgetDeviceTexture(texture);
+    free(texture);
+}
+
+__declspec(dllexport) void __stdcall gbh_LockTexture(void* texture) {
+    if (Proxying() && g_p_gbh_LockTexture) { Backend<void(__stdcall*)(void*)>(g_p_gbh_LockTexture)(texture); return; }
+    if (texture) static_cast<TextureRecord*>(texture)->flags |= 1;
+}
+
+// The game edits a texture's pixels between lock and unlock, so an unlock is
+// the signal that any cached copy of it is stale.
+__declspec(dllexport) void __stdcall gbh_UnlockTexture(void* texture) {
+    if (Proxying() && g_p_gbh_UnlockTexture) { Backend<void(__stdcall*)(void*)>(g_p_gbh_UnlockTexture)(texture); return; }
+    if (!texture) return;
+    TextureRecord* record = static_cast<TextureRecord*>(texture);
+    record->flags &= ~1;
+    ++record->revision;  // invalidates any cached copy of its pixels
+}
+
+__declspec(dllexport) void __stdcall gbh_AssignPalette(void* texture, int palette) {
+    if (Proxying() && g_p_gbh_AssignPalette) {
+        Backend<void(__stdcall*)(void*, int)>(g_p_gbh_AssignPalette)(texture, palette);
+        return;
+    }
+    if (!texture) return;
+    TextureRecord* record = static_cast<TextureRecord*>(texture);
+    record->palette = static_cast<uint16_t>(palette);
+    record->paletteLow = static_cast<uint8_t>(palette);
+}
+
+__declspec(dllexport) void __stdcall gbh_RegisterPalette(int index, unsigned* palette) {
+    gta2dx9::StorePalette(index, palette);
+    if (Proxying() && g_p_gbh_RegisterPalette) {
+        Backend<void(__stdcall*)(int, unsigned*)>(g_p_gbh_RegisterPalette)(index, palette);
+    }
+}
+
+__declspec(dllexport) void __stdcall gbh_FreePalette(int index) {
+    if (Proxying() && g_p_gbh_FreePalette) Backend<void(__stdcall*)(int)>(g_p_gbh_FreePalette)(index);
+}
+
+__declspec(dllexport) unsigned __stdcall gbh_ConvertColour(unsigned r, unsigned g, unsigned b) {
+    if (Proxying() && g_p_gbh_ConvertColour) {
+        return Backend<unsigned(__stdcall*)(unsigned, unsigned, unsigned)>(g_p_gbh_ConvertColour)(r, g, b);
+    }
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);  // 5:6:5
+}
+
+__declspec(dllexport) void* __stdcall gbh_GetGlobals() {
+    if (Proxying() && g_p_gbh_GetGlobals) return Backend<void*(__stdcall*)()>(g_p_gbh_GetGlobals)();
+    return &g_globals;
+}
+
+__declspec(dllexport) int __stdcall gbh_GetUsedCache(int bank) {
+    if (Proxying() && g_p_gbh_GetUsedCache) return Backend<int(__stdcall*)(int)>(g_p_gbh_GetUsedCache)(bank);
+    return 0;
+}
+
+// Not an opaque handle: the game passes the return value straight back to
+// gbh_BlitImage as an index into the image table (gta2.exe!FUN_00453020), and
+// the original returns -1 on failure.
+__declspec(dllexport) void* __stdcall gbh_LoadImage(void* spec) {
+    if (Proxying() && g_p_gbh_LoadImage) return Backend<void*(__stdcall*)(void*)>(g_p_gbh_LoadImage)(spec);
+    const int index = g_world.GetOverlay().LoadImage(spec);
+    return reinterpret_cast<void*>(static_cast<intptr_t>(index));
+}
+
+// ---------------------------------------------------------------------------
+// The screen-space stream: HUD, menus and sprites.
+//
+// GTA2 transforms these itself and hands over D3DFVF_XYZRHW-style vertices, so
+// they cannot join the world mesh. Ignoring them - which is what this DLL used
+// to do - is why the menus, the HUD and every car and pedestrian were missing.
+// They are replayed as a 2D pass over the world instead.
+// ---------------------------------------------------------------------------
+
+// Sprites - cars, pedestrians, powerups - and the 2D UI share this entry point,
+// so they are told apart by which call site reached it: the object draw
+// (FUN_004be060) is the only producer of world sprites. Those are placed as real
+// 3D geometry from the world coordinates the game itself computed; the rest is
+// genuine 2D and goes to the screen-space pass.
+__declspec(dllexport) void __stdcall gbh_DrawQuad(unsigned flags, void* texture, float* vertices,
+                                                  unsigned char shade) {
+    if (Proxying() && g_p_gbh_DrawQuad) {
+        Backend<void(__stdcall*)(unsigned, void*, float*, unsigned char)>(g_p_gbh_DrawQuad)(
+            flags, texture, vertices, shade);
+        return;
+    }
+    if (game::IsObjectDraw(_ReturnAddress())) {
+        g_world.Live().AddSprite(flags, texture, vertices, 4);
+        return;
+    }
+    g_world.GetOverlay().Quad(flags, texture, vertices, shade);
+}
+
+// The original ignores the extra argument and shares gbh_DrawQuad's body.
+__declspec(dllexport) void __stdcall gbh_DrawQuadClipped(unsigned flags, void* texture,
+                                                         float* vertices, unsigned char shade,
+                                                         int clip) {
+    if (Proxying() && g_p_gbh_DrawQuadClipped) {
+        Backend<void(__stdcall*)(unsigned, void*, float*, unsigned char, int)>(
+            g_p_gbh_DrawQuadClipped)(flags, texture, vertices, shade, clip);
+        return;
+    }
+    if (game::IsObjectDraw(_ReturnAddress())) {
+        g_world.Live().AddSprite(flags, texture, vertices, 4);
+        return;
+    }
+    g_world.GetOverlay().Quad(flags, texture, vertices, shade);
+}
+
+// Not UI at all: the only caller is FUN_0046c210, the triangular half-wall of a
+// partial block, so this is map geometry and belongs in the world.
+__declspec(dllexport) void __stdcall gbh_DrawTriangle(unsigned flags, void* texture,
+                                                      float* vertices, unsigned char shade) {
+    if (Proxying() && g_p_gbh_DrawTriangle) {
+        Backend<void(__stdcall*)(unsigned, void*, float*, unsigned char)>(g_p_gbh_DrawTriangle)(
+            flags, texture, vertices, shade);
+        return;
+    }
+    // World geometry, and the static mesh already builds it, so the stream is
+    // ignored exactly the way gbh_DrawTile is.
+    (void)flags; (void)texture; (void)vertices; (void)shade;
+}
+
+__declspec(dllexport) void __stdcall gbh_DrawFlatRect(float* vertices, unsigned colour) {
+    if (Proxying() && g_p_gbh_DrawFlatRect) {
+        Backend<void(__stdcall*)(float*, unsigned)>(g_p_gbh_DrawFlatRect)(vertices, colour);
+        return;
+    }
+    g_world.GetOverlay().FlatRect(vertices, colour);
+}
+
+__declspec(dllexport) void __stdcall gbh_SetWindow(int a, int b, int c, int d) {
+    if (Proxying() && g_p_gbh_SetWindow) {
+        Backend<void(__stdcall*)(int, int, int, int)>(g_p_gbh_SetWindow)(a, b, c, d);
+        return;
+    }
+    g_world.GetOverlay().NoteWindow(a, b, c, d);
+}
+
+__declspec(dllexport) void __stdcall gbh_InitImageTable(int count) {
+    if (Proxying() && g_p_gbh_InitImageTable) {
+        Backend<void(__stdcall*)(int)>(g_p_gbh_InitImageTable)(count);
+        return;
+    }
+    g_world.GetOverlay().InitImageTable(count);
+}
+
+__declspec(dllexport) void __stdcall gbh_FreeImageTable() {
+    if (Proxying() && g_p_gbh_FreeImageTable) { Backend<void(__stdcall*)()>(g_p_gbh_FreeImageTable)(); return; }
+    g_world.GetOverlay().FreeImageTable();
+}
+
+__declspec(dllexport) void __stdcall gbh_BlitImage(int image, int srcX1, int srcY1, int srcX2,
+                                                   int srcY2, int dstX, int dstY) {
+    if (Proxying() && g_p_gbh_BlitImage) {
+        Backend<void(__stdcall*)(int, int, int, int, int, int, int)>(g_p_gbh_BlitImage)(
+            image, srcX1, srcY1, srcX2, srcY2, dstX, dstY);
+        return;
+    }
+    g_world.GetOverlay().BlitImage(image, srcX1, srcY1, srcX2, srcY2, dstX, dstY);
+}
+
+__declspec(dllexport) void __stdcall DrawLine(int x1, int y1, int x2, int y2, int colour) {
+    if (Proxying() && g_p_DrawLine) {
+        Backend<void(__stdcall*)(int, int, int, int, int)>(g_p_DrawLine)(x1, y1, x2, y2, colour);
+        return;
+    }
+    g_world.GetOverlay().Line(x1, y1, x2, y2, static_cast<uint32_t>(colour));
+}
+
+__declspec(dllexport) void __stdcall gbh_Plot(int x, int y, int colour, int spare) {
+    if (Proxying() && g_p_gbh_Plot) {
+        Backend<void(__stdcall*)(int, int, int, int)>(g_p_gbh_Plot)(x, y, colour, spare);
+        return;
+    }
+    g_world.GetOverlay().Line(x, y, x + 1, y, static_cast<uint32_t>(colour));
+}
+
+// The remaining entry points either drive the screen-space draw stream, which is
+// unusable for path tracing, or the software UI surface we do not present.
+#define PASSTHROUGH_0(name)                                                    \
+    __declspec(dllexport) void __stdcall name() {                              \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)()>(g_p_##name)(); \
+    }
+#define PASSTHROUGH_1(name, T0)                                                \
+    __declspec(dllexport) void __stdcall name(T0 a) {                          \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0)>(g_p_##name)(a); \
+    }
+#define PASSTHROUGH_2(name, T0, T1)                                            \
+    __declspec(dllexport) void __stdcall name(T0 a, T1 b) {                    \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0, T1)>(g_p_##name)(a, b); \
+    }
+#define PASSTHROUGH_3(name, T0, T1, T2)                                        \
+    __declspec(dllexport) void __stdcall name(T0 a, T1 b, T2 c) {              \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0, T1, T2)>(g_p_##name)(a, b, c); \
+    }
+#define PASSTHROUGH_4(name, T0, T1, T2, T3)                                    \
+    __declspec(dllexport) void __stdcall name(T0 a, T1 b, T2 c, T3 d) {        \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0, T1, T2, T3)>(g_p_##name)(a, b, c, d); \
+    }
+#define PASSTHROUGH_5(name, T0, T1, T2, T3, T4)                                \
+    __declspec(dllexport) void __stdcall name(T0 a, T1 b, T2 c, T3 d, T4 e) {  \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0, T1, T2, T3, T4)>(g_p_##name)(a, b, c, d, e); \
+    }
+#define PASSTHROUGH_6(name, T0, T1, T2, T3, T4, T5)                            \
+    __declspec(dllexport) void __stdcall name(T0 a, T1 b, T2 c, T3 d, T4 e, T5 f) { \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0, T1, T2, T3, T4, T5)>(g_p_##name)(a, b, c, d, e, f); \
+    }
+#define PASSTHROUGH_7(name, T0, T1, T2, T3, T4, T5, T6)                        \
+    __declspec(dllexport) void __stdcall name(T0 a, T1 b, T2 c, T3 d, T4 e, T5 f, T6 g) { \
+        if (Proxying() && g_p_##name) Backend<void(__stdcall*)(T0, T1, T2, T3, T4, T5, T6)>(g_p_##name)(a, b, c, d, e, f, g); \
+    }
+
+// gbh_DrawTilePart shares gbh_DrawTile's implementation in the original, so it
+// is world geometry too and is ignored for the same reason.
+PASSTHROUGH_4(gbh_DrawTilePart, unsigned, void*, float*, unsigned char)
+PASSTHROUGH_1(gbh_PrintBitmap, void*)
+PASSTHROUGH_0(gbh_SetColourDepth)
+PASSTHROUGH_1(ConvertColourBank, int)
+PASSTHROUGH_3(MakeScreenTable, void*, unsigned, int)
+PASSTHROUGH_5(SetShadeTableA, int, int, int, int, int)
+// Lighting is Remix's job, so the game's own light list is deliberately unused.
+PASSTHROUGH_0(gbh_ResetLights)
+PASSTHROUGH_1(gbh_AddLight, void*)
+PASSTHROUGH_1(gbh_SetAmbient, float)
+PASSTHROUGH_6(gbh_BlitBuffer, int, int, int, int, int, int)
+PASSTHROUGH_2(gbh_Convert16BitGraphic, int, int)
+
+}  // extern "C"
+
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(module);
+        gta2dx9::OpenLog();
+        Log("gta2dx9.dll attached to pid %lu", GetCurrentProcessId());
+    } else if (reason == DLL_PROCESS_DETACH) {
+        gta2dx9::CloseLog();
+    }
+    return TRUE;
+}
