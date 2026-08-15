@@ -55,6 +55,11 @@ public:
     // belongs at that cell, to locate a placement mismatch.
     void CheckDrawnTile(const void* textureRecord);
 
+    // Logs the world-space corners the game itself computed for a face of an
+    // awkward block shape, so the mesh builder's idea of that shape can be
+    // checked against the game rather than against a reading of its code.
+    void CheckDrawnShape(int corners);
+
 private:
     bool EnsureWorldLoaded();
     void RefreshAnimatedTiles();
@@ -80,6 +85,7 @@ private:
     float visibleTiles_ = 0.0f;
     bool useGameTiles_ = true;
     int tileChecks_ = 0;
+    int shapeChecks_ = 0;
 
     // What the artwork for each tile was last taken from, so an animated tile
     // can be spotted and re-uploaded.

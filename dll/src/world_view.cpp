@@ -412,6 +412,33 @@ void WorldView::CheckDrawnTile(const void* textureRecord) {
     ++tileChecks_;
 }
 
+// The game writes each projected vertex's absolute world position four slots
+// further along the vertex array, so the shape it actually draws for a block can
+// be read straight off. Positions are in the game's own frame: x east, y south,
+// z the level.
+void WorldView::CheckDrawnShape(int corners) {
+    const int slopeType = game::CurrentBlockSlopeType();
+    if (slopeType < 45 || slopeType > 61) return;
+    if (shapeChecks_ >= 40) return;
+
+    float cellX = 0.0f, cellY = 0.0f;
+    int level = 0;
+    if (!game::CurrentCell(&cellX, &cellY, &level)) return;
+
+    char line[320];
+    int used = snprintf(line, sizeof(line), "shape type=%d cell=(%.0f,%.0f) lvl=%d %s", slopeType,
+                        cellX, cellY, level, corners == 3 ? "tri" : "quad");
+    for (int i = 0; i < corners && used > 0 && used < static_cast<int>(sizeof(line)) - 40; ++i) {
+        const float* world = reinterpret_cast<const float*>(
+            game::kTileVertexArray +
+            static_cast<uintptr_t>(i + game::kWorldShadowSlots) * game::kVertexStride);
+        used += snprintf(line + used, sizeof(line) - used, "  (%.3f %.3f %.3f)", world[0], world[1],
+                         world[2]);
+    }
+    Log("%s", line);
+    ++shapeChecks_;
+}
+
 void WorldView::RenderFrame() {
     if (!ready_) return;
     EnsureWorldLoaded();

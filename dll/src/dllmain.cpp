@@ -209,6 +209,7 @@ __declspec(dllexport) void __stdcall gbh_DrawTile(unsigned flags, void* texture,
             flags, texture, vertices, shade);
         return;
     }
+    g_world.CheckDrawnShape(4);
     g_world.CheckDrawnTile(texture);
 }
 
@@ -380,8 +381,10 @@ __declspec(dllexport) void __stdcall gbh_DrawTriangle(unsigned flags, void* text
         return;
     }
     // World geometry, and the static mesh already builds it, so the stream is
-    // ignored exactly the way gbh_DrawTile is.
+    // ignored exactly the way gbh_DrawTile is - but it is the only place the
+    // awkward block shapes show their real corners, so they are logged.
     (void)flags; (void)texture; (void)vertices; (void)shade;
+    g_world.CheckDrawnShape(3);
 }
 
 __declspec(dllexport) void __stdcall gbh_DrawFlatRect(float* vertices, unsigned colour) {
