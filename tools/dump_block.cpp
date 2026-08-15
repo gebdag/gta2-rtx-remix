@@ -60,7 +60,9 @@ int main(int argc, char** argv) {
                              argc > 3 ? argv[3] : "<GTA2 folder>\\data\\wil.sty");
     }
     const int type = argc > 1 ? atoi(argv[1]) : 49;
-    const char* stylePath = argc > 2 ? argv[2] : "<GTA2 folder>\\data\\wil.sty";
+    const char* stylePath = (argc > 2 && argv[2][0] != '-')
+                                ? argv[2]
+                                : "<GTA2 folder>\\data\\wil.sty";
 
     // One block at cell (0,0); every other cell points at an empty column.
     std::vector<uint8_t> columns(64, 0);
@@ -76,8 +78,13 @@ int main(int argc, char** argv) {
         memcpy(&base[cell * 4], &word, 4);
     }
 
+    bool lidless = false;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-lidless") == 0) lidless = true;
+    }
     std::vector<uint8_t> blocks(24, 0);
-    const uint16_t faces[5] = {1, 2, 3, 4, 5};  // left, right, top, bottom, lid
+    // Tile 0x3FF on a lid means "no lid", which selects the other shape.
+    const uint16_t faces[5] = {1, 2, 3, 4, static_cast<uint16_t>(lidless ? 0x3FF : 5)};
     memcpy(&blocks[0], faces, sizeof(faces));
     blocks[11] = static_cast<uint8_t>(type << 2);
 

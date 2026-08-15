@@ -370,80 +370,126 @@ void AddDiagonalBlock(MeshBuilder* builder, const Block& block, int slopeType, f
     if (block.lid) builder->AddFace(block.lid, lid, {0.0f, 1.0f, 0.0f}, *lidTable);
 }
 
-// Slope types 49-52: a corner ramp. Two sides stay solid full height, the lid
-// covers three quarters of the cell as a triangle, and the fourth corner is
-// chamfered away by a slanted triangle running from the diagonal down to that
-// corner's foot (gta2.exe 0x0046E910 and its three siblings, reached through the
-// dispatcher FUN_0046ee40).
+// Slope types 49-52: corner ramps, reached through the dispatcher FUN_0046ee40.
 //
-// Decoded from 0x0046E910, which is type 49: the east and south walls are drawn
-// whole, then the left face's tile is drawn as a triangle whose corners are the
-// north-east corner at the top, the north-west corner at its foot, and the
-// south-west corner at the top, with texture coordinates (0,0), (32,64) and
-// (64,0). The lid uses view-rotation state 0, which drops the north-west corner.
-// The other three types are the same shape turned round, and they pair with the
-// diagonals exactly: 49 with 45, 50 with 46, 51 with 47, 52 with 48.
+// There are *two* shapes per type, chosen by whether the lid tile is 0x3FF, and
+// they are not rotations of one another:
+//
+//   with a lid (0x0046E910 and its siblings) - two walls whole, a triangular
+//     lid over three corners, and the fourth chamfered off by a triangle
+//     running from the diagonal at the top down to that corner's foot;
+//   without one (0x0046E490 and its siblings) - the opposite half of the cell:
+//     a peak at one corner, the diagonal lying on the floor, and the two walls
+//     sloping away from the peak.
+//
+// Type 49 was decoded from the disassembly at 0x0046E910; the lidless shape was
+// confirmed against the world coordinates the running game computed for a type
+// 52 block. Four blocks in five are the lidless one (81 of 99 in `wil`), so
+// building only the lidded shape put nearly every corner piece in upside down.
 void AddCornerRampBlock(MeshBuilder* builder, const Block& block, int slopeType, float xWest,
                         float xEast, float zNorth, float zSouth, float base) {
-    const float top = base + 1.0f;
     // Corner order is north-west, north-east, south-east, south-west.
-    const Vec3 high[4] = {{xWest, top, zNorth},
-                          {xEast, top, zNorth},
-                          {xEast, top, zSouth},
-                          {xWest, top, zSouth}};
-    const Vec3 low[4] = {{xWest, base, zNorth},
-                         {xEast, base, zNorth},
-                         {xEast, base, zSouth},
-                         {xWest, base, zSouth}};
+    const float cornerX[4] = {xWest, xEast, xEast, xWest};
+    const float cornerZ[4] = {zNorth, zNorth, zSouth, zSouth};
+    auto at = [&](int corner, float height) {
+        return Vec3{cornerX[corner], base + height, cornerZ[corner]};
+    };
 
-    int cut = 0;                  // the corner that is chamfered away
-    const Face* face = nullptr;   // whose tile the slanted triangle wears
-    const uint8_t (*lidTable)[8] = &kDiagLidDropNw;
-    std::array<Vec3, 4> lid{};
+    // The corner each type is built around, and with it the two walls that stay
+    // solid - always the pair facing away from it. The tile for the cut comes
+    // from the west face for a western corner, the east face for an eastern one.
+    static const int kSpecial[4] = {0, 1, 3, 2};  // types 49, 50, 51, 52
+    const int special = kSpecial[slopeType - 49];
+    const bool westCorner = special == 0 || special == 3;
+    const Face& cutFace = westCorner ? block.left : block.right;
 
-    switch (slopeType) {
-        case 49:  // solid to the east and south, corner cut off to the north-west
-            cut = 0;
-            face = &block.left;
-            lidTable = &kDiagLidDropNw;
-            lid = {high[1], high[2], high[3], high[1]};
-            if (block.right) builder->AddFace(block.right, {{high[1], low[1], low[2], high[2]}}, {1.0f, 0.0f, 0.0f}, kRightFlags);
-            if (block.bottom) builder->AddFace(block.bottom, {{high[3], high[2], low[2], low[3]}}, {0.0f, 0.0f, -1.0f}, kBottomFlags);
-            break;
-        case 50:  // solid to the west and south, cut to the north-east
-            cut = 1;
-            face = &block.right;
-            lidTable = &kDiagLidDropNeSw;
-            lid = {high[0], high[2], high[2], high[3]};
-            if (block.left) builder->AddFace(block.left, {{low[0], high[0], high[3], low[3]}}, {-1.0f, 0.0f, 0.0f}, kLeftFlags);
-            if (block.bottom) builder->AddFace(block.bottom, {{high[3], high[2], low[2], low[3]}}, {0.0f, 0.0f, -1.0f}, kBottomFlags);
-            break;
-        case 51:  // solid to the east and north, cut to the south-west
-            cut = 3;
-            face = &block.left;
-            lidTable = &kDiagLidDropNeSw;
-            lid = {high[0], high[1], high[2], high[0]};
-            if (block.right) builder->AddFace(block.right, {{high[1], low[1], low[2], high[2]}}, {1.0f, 0.0f, 0.0f}, kRightFlags);
-            if (block.top) builder->AddFace(block.top, {{low[0], low[1], high[1], high[0]}}, {0.0f, 0.0f, 1.0f}, kTopFlags);
-            break;
-        default:  // 52: solid to the west and north, cut to the south-east
-            cut = 2;
-            face = &block.right;
-            lidTable = &kDiagLidDropSe;
-            lid = {high[3], high[0], high[1], high[3]};
-            if (block.left) builder->AddFace(block.left, {{low[0], high[0], high[3], low[3]}}, {-1.0f, 0.0f, 0.0f}, kLeftFlags);
-            if (block.top) builder->AddFace(block.top, {{low[0], low[1], high[1], high[0]}}, {0.0f, 0.0f, 1.0f}, kTopFlags);
-            break;
+    const bool lidless = block.lid.Tile() == 0x3FF;
+    const int peak = (special + 2) & 3;
+
+    // Corner heights: whole all round for the lidded shape; for the other one
+    // raised at the peak and flat elsewhere, which is what the game expresses by
+    // sending its two walls through the ramp path with a single step.
+    float h[4];
+    for (int corner = 0; corner < 4; ++corner) {
+        h[corner] = lidless ? (corner == peak ? 1.0f : 0.0f) : 1.0f;
     }
-    // The two ends of the diagonal are the cut corner's neighbours; the apex is
-    // the cut corner itself, at the block's foot.
-    if (face && *face) {
-        const std::array<Vec3, 3> corners = {high[(cut + 1) & 3], low[cut], high[(cut + 3) & 3]};
-        const std::array<Uv, 3> uv = {
-            Uv{UvAt(0.0f), UvAt(0.0f)}, Uv{UvAt(0.5f), UvAt(1.0f)}, Uv{UvAt(1.0f), UvAt(0.0f)}};
-        builder->AddTriangle(*face, corners, uv);
+
+    // A wall a slope has shortened crops its texture rather than squashing it,
+    // exactly as an ordinary ramp does.
+    auto wall = [&](const Face& face, const std::array<Vec3, 4>& corners, Vec3 normal,
+                    const uint8_t (&table)[8], const int (&topSlots)[2], const float (&heights)[2],
+                    const int (&uOrder)[4]) {
+        if (!face) return;
+        if (heights[0] < 1.0f || heights[1] < 1.0f) {
+            builder->AddFaceUv(face, corners, normal,
+                               SlopedWallUvs(face, topSlots, heights, uOrder));
+        } else {
+            builder->AddFace(face, corners, normal, table);
+        }
+    };
+
+    const int leftTop[2] = {1, 2};
+    const int leftU[4] = {0, 0, 1, 1};
+    const int rightTop[2] = {0, 3};
+    const int rightU[4] = {1, 1, 0, 0};
+    const int northTop[2] = {2, 3};
+    const int southTop[2] = {0, 1};
+    const int alongX[4] = {0, 1, 1, 0};
+
+    if (westCorner) {  // 49 and 51 keep the east wall
+        const float heights[2] = {h[1], h[2]};
+        wall(block.right, {{at(1, h[1]), at(1, 0.0f), at(2, 0.0f), at(2, h[2])}},
+             {1.0f, 0.0f, 0.0f}, kRightFlags, rightTop, heights, rightU);
+    } else {  // 50 and 52 keep the west wall
+        const float heights[2] = {h[0], h[3]};
+        wall(block.left, {{at(0, 0.0f), at(0, h[0]), at(3, h[3]), at(3, 0.0f)}},
+             {-1.0f, 0.0f, 0.0f}, kLeftFlags, leftTop, heights, leftU);
     }
-    if (block.lid) builder->AddFace(block.lid, lid, {0.0f, 1.0f, 0.0f}, *lidTable);
+    if (special == 0 || special == 1) {  // 49 and 50 keep the south wall
+        const float heights[2] = {h[3], h[2]};
+        wall(block.bottom, {{at(3, h[3]), at(2, h[2]), at(2, 0.0f), at(3, 0.0f)}},
+             {0.0f, 0.0f, -1.0f}, kBottomFlags, southTop, heights, alongX);
+    } else {  // 51 and 52 keep the north wall
+        const float heights[2] = {h[1], h[0]};
+        wall(block.top, {{at(0, 0.0f), at(1, 0.0f), at(1, h[1]), at(0, h[0])}},
+             {0.0f, 0.0f, 1.0f}, kTopFlags, northTop, heights, alongX);
+    }
+
+    if (cutFace) {
+        if (lidless) {
+            // A peak: one corner at the top, the diagonal on the floor, and the
+            // tile's top edge pinched to the middle.
+            builder->AddTriangle(
+                cutFace, {at(peak, 1.0f), at((peak + 1) & 3, 0.0f), at((peak + 3) & 3, 0.0f)},
+                {Uv{UvAt(0.5f), UvAt(0.0f)}, Uv{UvAt(1.0f), UvAt(1.0f)},
+                 Uv{UvAt(0.0f), UvAt(1.0f)}});
+        } else {
+            // A chamfer: the diagonal along the top, dropping to the one corner.
+            builder->AddTriangle(
+                cutFace,
+                {at((special + 1) & 3, 1.0f), at(special, 0.0f), at((special + 3) & 3, 1.0f)},
+                {Uv{UvAt(0.0f), UvAt(0.0f)}, Uv{UvAt(0.5f), UvAt(1.0f)},
+                 Uv{UvAt(1.0f), UvAt(0.0f)}});
+        }
+    }
+
+    if (!lidless && block.lid) {
+        // The lid is the ordinary quad with one corner folded onto another,
+        // which is how the game turns it into a triangle (FUN_0046dfe0, the
+        // view-rotation states 0 to 3).
+        static const int kLidSlots[4][4] = {{1, 2, 3, 1},   // 49, drops north-west
+                                            {0, 2, 2, 3},   // 50, drops north-east
+                                            {0, 1, 2, 0},   // 51, drops south-west
+                                            {3, 0, 1, 3}};  // 52, drops south-east
+        const uint8_t(*lidTable)[8] = slopeType == 49   ? &kDiagLidDropNw
+                                      : slopeType == 52 ? &kDiagLidDropSe
+                                                        : &kDiagLidDropNeSw;
+        const int* slots = kLidSlots[slopeType - 49];
+        builder->AddFace(
+            block.lid,
+            {{at(slots[0], 1.0f), at(slots[1], 1.0f), at(slots[2], 1.0f), at(slots[3], 1.0f)}},
+            {0.0f, 1.0f, 0.0f}, *lidTable);
+    }
 }
 
 // Slope types 53-61: a plain box occupying only part of its cell. Which part is
