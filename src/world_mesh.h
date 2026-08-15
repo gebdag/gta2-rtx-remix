@@ -55,7 +55,16 @@ struct SlopeInfo {
 
 constexpr int kSlopeTypeCount = 64;
 
+// Where the cut falls in a partial or corner block (slope types 53-61), as a
+// fraction of the cell. Read from the game alongside the slope table; the
+// defaults are the quarter and three-quarter marks the shapes imply.
+struct PartialCuts {
+    float low = 0.25f;
+    float high = 0.75f;
+};
+
 // slopes may be null, in which case the ramp geometry is derived instead.
-void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes, WorldMesh* out);
+void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
+                    const PartialCuts& cuts, WorldMesh* out);
 
 }  // namespace gta2

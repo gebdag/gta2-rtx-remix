@@ -247,8 +247,27 @@ bool WorldView::EnsureWorldLoaded() {
         Log("slope table: %d ramp types read from the game", ramps);
     }
 
+    // Where a partial or corner block is cut, likewise straight from the game
+    // rather than assumed. The two outer constants are a sanity check: they must
+    // read as an empty and a whole cell, or the addresses are wrong.
+    gta2::PartialCuts cuts;
+    {
+        const float zero = game::CellFraction(game::kCellZeroPtr);
+        const float one = game::CellFraction(game::kCellOnePtr);
+        const float low = game::CellFraction(game::kCellLowPtr);
+        const float high = game::CellFraction(game::kCellHighPtr);
+        const bool sane = std::abs(zero) < 0.01f && std::abs(one - 1.0f) < 0.01f && low > 0.0f &&
+                          low < high && high < 1.0f;
+        if (sane) {
+            cuts.low = low;
+            cuts.high = high;
+        }
+        Log("partial block cuts: %.4f / %.4f (bounds %.4f..%.4f) %s", low, high, zero, one,
+            sane ? "accepted" : "REJECTED, using defaults");
+    }
+
     gta2::WorldMesh mesh;
-    gta2::BuildWorldMesh(map_, style, slopes.data(), &mesh);
+    gta2::BuildWorldMesh(map_, style, slopes.data(), cuts, &mesh);
     if (!renderer_.UploadWorld(mesh, style, &error)) {
         Log("world upload failed: %s", error.c_str());
         loadedMapObject_ = mapObject;

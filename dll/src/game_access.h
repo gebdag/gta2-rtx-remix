@@ -123,6 +123,20 @@ inline int CurrentBlockSlopeType() {
     return block ? (block[0x0B] >> 2) : 0;
 }
 
+// The cell fractions the partial and corner blocks are cut at (slope types
+// 53-61). The game passes these four as the wall extents in FUN_00471c30:
+// 0x006634B4 is 0, 0x00663450 is a whole cell, and the other two are where the
+// cut falls. Like the slope table they are built at startup, so they only exist
+// in the running process.
+constexpr uintptr_t kCellZeroPtr = 0x006634B4;
+constexpr uintptr_t kCellOnePtr = 0x00663450;
+constexpr uintptr_t kCellLowPtr = 0x006634FC;
+constexpr uintptr_t kCellHighPtr = 0x006635B8;
+
+inline float CellFraction(uintptr_t address) {
+    return *reinterpret_cast<const int32_t*>(address) * kFixedScale;
+}
+
 // Slope descriptors, twelve bytes per slope type: direction at +0, the number
 // of blocks the whole ramp climbs over at +1, and which of them this type is at
 // +2 (gta2.exe!FUN_00471ce0). The table is built at startup rather than stored
