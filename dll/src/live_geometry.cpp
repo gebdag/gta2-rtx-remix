@@ -82,11 +82,13 @@ bool LiveGeometry::ReadCorners(const float* vertices, int corners, const void* t
         const float* world = reinterpret_cast<const float*>(
             shadowBase + static_cast<uintptr_t>(i + game::kWorldShadowSlots) * game::kVertexStride);
         if (!std::isfinite(world[0]) || !std::isfinite(world[1]) || !std::isfinite(world[2])) {
+            ++drops_.notFinite;
             return false;
         }
         if (world[0] < -kWorldMargin || world[0] > gta2::kMapWidth + kWorldMargin ||
             world[1] < -kWorldMargin || world[1] > gta2::kMapHeight + kWorldMargin ||
             world[2] < kMinLevel || world[2] > kMaxLevel) {
+            ++drops_.outOfWorld;
             return false;
         }
         out[i].x = world[0];
@@ -102,7 +104,10 @@ bool LiveGeometry::ReadCorners(const float* vertices, int corners, const void* t
     const Vec e2{out[2].x - out[0].x, out[2].y - out[0].y, out[2].z - out[0].z};
     Vec n = Cross(e1, e2);
     const float length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
-    if (length < 1e-9f) return false;  // degenerate, nothing to draw
+    if (length < 1e-9f) {
+        ++drops_.degenerate;  // no area, nothing to draw
+        return false;
+    }
     n = {n.x / length, n.y / length, n.z / length};
     for (int i = 0; i < corners; ++i) {
         out[i].nx = n.x;
@@ -130,14 +135,20 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     if (!texture || !vertices) return;
     // With this flag only vertex 0 is filled in, so the other three shadow slots
     // still hold whatever the previous draw left there.
-    if (flags & quad_flags::kExpandFromTexture) return;
+    if (flags & quad_flags::kExpandFromTexture) {
+        ++drops_.expandFlag;
+        return;
+    }
 
     // The shadow slots only describe the game's *own* vertex array. FUN_004be060
     // also draws an object's drop shadow from a nudged stack copy of those
     // vertices, and pairing that copy with the unmoved world positions stretched
     // the sprite into a second, wrong polygon - the extra "sprouting" panels on
     // trees. Only the real array can be trusted here.
-    if (reinterpret_cast<uintptr_t>(vertices) != game::kSpriteVertexArray) return;
+    if (reinterpret_cast<uintptr_t>(vertices) != game::kSpriteVertexArray) {
+        ++drops_.notTheSpriteArray;
+        return;
+    }
 
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
@@ -146,6 +157,7 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     for (int i = 0; i < corners; ++i) out[i].y += kSpriteLift;
     Emit(sprites_, texture, out, corners);
     ++spriteQuads_;
+    ++drops_.accepted;
 
     // The game's own corner positions, straight out of the shadow slots and
     // before our axis swap, so the question "does GTA2 lift a sprite off the
@@ -212,11 +224,17 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
             const Batch& batch = entry.second;
             if (batch.vertices.empty()) continue;
             IDirect3DTexture9* texture = DeviceTextureFor(device, batch.texture);
-            if (!texture) continue;
+            if (!texture) {
+                // The sprite was accepted and then had no artwork to draw with:
+                // this is a sprite that vanishes for exactly one frame.
+                ++drops_.noTexture;
+                continue;
+            }
             device->SetTexture(0, texture);
             device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,
                                     static_cast<UINT>(batch.vertices.size() / 3),
                                     batch.vertices.data(), sizeof(Vertex));
+            drops_.drawn += static_cast<int>(batch.vertices.size() / 6);  // two tris per quad
         }
     }
 

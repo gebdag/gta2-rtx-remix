@@ -62,6 +62,29 @@ private:
     std::map<const void*, Batch> sprites_;
     int spriteQuads_ = 0;
     int spriteLogs_ = 0;
+
+public:
+    // Why sprites the game asked for did not reach the screen. Every one of
+    // these is a frame where something the player can see is simply absent.
+    struct Drops {
+        int accepted = 0;  // quads we took from the game
+        int drawn = 0;     // quads that actually reached the device
+        int expandFlag = 0;
+        int notTheSpriteArray = 0;
+        int notFinite = 0;
+        int outOfWorld = 0;
+        int degenerate = 0;
+        int noTexture = 0;
+        bool Quiet() const {
+            return !expandFlag && !notTheSpriteArray && !notFinite && !outOfWorld && !degenerate &&
+                   !noTexture;
+        }
+    };
+    const Drops& DropCounts() const { return drops_; }
+    void ClearDropCounts() { drops_ = Drops{}; }
+
+private:
+    mutable Drops drops_;
 };
 
 }  // namespace gta2dx9

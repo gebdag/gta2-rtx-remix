@@ -140,6 +140,23 @@ takes focus and the input still goes to the game; `RenderFrame` re-states
 `HWND_TOPMOST` every 64 frames and drains its messages by hand, because the game
 pumps only its own.
 
+### The world is Y-up, and Remix has to be told so
+
+`rtx.zUp` in `rtx.conf` must be **False**. This renderer builds its world Y-up -
+`Camera` uses `{0,1,0}` throughout and `LookAtLH`, and the mesh builder maps the
+game's level onto y - which is the Direct3D 9 default Remix already assumes.
+GTA2's own frame is z-up (x east, y south, z level) and it is tempting to set
+`rtx.zUp = True` to match the *game*, but nothing downstream of us sees the
+game's frame: Remix only ever sees the geometry we hand it.
+
+Getting it wrong tilts the whole world 90 degrees against Remix's sky and sun,
+which shows up as the ground not sitting under the sky once `rtx.skyMode` is on.
+It is not a geometry bug and there is nothing to fix in the mesh.
+
+Note this lives outside the repository, so a Remix reinstall or a settings save
+from the Remix UI can put it back - the UI writes to `user.conf`, which is parsed
+after `rtx.conf` and therefore wins.
+
 ### If the video device ever has to go too
 
 It did not come to this, but the interface is recovered and worth keeping: 22

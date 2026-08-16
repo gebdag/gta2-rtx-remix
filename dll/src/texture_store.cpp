@@ -19,24 +19,48 @@ constexpr int kTileSize = 64;
 // Reading them contiguously produces interleaved strips rather than a tile.
 constexpr int kPageStride = 256;
 
-std::map<int, std::vector<uint32_t>> g_palettes;
+// Where each palette lives inside the game's own palette pages, not a copy of
+// it. GTA2 registers a palette before it has filled the colours in - 74 of them
+// came back entirely black across a single level load - so a snapshot taken at
+// registration freezes whatever happened to be there at that instant. That is
+// what left cars flat black until something else forced their texture to
+// rebuild. Holding the pointer and reading the colours when a texture is
+// actually built means we always see what the game currently has.
+std::map<int, const uint32_t*> g_palettes;
+
+// Expanded on demand into one shared buffer; a texture build reads it once.
+uint32_t g_expanded[kPaletteEntries];
 
 }  // namespace
 
+TextureTrouble g_trouble;
+
 void StorePalette(int index, const uint32_t* source) {
     if (!source || index < 0) return;
-    std::vector<uint32_t>& palette = g_palettes[index];
-    palette.resize(kPaletteEntries);
-    for (int i = 0; i < kPaletteEntries; ++i) {
-        palette[i] = source[static_cast<size_t>(i) * kPaletteStride];
-    }
+    g_palettes[index] = source;
 }
+
+void ForgetPalette(int index) { g_palettes.erase(index); }
 
 int PaletteCount() { return static_cast<int>(g_palettes.size()); }
 
-const uint32_t* PaletteColours(int index) {
+// hasColour reports whether the game has actually filled this palette in yet;
+// entry 0 is the transparency key and is ignored for that.
+const uint32_t* PaletteColours(int index, bool* hasColour) {
     const auto found = g_palettes.find(index);
-    return found == g_palettes.end() ? nullptr : found->second.data();
+    if (found == g_palettes.end() || !found->second) {
+        if (hasColour) *hasColour = false;
+        return nullptr;
+    }
+    const uint32_t* page = found->second;
+    bool any = false;
+    for (int i = 0; i < kPaletteEntries; ++i) {
+        g_expanded[i] = page[static_cast<size_t>(i) * kPaletteStride];
+        if (i > 0 && (g_expanded[i] & 0x00FFFFFFu) != 0) any = true;
+    }
+    if (hasColour) *hasColour = any;
+    if (!any) ++g_trouble.paletteAllBlack;
+    return g_expanded;
 }
 
 namespace {
@@ -46,6 +70,8 @@ struct CachedTexture {
     uint16_t width = 0, height = 0;
     uint16_t palette = 0xFFFF;
     uint16_t revision = 0xFFFF;
+    const void* pixels = nullptr;
+    bool provisional = false;  // built before the game had filled the palette in
 };
 
 std::map<const void*, CachedTexture> g_deviceTextures;
@@ -57,8 +83,18 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     if (!device || !record || !record->pixels || !record->width || !record->height) return nullptr;
 
     CachedTexture& cached = g_deviceTextures[handle];
-    if (cached.texture && cached.width == record->width && cached.height == record->height &&
-        cached.palette == record->palette && cached.revision == record->revision) {
+    // A texture built from a palette the game had not filled in yet is kept but
+    // not trusted, so the next frame builds it again rather than leaving it
+    // black for good.
+    if (cached.texture && !cached.provisional && cached.width == record->width &&
+        cached.height == record->height && cached.palette == record->palette &&
+        cached.revision == record->revision) {
+        // The four fields the original cache keyed on can all be unchanged while
+        // the record has been pointed at different artwork: GTA2 recycles its
+        // texture records, and a record reused for another sprite of the same
+        // size and palette looks identical here. Counted rather than acted on
+        // for now, to find out whether it happens at all.
+        if (cached.pixels != record->pixels) ++g_trouble.pixelsMovedSilently;
         return cached.texture;
     }
 
@@ -73,11 +109,21 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
         return nullptr;
     }
 
-    const uint32_t* palette = PaletteColours(record->palette);
-    if (!palette) return nullptr;  // Retry once the game registers it.
+    bool paletteHasColour = false;
+    const uint32_t* palette = PaletteColours(record->palette, &paletteHasColour);
+    if (!palette) {
+        // Nothing to build from, so the caller draws nothing this frame: one
+        // frame of a missing sprite.
+        ++g_trouble.paletteMissing;
+        return nullptr;
+    }
+    if (record->flags & 1) ++g_trouble.builtWhileLocked;  // game is mid-rewrite
 
     D3DLOCKED_RECT locked;
-    if (FAILED(cached.texture->LockRect(0, &locked, nullptr, 0))) return nullptr;
+    if (FAILED(cached.texture->LockRect(0, &locked, nullptr, 0))) {
+        ++g_trouble.lockFailed;
+        return nullptr;
+    }
     const uint8_t* indices = static_cast<const uint8_t*>(record->pixels);
     for (int y = 0; y < record->height; ++y) {
         uint32_t* out =
@@ -94,6 +140,9 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     cached.height = record->height;
     cached.palette = record->palette;
     cached.revision = record->revision;
+    cached.pixels = record->pixels;
+    cached.provisional = !paletteHasColour;
+    ++g_trouble.built;
     return cached.texture;
 }
 
@@ -116,11 +165,10 @@ bool ResolveTileImage(int tileNumber, uint32_t* out) {
     if (!record || !record->pixels) return false;
     if (record->width != kTileSize || record->height != kTileSize) return false;
 
-    const auto palette = g_palettes.find(record->palette);
-    if (palette == g_palettes.end()) return false;
+    const uint32_t* colours = PaletteColours(record->palette);
+    if (!colours) return false;
 
     const uint8_t* indices = static_cast<const uint8_t*>(record->pixels);
-    const uint32_t* colours = palette->second.data();
     for (int y = 0; y < kTileSize; ++y) {
         const uint8_t* row = indices + static_cast<size_t>(y) * kPageStride;
         for (int x = 0; x < kTileSize; ++x) {

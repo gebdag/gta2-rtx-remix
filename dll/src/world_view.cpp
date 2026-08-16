@@ -593,6 +593,24 @@ void WorldView::RenderFrame() {
     if ((frameCount_ & 0xFF) == 0) {
         Log("frame %d: %d sprite quads", frameCount_, live_.SpriteQuads());
     }
+    // Anything here is a sprite the player should have seen and did not, or a
+    // texture built from artwork that was not ready.
+    if ((frameCount_ & 0x3F) == 0) {
+        const LiveGeometry::Drops& drops = live_.DropCounts();
+        // accepted != drawn is the flicker itself: a sprite the game asked for,
+        // that we took, that never reached the device.
+        if (!drops.Quiet() || !g_trouble.Quiet() || drops.accepted != drops.drawn) {
+            Log("sprite trouble @%d: accepted=%d drawn=%d | dropped expand=%d wrongarray=%d "
+                "nonfinite=%d outside=%d degenerate=%d notexture=%d | textures built=%d "
+                "nopalette=%d blackpalette=%d pixelsmoved=%d whilelocked=%d lockfail=%d",
+                frameCount_, drops.accepted, drops.drawn, drops.expandFlag, drops.notTheSpriteArray,
+                drops.notFinite, drops.outOfWorld, drops.degenerate, drops.noTexture,
+                g_trouble.built, g_trouble.paletteMissing, g_trouble.paletteAllBlack,
+                g_trouble.pixelsMovedSilently, g_trouble.builtWhileLocked, g_trouble.lockFailed);
+            live_.ClearDropCounts();
+            g_trouble = TextureTrouble{};
+        }
+    }
     if ((frameCount_ & 0x3F) == 0) DumpCameraStruct();
 }
 

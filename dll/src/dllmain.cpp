@@ -329,6 +329,9 @@ __declspec(dllexport) void __stdcall gbh_RegisterPalette(int index, unsigned* pa
 }
 
 __declspec(dllexport) void __stdcall gbh_FreePalette(int index) {
+    // We hold a pointer into the game's palette page rather than a copy, so this
+    // is where it stops being safe to read.
+    gta2dx9::ForgetPalette(index);
     if (Proxying() && g_p_gbh_FreePalette) Backend<void(__stdcall*)(int)>(g_p_gbh_FreePalette)(index);
 }
 
