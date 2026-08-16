@@ -142,20 +142,124 @@ std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir
     return dataDir + "\\" + stem + ".sty";
 }
 
+// A window of our own to present into.
+//
+// GTA2 sets DirectDraw up on its own window during startup, and on Windows 10
+// and 11 DirectDraw is itself implemented on Direct3D 9: it takes the window
+// into an exclusive fullscreen device before the renderer is even loaded. A
+// second swap chain on that same window is tolerated by Microsoft's D3D9 but
+// not by RTX Remix, whose Vulkan presentation never completes - the game hangs
+// on its first Present with the Remix runtime spinning. Presenting into a
+// window we own leaves DirectDraw in sole possession of the game's.
+//
+// It has to be a *child* of the game's window rather than a popup over it. A
+// popup loses the z-order the moment the game is activated, and DirectDraw's
+// empty primary surface is then what you see: black while the game has focus,
+// and the path traced picture only when you alt-tab away and the game's window
+// drops back down. A child window is always painted above its parent's client
+// area, so there is no ordering to lose, and it can never take the focus or the
+// input away from the game either.
+HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow mode) {
+    static bool registered = false;
+    HINSTANCE instance = GetModuleHandleA(nullptr);
+    if (!registered) {
+        WNDCLASSA wc = {};
+        wc.lpfnWndProc = DefWindowProcA;
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursorA(nullptr, IDC_ARROW);
+        wc.lpszClassName = "gta2dx9_present";
+        if (!RegisterClassA(&wc)) return nullptr;
+        registered = true;
+    }
+    if (!gameWindow) return nullptr;
+
+    // Without this the game's window is free to paint its own background over
+    // the child.
+    SetWindowLongA(gameWindow, GWL_STYLE, GetWindowLongA(gameWindow, GWL_STYLE) | WS_CLIPCHILDREN);
+
+    if (mode == PresentWindow::Child) {
+        // Child coordinates are relative to the parent's client area, which is
+        // the rectangle gbh_Init measured.
+        HWND window = CreateWindowExA(WS_EX_NOACTIVATE, "gta2dx9_present", "GTA2",
+                                      WS_CHILD | WS_VISIBLE, 0, 0, width, height, gameWindow,
+                                      nullptr, instance, nullptr);
+        if (window) {
+            SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+        return window;
+    }
+
+    // Topmost: a separate top-level window in the topmost band, which sits above
+    // the game's window even while the game is the activated one. A child cannot
+    // help against a video device that presents past the window manager
+    // altogether; this at least competes in the right band.
+    RECT where = {0, 0, width, height};
+    GetWindowRect(gameWindow, &where);
+    HWND window = CreateWindowExA(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                                  "gta2dx9_present", "GTA2", WS_POPUP, where.left, where.top,
+                                  where.right - where.left, where.bottom - where.top, nullptr,
+                                  nullptr, instance, nullptr);
+    if (!window) return nullptr;
+    ShowWindow(window, SW_SHOWNOACTIVATE);
+    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return window;
+}
+
 }  // namespace
 
-void WorldView::Configure(float pitchDegrees, float fovDegrees, bool useGameTiles) {
+void WorldView::Configure(float pitchDegrees, float fovDegrees, bool useGameTiles,
+                          PresentWindow present) {
     camera_.SetOrientation(0.0f, pitchDegrees * kDegreesToRadians);
     camera_.SetFovY(fovDegrees * kDegreesToRadians);
     useGameTiles_ = useGameTiles;
+    present_ = present;
     Log("camera pitch %.1f deg, fov %.1f deg; tile artwork from %s", pitchDegrees, fovDegrees,
         useGameTiles ? "the game" : "the style file");
 }
 
 bool WorldView::Initialize(HWND window, int width, int height, std::string* error) {
     dataDir_ = GameDirectory();
-    if (!renderer_.Initialize(window, width, height, error)) return false;
+    gameWindow_ = window;
+    window_ = window;
+    width_ = width;
+    height_ = height;
+    if (present_ != PresentWindow::GameWindow) {
+        window_ = CreatePresentWindow(window, width, height, present_);
+        Log("presenting into our own %s window %p over the game's %p",
+            present_ == PresentWindow::Child ? "child" : "topmost", window_, window);
+        if (!window_) window_ = window;
+    }
+    gta2::SetRendererTrace([](const char* line) { Log("d3d: %s", line); });
+    if (EnsureDevice()) return true;
+    *error = "device not up yet, retrying from the frame loop";
+    return false;
+}
+
+// The device does not necessarily come up on the first ask. Under RTX Remix the
+// runtime backing D3D9 is a separate 64-bit process that is still starting when
+// the game asks its renderer to initialise, and it only finishes once the game
+// has run its message loop for a moment - which first happens between frames.
+// Retrying from the frame loop is what gives it that moment; failing outright
+// here is what used to leave the game sitting at a black menu.
+bool WorldView::EnsureDevice() {
+    if (ready_) return true;
+    if (!window_ || deviceAttempts_ >= kMaxDeviceAttempts) return false;
+
+    ++deviceAttempts_;
+    std::string error;
+    if (!renderer_.Initialize(window_, width_, height_, &error)) {
+        // One line per attempt would be hundreds of them, so only the first and
+        // the last are worth keeping.
+        if (deviceAttempts_ == 1 || deviceAttempts_ == kMaxDeviceAttempts) {
+            Log("device not up on attempt %d: %s", deviceAttempts_, error.c_str());
+        }
+        return false;
+    }
     ready_ = true;
+    Log("world view up on hwnd %p at %dx%d after %d attempt(s)", window_, width_, height_,
+        deviceAttempts_);
     return true;
 }
 
@@ -163,11 +267,14 @@ void WorldView::Shutdown() {
     if (!ready_ && !loadedMapObject_) return;
     ready_ = false;
     loadedMapObject_ = nullptr;
+    const HWND ours = window_ != gameWindow_ ? window_ : nullptr;
+    window_ = nullptr;  // stops the frame loop bringing the device back up
     // Device-owned textures have to go before the device does.
     overlay_.ReleaseResources();
     live_.ReleaseResources();
     ReleaseDeviceTextures();
     renderer_.Shutdown();
+    if (ours) DestroyWindow(ours);
     Log("world view shut down, device released");
 }
 
@@ -440,7 +547,26 @@ void WorldView::CheckDrawnShape(int corners) {
 }
 
 void WorldView::RenderFrame() {
-    if (!ready_) return;
+    if (!EnsureDevice()) return;
+
+    if (window_ != gameWindow_) {
+        // The game pumps its own window, not ours, and an unpumped window is a
+        // hung one as far as Windows is concerned.
+        MSG message;
+        while (PeekMessageA(&message, window_, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageA(&message);
+        }
+        // The game is free to reorder or resize its own children; re-stating
+        // where ours belongs occasionally is cheaper than trusting it not to.
+        if ((frameCount_ & 0x3F) == 0) {
+            SetWindowPos(window_, present_ == PresentWindow::Topmost ? HWND_TOPMOST : HWND_TOP, 0, 0,
+                         width_, height_,
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW |
+                             (present_ == PresentWindow::Topmost ? SWP_NOMOVE : 0));
+        }
+    }
+
     EnsureWorldLoaded();
     RefreshAnimatedTiles();
     UpdateCamera();

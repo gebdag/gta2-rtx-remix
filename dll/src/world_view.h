@@ -18,12 +18,23 @@
 
 namespace gta2dx9 {
 
+// Where the renderer presents. GTA2 loads a *video* device alongside the render
+// device, and that is what owns the screen; these are the ways of getting out
+// from under it. own_window in gta2dx9.ini selects one.
+enum class PresentWindow {
+    GameWindow = 0,  // share the game's, which deadlocks Remix's first Present
+    Child = 1,       // a child of the game's window
+    Topmost = 2,     // a separate top-level window in the topmost band
+};
+
 class WorldView {
 public:
     // pitchDegrees: -90 looks straight down, matching GTA2's own view.
     // useGameTiles: take tile artwork from the running game rather than from our
     // own parse of the style file.
-    void Configure(float pitchDegrees, float fovDegrees, bool useGameTiles);
+    // ownWindow: present into a window of our own rather than the game's, which
+    // DirectDraw has already claimed.
+    void Configure(float pitchDegrees, float fovDegrees, bool useGameTiles, PresentWindow present);
 
     bool Initialize(HWND window, int width, int height, std::string* error);
     void Shutdown();
@@ -61,6 +72,7 @@ public:
     void CheckDrawnShape(int corners);
 
 private:
+    bool EnsureDevice();
     bool EnsureWorldLoaded();
     void RefreshAnimatedTiles();
     void UpdateCamera();
@@ -79,6 +91,16 @@ private:
     bool haveBounds_ = false;
     bool ready_ = false;
     int frameCount_ = 0;
+
+    // Where the device is to be created, kept because creating it can take more
+    // than one attempt; roughly ten seconds of frames before giving up.
+    static constexpr int kMaxDeviceAttempts = 600;
+    HWND window_ = nullptr;      // what we present into
+    HWND gameWindow_ = nullptr;  // what the game owns, and its video device with it
+    PresentWindow present_ = PresentWindow::Child;
+    int width_ = 0;
+    int height_ = 0;
+    int deviceAttempts_ = 0;
 
     float smoothedHeight_ = 0.0f;
     bool heightSettled_ = false;

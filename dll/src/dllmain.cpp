@@ -14,6 +14,7 @@
 #include <windows.h>
 
 #include <intrin.h>
+#include <psapi.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -36,7 +37,6 @@ char g_backendName[MAX_PATH] = "3dfx.dll";
 HMODULE g_backend = nullptr;
 void* g_system = nullptr;
 gta2dx9::WorldView g_world;
-bool g_worldFailed = false;
 
 // gbh_GetGlobals hands the game a counter block; the original exposes polys and
 // texture swaps drawn this frame.
@@ -98,7 +98,9 @@ void LoadConfig() {
     const int pitch = GetPrivateProfileIntA("camera", "pitch_tenths", -900, ini);
     const int fov = GetPrivateProfileIntA("camera", "fov_tenths", 400, ini);
     const bool gameTiles = GetPrivateProfileIntA("renderer", "use_game_tiles", 1, ini) != 0;
-    g_world.Configure(pitch / 10.0f, fov / 10.0f, gameTiles);
+    const int ownWindow = GetPrivateProfileIntA("renderer", "own_window", 1, ini);
+    g_world.Configure(pitch / 10.0f, fov / 10.0f, gameTiles,
+                      static_cast<gta2dx9::PresentWindow>(ownWindow));
 
     Log("mode=%s backend=%s", g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName);
 }
@@ -149,9 +151,32 @@ void HookWindowClose(HWND window) {
 
 extern "C" {
 
+// What is already in the process by the time the game reaches its renderer.
+// Under RTX Remix this is how you tell whether something else has already
+// dragged Direct3D 9 in and taken the window: whatever did so owns the display
+// before we exist, and our own device then loses the argument.
+void LogGraphicsModules() {
+    HMODULE modules[512];
+    DWORD needed = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &needed)) return;
+    const size_t count = needed / sizeof(HMODULE);
+    for (size_t i = 0; i < count; ++i) {
+        char path[MAX_PATH];
+        if (!GetModuleFileNameA(modules[i], path, MAX_PATH)) continue;
+        const char* leaf = strrchr(path, '\\');
+        leaf = leaf ? leaf + 1 : path;
+        if (_stricmp(leaf, "d3d9.dll") == 0 || _stricmp(leaf, "ddraw.dll") == 0 ||
+            _stricmp(leaf, "dxgi.dll") == 0 || _stricmp(leaf, "d3d9_remix.dll") == 0 ||
+            _stricmp(leaf, "dciman32.dll") == 0) {
+            Log("already loaded: %s", path);
+        }
+    }
+}
+
 __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
     g_system = system;
     Log("gbh_InitDLL(system=%p)", system);
+    LogGraphicsModules();
     LoadConfig();
     if (Proxying()) {
         if (BindBackend() && g_p_gbh_InitDLL) {
@@ -188,14 +213,20 @@ __declspec(dllexport) int __stdcall gbh_Init(int param) {
     const int width = client.right > 0 ? client.right : 640;
     const int height = client.bottom > 0 ? client.bottom : 480;
 
+    // Remix drives its runtime through window messages sent to the thread that
+    // owns the game window, so which thread that is matters.
+    const DWORD windowThread = GetWindowThreadProcessId(window, nullptr);
+    Log("gbh_Init: hwnd=%p client=%dx%d owner thread=%lu, we are thread=%lu", window, width, height,
+        windowThread, GetCurrentThreadId());
+
+    // Not fatal if the device is not up yet: RTX Remix needs the game's message
+    // loop to have run before it can hand one over, which has not happened at
+    // this point in startup. The frame loop keeps asking.
     std::string error;
     if (!g_world.Initialize(window, width, height, &error)) {
-        Log("world view init failed: %s", error.c_str());
-        g_worldFailed = true;
-        return 0;  // Report success anyway; a black frame beats aborting the game.
+        Log("world view init deferred: %s", error.c_str());
     }
     HookWindowClose(window);
-    Log("world view up on hwnd %p at %dx%d", window, width, height);
     return 0;
 }
 
@@ -220,7 +251,7 @@ __declspec(dllexport) void __stdcall gbh_BeginScene() {
 
 __declspec(dllexport) void __stdcall gbh_EndScene() {
     if (Proxying() && g_p_gbh_EndScene) { Backend<void(__stdcall*)()>(g_p_gbh_EndScene)(); return; }
-    if (!g_worldFailed) g_world.RenderFrame();
+    g_world.RenderFrame();
 }
 
 __declspec(dllexport) void __stdcall gbh_BeginLevel() {

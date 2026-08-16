@@ -1,9 +1,56 @@
 #include "renderer.h"
 
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 
 namespace gta2 {
 namespace {
+
+void (*g_trace)(const char*) = nullptr;
+
+void Trace(const char* format, ...) {
+    if (!g_trace) return;
+    char line[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    g_trace(line);
+}
+
+// Where Direct3D comes from, and it matters which copy.
+//
+// RTX Remix ships as a d3d9.dll dropped beside the game, so *anything* in the
+// process that asks the loader for "d3d9.dll" gets the Remix bridge client -
+// including GTA2's own DirectDraw layer, which initialises during startup long
+// before the renderer is loaded. That brings the Remix runtime up on a device
+// DirectDraw owns: a fullscreen A8R8G8B8 one the game never draws through.
+// Remix drives a single device per process, so ours arrives second, re-hooks the
+// window procedure out from under the bridge's message channel, and the game
+// hangs at the menu with the runtime still waiting on a handshake that can no
+// longer be answered.
+//
+// Renaming the bridge and asking for it by that name keeps every accidental
+// consumer on the system d3d9 and leaves the renderer's device the only one
+// Remix ever sees. The plain name is still tried, so a stock Remix drop-in and a
+// machine with no Remix at all both keep working.
+const char* const kD3D9Modules[] = {"d3d9_remix.dll", "d3d9.dll"};
+
+IDirect3D9* CreateD3D9() {
+    for (const char* name : kD3D9Modules) {
+        const HMODULE module = LoadLibraryA(name);
+        if (!module) continue;
+        using CreateFn = IDirect3D9*(WINAPI*)(UINT);
+        const auto create = reinterpret_cast<CreateFn>(GetProcAddress(module, "Direct3DCreate9"));
+        if (!create) continue;
+        if (IDirect3D9* d3d = create(D3D_SDK_VERSION)) {
+            Trace("Direct3D from %s", name);
+            return d3d;
+        }
+    }
+    return nullptr;
+}
 
 constexpr DWORD kWorldFvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1;
 
@@ -19,6 +66,8 @@ void SetMatrix(IDirect3DDevice9* device, D3DTRANSFORMSTATETYPE state, const Mat4
 }
 
 }  // namespace
+
+void SetRendererTrace(void (*sink)(const char*)) { g_trace = sink; }
 
 Renderer::~Renderer() { Shutdown(); }
 
@@ -54,17 +103,31 @@ bool Renderer::Initialize(HWND window, int width, int height, std::string* error
     width_ = width;
     height_ = height;
 
-    d3d_ = Direct3DCreate9(D3D_SDK_VERSION);
+    // Kept across a retry: creating the interface is what starts RTX Remix's
+    // runtime, and asking for it twice would start it twice.
     if (!d3d_) {
-        *error = "Direct3DCreate9 failed";
-        return false;
+        Trace("Direct3DCreate9...");
+        d3d_ = CreateD3D9();
+        if (!d3d_) {
+            *error = "Direct3DCreate9 failed";
+            return false;
+        }
+        Trace("Direct3DCreate9 -> %p", d3d_);
     }
+
+    // Only the first attempt is traced. Under RTX Remix this runs once a frame
+    // until the device takes, and one line per attempt would bury the log.
+    const bool trace = deviceAttempts_++ == 0;
 
     // A windowed backbuffer has to match the current display mode, and GTA2's
     // Glide wrapper may have switched the desktop to another depth while it
     // runs, so adopt whatever the adapter is in right now.
     D3DDISPLAYMODE displayMode = {};
-    d3d_->GetAdapterDisplayMode(D3DADAPTER_DEFAULT, &displayMode);
+    const HRESULT modeResult = d3d_->GetAdapterDisplayMode(D3DADAPTER_DEFAULT, &displayMode);
+    if (trace) {
+        Trace("display mode hr=0x%08lX %ux%u format=%d", static_cast<unsigned long>(modeResult),
+              displayMode.Width, displayMode.Height, static_cast<int>(displayMode.Format));
+    }
 
     D3DPRESENT_PARAMETERS pp = {};
     pp.BackBufferWidth = width;
@@ -78,6 +141,10 @@ bool Renderer::Initialize(HWND window, int width, int height, std::string* error
     pp.AutoDepthStencilFormat = D3DFMT_D24S8;
     pp.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
 
+    if (trace) {
+        Trace("CreateDevice hwnd=%p %dx%d windowed=%d fmt=%d", window, width, height,
+              (int)pp.Windowed, static_cast<int>(pp.BackBufferFormat));
+    }
     HRESULT hr = d3d_->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
                                     D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &device_);
     if (FAILED(hr)) {
@@ -85,12 +152,17 @@ bool Renderer::Initialize(HWND window, int width, int height, std::string* error
                                 D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &device_);
     }
     if (FAILED(hr)) {
+        // Not necessarily fatal. RTX Remix hands the interface back before the
+        // 64-bit runtime behind it can serve a device, and turns everything down
+        // with D3DERR_INVALIDCALL until it can; it only gets there once the game
+        // has run its own loop for a moment. The caller retries per frame.
         char message[160];
         snprintf(message, sizeof(message), "CreateDevice failed (hr=0x%08lX, display format=%d)",
                  static_cast<unsigned long>(hr), static_cast<int>(displayMode.Format));
         *error = message;
         return false;
     }
+    Trace("device created on attempt %d", deviceAttempts_);
     return true;
 }
 

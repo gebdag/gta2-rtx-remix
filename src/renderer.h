@@ -22,6 +22,11 @@ struct RenderStats {
     int triangles = 0;
 };
 
+// Optional trace sink for device bring-up. The in-process DLL points it at
+// gta2dx9.log so each D3D9 call can be timestamped and lined up against RTX
+// Remix's own bridge logs; the standalone viewer leaves it null.
+void SetRendererTrace(void (*sink)(const char*));
+
 class Renderer {
 public:
     ~Renderer();
@@ -70,6 +75,7 @@ private:
 
     int width_ = 0;
     int height_ = 0;
+    int deviceAttempts_ = 0;  // Initialize is retried until the device takes
     bool wireframe_ = false;
     DWORD cullMode_ = D3DCULL_CCW;
     RenderStats stats_;
