@@ -1,6 +1,7 @@
 #include "debug_overlay.h"
 
 #include "game_access.h"
+#include "live_geometry.h"
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
@@ -258,6 +259,77 @@ void DrawTuning() {
     ImGui::TextColored(LightsOverridesDirty() ? kWarn : kDim, "%d override(s) in %s%s",
                        static_cast<int>(LightsOverrides().size()), LightsOverridePath(),
                        LightsOverridesDirty() ? "  (unsaved)" : "");
+}
+
+void DrawSprites() {
+    float lift = SpriteLift();
+
+    ImGui::TextWrapped(
+        "GTA2 puts all four corners of a sprite's quad at the single level of the object "
+        "underneath, and its own renderers never depth tested, so a flat quad lying exactly in "
+        "the floor was fine. As real 3D geometry it is not: on a ramp the quad cuts straight "
+        "through the lid and the uphill half of the sprite vanishes into it. This lifts the whole "
+        "quad along its normal. It takes effect on the next frame -- sprites are rebuilt from the "
+        "game's stream every frame.");
+
+    ImGui::Spacing();
+    if (ImGui::SliderFloat("Sprite lift (blocks)", &lift, 0.0f, 0.5f, "%.3f")) {
+        SetSpriteLift(lift);
+    }
+    ImGui::SetItemTooltip("One block is one map tile, roughly 2 m at GTA2's scale.");
+
+    ImGui::Spacing();
+    ImGui::TextColored(kDim, "Measured over the shipped districts, on surfaces a sprite can "
+                             "actually stand on (road or pavement):");
+    if (ImGui::BeginTable("lifts", 4,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                              | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("lift");
+        ImGui::TableSetupColumn("clears, pedestrian");
+        ImGui::TableSetupColumn("clears, car");
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+
+        struct Row { float value; const char* ped; const char* car; const char* note; };
+        static const Row rows[] = {
+            {1.0f / 256.0f, "0%",     "0%",   "breaks coplanarity only; flat ground"},
+            {0.0625f,       "78%",    "0%",   "half the default"},
+            {0.125f,        "99.5%",  "78%",  "default -- every 7 degree ramp"},
+            {0.25f,         "100%",   "78%",  "buys nothing more for cars"},
+            {0.5f,          "100%",   "99.5%","covers 26 degree ramps, floats everything"},
+        };
+        for (const Row& r : rows) {
+            ImGui::PushID(&r);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            char label[24];
+            _snprintf(label, sizeof(label) - 1, "%.4f", r.value);
+            label[sizeof(label) - 1] = '\0';
+            if (ImGui::SmallButton(label)) SetSpriteLift(r.value);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.ped);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.car);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(kDim, "%s", r.note);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(kDim, "72%% of those surfaces are flat, 21.9%% are 7 degree ramps, 5.9%% "
+                             "are 26 degree, 0.14%% are 45 degree.");
+
+    ImGui::Spacing();
+    if (ImGui::Button("Reset to default")) SetSpriteLift(kDefaultSpriteLift);
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "Persist a value with sprite_lift_thousandths under [renderer] in "
+                             "gta2dx9.ini (%d = the current setting).",
+                       static_cast<int>(SpriteLift() * 1000.0f + 0.5f));
+
+    ImGui::Spacing();
+    ImGui::TextWrapped("A single lift is a compromise, not a fix: the quad stays horizontal while "
+                       "the ground under it is not. Tilting each sprite to the lid beneath it "
+                       "would remove the trade entirely, and needs the ground plane per corner.");
 }
 
 const RemixTrackedLight* FindTracked(uint64_t key) {
@@ -584,12 +656,16 @@ void DebugMenuRender() {
         g_resetWindowPos = false;
         ImGui::SetNextWindowPos(ImVec2(40.0f, 40.0f));
     }
-    if (ImGui::Begin("GTA2 -- Remix lights (F4)")) {
+    if (ImGui::Begin("GTA2 -- RTX Remix (F4)")) {
         if (ImGui::BeginTabBar("tabs")) {
             if (ImGui::BeginTabItem("Status")) {
                 DrawStatus();
                 ImGui::Separator();
                 DrawTuning();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Sprites")) {
+                DrawSprites();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Lights")) {

@@ -103,7 +103,15 @@ void LoadConfig() {
     g_world.Configure(pitch / 10.0f, fov / 10.0f, gameTiles,
                       static_cast<gta2dx9::PresentWindow>(ownWindow));
 
-    Log("mode=%s backend=%s", g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName);
+    // Thousandths of a block, for the same reason the camera angles are tenths
+    // of a degree: the ini API only reads integers.
+    const int lift = GetPrivateProfileIntA(
+        "renderer", "sprite_lift_thousandths",
+        static_cast<int>(gta2dx9::kDefaultSpriteLift * 1000.0f + 0.5f), ini);
+    gta2dx9::SetSpriteLift(lift / 1000.0f);
+
+    Log("mode=%s backend=%s sprite_lift=%.3f blocks", g_mode == Mode::Takeover ? "takeover" : "proxy",
+        g_backendName, gta2dx9::SpriteLift());
 }
 
 bool BindBackend() {

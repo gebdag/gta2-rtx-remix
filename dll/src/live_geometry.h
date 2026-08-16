@@ -29,6 +29,15 @@
 
 namespace gta2dx9 {
 
+// How far a sprite is lifted off the floor it stands on, in map blocks. See the
+// long note in live_geometry.cpp for why any lift is needed at all and how the
+// default was arrived at. Sprites are rebuilt from the game's stream every
+// frame, so a change takes effect on the next one.
+constexpr float kDefaultSpriteLift = 0.125f;
+
+void SetSpriteLift(float blocks);
+float SpriteLift();
+
 class LiveGeometry {
 public:
     void BeginFrame();

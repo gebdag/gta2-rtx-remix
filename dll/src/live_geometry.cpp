@@ -41,12 +41,36 @@ constexpr int kUvV = 7;
 // ray hit is ambiguous however the raster state is set, so ZFUNC_LESSEQUAL would
 // fix the raster view and still leave the path tracer fighting itself.
 //
-// So the lift is ours and has to be justified rather than guessed. A tile is 64
-// texels across one block, so a quarter of a ground texel is 1/256 of a block:
-// far below anything the game can show at any zoom it allows, and still four
-// orders of magnitude above the 1/16384 quantum of the game's own 16.14 fixed
-// point coordinates.
-constexpr float kSpriteLift = 1.0f / 256.0f;
+// So the lift is ours and has to be justified rather than guessed.
+//
+// A quarter of a ground texel - 1/256 of a block, the first value used here -
+// is enough to break the coplanarity and nothing more. That settles flat
+// ground, and does nothing at all for a slope: GTA2 gives all four corners of
+// the quad the object's single level, so on a ramp a horizontal quad cuts
+// straight through the lid and the uphill half of the sprite disappears into
+// it. A sprite of length L on a gradient g sinks by up to g*L/2.
+//
+// Measured over the shipped districts, of the surfaces a sprite can actually
+// stand on (ground type road or pavement, 16419 of them):
+//
+//     flat                                  72.06%
+//     7 degrees   (8 steps, g = 0.125)      21.88%
+//     26 degrees  (2 steps, g = 0.5)         5.92%
+//     45 degrees  (1 step,  g = 1.0)         0.14%
+//
+// A pedestrian quad is 0.47 blocks across (measured off the game's own shadow
+// slots), a car about 2. So 1/8 of a block clears 99.5% of the sloped surfaces
+// a pedestrian can reach and 78% of those a car can, which is every 7 degree
+// ramp - the common case by a wide margin. Doubling it to 1/4 buys nothing more
+// for cars, and it takes a full 1/2 block to cover them on 26 degree ramps,
+// which floats every sprite in the city half a block to fix 6% of surfaces.
+//
+// 1/8 of a block is roughly 25 cm at GTA2's scale, and the camera looks almost
+// straight down, so the float it costs is far less visible than the clipping it
+// removes. It is a compromise, not a fix: the real answer is to tilt the quad
+// to the lid underneath it, which needs the ground plane per corner and is not
+// what this is.
+float g_spriteLift = kDefaultSpriteLift;
 
 // Anything outside this is stale data left in the shadow slots by an earlier
 // draw rather than a position the game just computed.
@@ -63,6 +87,15 @@ Vec Cross(const Vec& a, const Vec& b) {
 }
 
 }  // namespace
+
+void SetSpriteLift(float blocks) {
+    // Negative would push sprites into the floor, which is the bug this exists
+    // to avoid; the ceiling is a whole block, past which a sprite is standing on
+    // the storey above.
+    g_spriteLift = blocks < 0.0f ? 0.0f : (blocks > 1.0f ? 1.0f : blocks);
+}
+
+float SpriteLift() { return g_spriteLift; }
 
 void LiveGeometry::BeginFrame() {
     sprites_.clear();
@@ -153,8 +186,8 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
     // Our y is the game's level, and the quad is flat, so this is along its own
-    // normal. See kSpriteLift: the game does not do this, and cannot need to.
-    for (int i = 0; i < corners; ++i) out[i].y += kSpriteLift;
+    // normal. See g_spriteLift: the game does not do this, and cannot need to.
+    for (int i = 0; i < corners; ++i) out[i].y += g_spriteLift;
     Emit(sprites_, texture, out, corners);
     ++spriteQuads_;
     ++drops_.accepted;
