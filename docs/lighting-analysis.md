@@ -447,3 +447,93 @@ Blink periods in the shipped maps are symmetric and coarse — `(40,40)` on 64 l
 | `0x00E10838` | ambient × 255 |
 | `0x00E43E38` | live light count |
 | `0x00E459E0` | light array, stride `0x2C` |
+
+---
+
+## 8. Synthetic lights — reverse engineering for effects the game does not light
+
+GTA2 emits no light for gunfire, bullets, sparks, cigarettes or headlight beams;
+the lights in §3 are the complete set it knows about. Adding them means reading
+the game's own effect state and inventing lights from it. This section records
+what that needs. **Not yet implemented** — this is the groundwork.
+
+### 8.1 The particle system
+
+`particle.cpp`. The manager is a single `0x947C`-byte object at `0x00669E70`
+(`FUN_00491B90` allocates it), and it is also the pool:
+
+| Address | Meaning |
+|---|---|
+| `*(void**)(mgr + 0x00)` | free list head |
+| `*(void**)(mgr + 0x04)` | **live list head** |
+
+Walk the live list through `+0x3C`. `FUN_0048A900` is the allocator that does
+the linking, `FUN_0048A8F0` the "any left?" test.
+
+Per particle:
+
+| Offset | Field |
+|---|---|
+| `+0x00` | heading, `uint16` (`FUN_00420690`) |
+| `+0x14` | x, 16.14 fixed, tiles east |
+| `+0x18` | y, 16.14 fixed, tiles south |
+| `+0x1C` | z, 16.14 fixed, map level |
+| `+0x2C` | life in frames |
+| `+0x38` | **type id** |
+| `+0x3C` | next in the live list |
+
+Position and heading are set by `FUN_00420600` / `FUN_00420690`, the same pair
+the object system uses, so particles, objects and vehicles all share this
+placement layout.
+
+Type ids seen so far, by spawner:
+
+| Spawner | Type | Called from |
+|---|---|---|
+| `FUN_0048C9C0` | `0x01` | 6-particle burst, several call sites |
+| `FUN_0048D4E0` | `0x1F` | weapon module (`0x4CDD25`, `0x4CFD39`); also makes object `0xC2` |
+| `FUN_0048D8B0` | `0x22` | weapon module (`0x4CFE84`); also makes object `0xC6` |
+| `FUN_0048D1F0` | `0x23` | 6-particle burst, four call sites |
+| `FUN_0048DDC0` | `0x25` | weapon module (`0x4CCEA1`, `0x4CCFC5`) |
+| `FUN_0048DFC0` | `0x26` | `FUN_004825C0` |
+| `FUN_0048CC50` | `0x27` | `0x004413FA` |
+| `FUN_0048CD10` | `0x28`, `0x29` | weapon module, six call sites — fires **two** particles per shot |
+
+The weapon module is the `0x4CCE00`–`0x4D0800` range, identified by the
+`weapon.cpp` assert string at `0x0057593C` (referenced from `FUN_004D0740`).
+
+**Which id is the muzzle flash, the bullet, the spark and the cigarette is still
+open.** Reading it out of the remaining spawners is slow and easy to get wrong;
+the reliable way is a live histogram of particle types in the F4 menu, then
+trigger each effect and watch which id appears.
+
+### 8.2 Vehicles
+
+The vehicle pool pointer is `0x005E4CA0`, same two-list shape:
+
+| Address | Meaning |
+|---|---|
+| `*(void**)(*pool + 0x00)` | free list head |
+| `*(void**)(*pool + 0x04)` | **live list head** |
+
+Walk through `+0x4C` (`FUN_004254A0` appends, `FUN_00425480` prepends). Per
+vehicle: the shared placement layout above, plus `+0x84` = car model id and
+`+0x88` = 1. Created by `FUN_00426AC0`, which also calls `FUN_00424700` to hang
+the four light objects of §3.3 on it.
+
+**"Is it being driven" has not been found**, and does not need to be: a vehicle
+that has moved since the previous frame is being driven, by the player or by
+anyone else, and a parked one has not. That is a runtime test needing no further
+reverse engineering, and it is what the headlight cones should key off.
+
+### 8.3 What still has to be decided at runtime, not statically
+
+Two unknowns remain, and both are better answered by the running game than by
+more decompilation:
+
+- **which particle type is which effect** — bind categories to type ids from the
+  F4 menu, seeded with the weapon-module ids above, and persist the binding
+- **which cars are driven** — compare position between frames
+
+Neither blocks the implementation; both argue for the type binding being a
+setting rather than a constant.
