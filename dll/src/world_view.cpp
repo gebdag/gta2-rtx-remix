@@ -9,8 +9,11 @@
 
 #include "../../src/gta2_style.h"
 #include "../../src/world_mesh.h"
+#include "debug_overlay.h"
 #include "game_access.h"
 #include "log.h"
+#include "remix_api.h"
+#include "remix_lights.h"
 #include "texture_store.h"
 
 namespace gta2dx9 {
@@ -269,6 +272,13 @@ void WorldView::Shutdown() {
     loadedMapObject_ = nullptr;
     const HWND ours = window_ != gameWindow_ ? window_ : nullptr;
     window_ = nullptr;  // stops the frame loop bringing the device back up
+    // ImGui and the Remix lights both hold device-side or bridge-side objects, so
+    // they go first: the menu's font texture belongs to the device we are about
+    // to release, and a light handle outliving the bridge is a leak on the far
+    // side of it.
+    DebugMenuShutdown();
+    LightsShutdown();
+    RemixApiShutdown();
     // Device-owned textures have to go before the device does.
     overlay_.ReleaseResources();
     live_.ReleaseResources();
@@ -312,6 +322,16 @@ bool WorldView::EnsureWorldLoaded() {
         Log("style load failed (%s): %s", stylePath.c_str(), error.c_str());
         loadedMapObject_ = mapObject;
         return false;
+    }
+
+    // The district's name salts the per-light override keys, so a lamp standing
+    // in the same spot in two districts does not share one entry.
+    {
+        const size_t slash = stylePath.find_last_of('\\');
+        std::string district = slash == std::string::npos ? stylePath : stylePath.substr(slash + 1);
+        const size_t dot = district.find_last_of('.');
+        if (dot != std::string::npos) district = district.substr(0, dot);
+        LightsSetScene(district.c_str());
     }
 
     // Prefer the game's own artwork over our parse of the style file: the game
@@ -580,12 +600,31 @@ void WorldView::RenderFrame() {
                                    *reinterpret_cast<const int32_t*>(camera + game::kScreenHeightOffset));
     }
 
+    // The bridge server is a separate process that is still starting while the
+    // game asks its renderer to initialise, so this is retried from the frame
+    // loop until it takes, exactly like the device is.
+    RemixApiInit();
+    // Not conditional on that: when Remix is absent the menu is the thing that
+    // says so, which it cannot do if it only exists once Remix is there.
+    DebugMenuInit(gameWindow_, window_, renderer_.Device());
+    DebugMenuPoll();
+
+    // The game lists this frame's lights during its own world pass, which runs
+    // between gbh_BeginScene and the gbh_EndScene that brought us here - so by
+    // now the list is complete and can be matched against what Remix already has.
+    LightsReconcile();
+
     if (renderer_.BeginFrame()) {
         renderer_.DrawWorld(camera_);
         // Sprites and the captured block shapes are real world geometry, so they
         // are depth tested against the static mesh rather than painted over it.
         live_.Draw(renderer_.Device(), camera_, renderer_.Width(), renderer_.Height());
         overlay_.Flush(renderer_.Device(), renderer_.Width(), renderer_.Height());
+        // ImGui issues ordinary D3D9 draws, so it belongs inside the scene.
+        DebugMenuRender();
+        // Remix clears its per-frame light list every frame, so a light is in the
+        // scene exactly when it is drawn here. Last thing before the flip.
+        LightsDraw();
         renderer_.EndFrame();
     }
 

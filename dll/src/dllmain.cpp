@@ -23,6 +23,7 @@
 #include "game_access.h"
 #include "live_geometry.h"
 #include "log.h"
+#include "remix_lights.h"
 #include "texture_store.h"
 #include "world_view.h"
 
@@ -185,6 +186,9 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         Log("proxy live");
     } else {
         Log("takeover mode: the original renderer is not loaded");
+        char overrides[MAX_PATH];
+        PathBesideGame("gta2dx9_lights.ini", overrides, sizeof(overrides));
+        gta2dx9::LightsInit(overrides);
     }
 }
 
@@ -429,6 +433,43 @@ __declspec(dllexport) void __stdcall gbh_DrawFlatRect(float* vertices, unsigned 
     g_world.GetOverlay().FlatRect(vertices, colour);
 }
 
+// ---------------------------------------------------------------------------
+// Lighting.
+//
+// The one part of the gbh_* interface that is genuinely world space. GTA2 works
+// out every light in the frame itself - map lamps, traffic lights, headlights -
+// and lists them here in tile coordinates. The original renderer used them for
+// per-vertex lighting; we hand them to RTX Remix as real lights instead.
+// ---------------------------------------------------------------------------
+
+// Opens the frame's list. Only called during a world render, and only when the
+// game's own `lighting` option is on.
+__declspec(dllexport) void __stdcall gbh_ResetLights() {
+    if (Proxying() && g_p_gbh_ResetLights) {
+        Backend<void(__stdcall*)()>(g_p_gbh_ResetLights)();
+        return;
+    }
+    gta2dx9::LightsBeginCollect();
+}
+
+// One 20-byte descriptor. Decoded in remix_lights.cpp; the layout is in
+// docs/lighting-analysis.md.
+__declspec(dllexport) void __stdcall gbh_AddLight(void* descriptor) {
+    if (Proxying() && g_p_gbh_AddLight) {
+        Backend<void(__stdcall*)(void*)>(g_p_gbh_AddLight)(descriptor);
+        return;
+    }
+    gta2dx9::LightsAddRaw(descriptor);
+}
+
+__declspec(dllexport) void __stdcall gbh_SetAmbient(float ambient) {
+    if (Proxying() && g_p_gbh_SetAmbient) {
+        Backend<void(__stdcall*)(float)>(g_p_gbh_SetAmbient)(ambient);
+        return;
+    }
+    gta2dx9::LightsSetAmbient(ambient);
+}
+
 __declspec(dllexport) void __stdcall gbh_SetWindow(int a, int b, int c, int d) {
     if (Proxying() && g_p_gbh_SetWindow) {
         Backend<void(__stdcall*)(int, int, int, int)>(g_p_gbh_SetWindow)(a, b, c, d);
@@ -519,10 +560,6 @@ PASSTHROUGH_0(gbh_SetColourDepth)
 PASSTHROUGH_1(ConvertColourBank, int)
 PASSTHROUGH_3(MakeScreenTable, void*, unsigned, int)
 PASSTHROUGH_5(SetShadeTableA, int, int, int, int, int)
-// Lighting is Remix's job, so the game's own light list is deliberately unused.
-PASSTHROUGH_0(gbh_ResetLights)
-PASSTHROUGH_1(gbh_AddLight, void*)
-PASSTHROUGH_1(gbh_SetAmbient, float)
 PASSTHROUGH_6(gbh_BlitBuffer, int, int, int, int, int, int)
 PASSTHROUGH_2(gbh_Convert16BitGraphic, int, int)
 

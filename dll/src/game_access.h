@@ -42,6 +42,16 @@ constexpr uintptr_t kViewMaxYOffset = 0x84;
 // Vertical squash the game applies to the world; 0.8875 in practice.
 constexpr uintptr_t kVerticalScaleOffset = 0x94;
 
+// Set from the `lighting` config option by FUN_004cb1d0, default on. While it is
+// clear the game never calls gbh_ResetLights or gbh_AddLight, so the Remix light
+// injection has nothing to work with and the menu says so rather than looking
+// broken.
+constexpr uintptr_t kLightingEnabledFlag = 0x00595011;
+
+inline bool LightingEnabled() {
+    return *reinterpret_cast<const uint8_t*>(kLightingEnabledFlag) != 0;
+}
+
 struct ViewExtent {
     float minX, maxX, minY, maxY;
     float Width() const { return maxX - minX; }
