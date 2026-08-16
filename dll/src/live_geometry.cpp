@@ -19,6 +19,35 @@ constexpr int kGameVertexFloats = 8;
 constexpr int kUvU = 6;
 constexpr int kUvV = 7;
 
+// How far a sprite is lifted off the floor it stands on.
+//
+// GTA2 itself lifts them by nothing at all. Its object pass puts all four
+// corners of the quad at exactly the level of the block underneath - read back
+// out of the game's own vertex shadow, a pedestrian at cell (158,138) comes out
+// as (158.2656 138.7500 2.0000) (158.2656 138.2500 2.0000) (158.7344 138.2500
+// 2.0000) (158.7344 138.7500 2.0000), all four at 2.0000, while the floor there
+// is the lid at 2.0. Perfectly coplanar.
+//
+// It gets away with that because its renderers never depth test: 3dfx.dll calls
+// grDepthBufferFunction(GR_CMP_ALWAYS) and imports no grDepthMask or
+// grDepthBufferMode at all, and d3ddll.dll never sets ZENABLE, ZWRITEENABLE or
+// ZFUNC. Both are pure painter's algorithm - the map is drawn level by level and
+// the object pass paints over the floor it just laid down. That is also why the
+// screen-space overlay pass never had this problem: it replays submission order
+// with no depth test, which is the original behaviour exactly.
+//
+// Turning a sprite into real 3D geometry is what breaks it. Coplanar surfaces
+// have no defined order in 3D: the depth test drops them, and under Remix the
+// ray hit is ambiguous however the raster state is set, so ZFUNC_LESSEQUAL would
+// fix the raster view and still leave the path tracer fighting itself.
+//
+// So the lift is ours and has to be justified rather than guessed. A tile is 64
+// texels across one block, so a quarter of a ground texel is 1/256 of a block:
+// far below anything the game can show at any zoom it allows, and still four
+// orders of magnitude above the 1/16384 quantum of the game's own 16.14 fixed
+// point coordinates.
+constexpr float kSpriteLift = 1.0f / 256.0f;
+
 // Anything outside this is stale data left in the shadow slots by an earlier
 // draw rather than a position the game just computed.
 constexpr float kWorldMargin = 8.0f;
@@ -112,12 +141,27 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
 
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
+    // Our y is the game's level, and the quad is flat, so this is along its own
+    // normal. See kSpriteLift: the game does not do this, and cannot need to.
+    for (int i = 0; i < corners; ++i) out[i].y += kSpriteLift;
     Emit(sprites_, texture, out, corners);
     ++spriteQuads_;
 
-    if (!loggedFirstSprite_) {
-        loggedFirstSprite_ = true;
-        Log("sprite in world space at %.2f, %.2f, %.2f", out[0].x, out[0].y, out[0].z);
+    // The game's own corner positions, straight out of the shadow slots and
+    // before our axis swap, so the question "does GTA2 lift a sprite off the
+    // floor it stands on?" can be answered from its numbers rather than ours.
+    if (spriteLogs_ < 8) {
+        ++spriteLogs_;
+        char line[320];
+        int used = snprintf(line, sizeof(line), "sprite corners (game frame x,y,level):");
+        for (int i = 0; i < corners && used > 0 && used < static_cast<int>(sizeof(line)) - 40; ++i) {
+            const float* world = reinterpret_cast<const float*>(
+                game::kSpriteVertexArray +
+                static_cast<uintptr_t>(i + game::kWorldShadowSlots) * game::kVertexStride);
+            used += snprintf(line + used, sizeof(line) - used, "  (%.4f %.4f %.4f)", world[0],
+                             world[1], world[2]);
+        }
+        Log("%s", line);
     }
 }
 

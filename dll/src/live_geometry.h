@@ -61,7 +61,7 @@ private:
 
     std::map<const void*, Batch> sprites_;
     int spriteQuads_ = 0;
-    bool loggedFirstSprite_ = false;
+    int spriteLogs_ = 0;
 };
 
 }  // namespace gta2dx9
