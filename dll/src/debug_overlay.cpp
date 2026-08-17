@@ -593,6 +593,22 @@ void DrawAlpha() {
     ImGui::SameLine();
     if (ImGui::RadioButton("Alpha blend", &mode, 1)) gta2::SetAlphaMode(gta2::AlphaMode::Blend);
 
+    ImGui::SeparatorText("Stacked sprites");
+    ImGui::TextWrapped(
+        "A GTA2 car is not one sprite: the body is drawn, then its lights, then any logo, each a "
+        "separate quad at exactly the same height. The game never depth tested so it simply "
+        "painted them in order; as real geometry they are coplanar and the depth test picks a "
+        "winner per pixel, which is the flickering and the dropouts. Each sprite landing where "
+        "another already is this frame goes one step higher than the last, in the order the game "
+        "drew them, so the painter's order becomes a real stacking order.");
+    float step = SpriteStackStep();
+    if (ImGui::SliderFloat("Stack step (blocks)", &step, 0.0f, 0.05f, "%.4f")) {
+        SetSpriteStackStep(step);
+    }
+    ImGui::SetItemTooltip("0 puts them all back on one plane. The default hundredth of a block is "
+                          "invisible at this camera and well clear of the depth buffer's "
+                          "resolving power.");
+
     ImGui::SeparatorText("Soft edges for sprites");
     ImGui::TextWrapped(
         "The alpha itself is 1-bit - GTA2's palette has one key colour and no gradient anywhere - "

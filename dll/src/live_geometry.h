@@ -33,7 +33,7 @@ namespace gta2dx9 {
 // long note in live_geometry.cpp for why any lift is needed at all and how the
 // default was arrived at. Sprites are rebuilt from the game's stream every
 // frame, so a change takes effect on the next one.
-constexpr float kDefaultSpriteLift = 0.125f;
+constexpr float kDefaultSpriteLift = 0.075f;
 
 void SetSpriteLift(float blocks);
 
@@ -43,6 +43,19 @@ void SetSpriteLift(float blocks);
 // wall wants.
 void SetSpriteFeather(float strength);
 float SpriteFeather();
+
+// How far apart to hold sprites that are stacked on the same spot.
+//
+// A GTA2 car is not one sprite: the body is drawn, then its lights, then any
+// logo, each a separate quad at exactly the same height. The game got away with
+// that because it never depth tested - it just painted them in order - but as
+// real geometry they are coplanar and the depth test picks a winner per pixel,
+// which is the flicker and the dropouts. Each sprite landing on a spot another
+// has already taken this frame is lifted one step higher than the last, in the
+// order the game drew them, so the painter's order becomes a real stacking
+// order. 0 disables it.
+void SetSpriteStackStep(float blocks);
+float SpriteStackStep();
 float SpriteLift();
 
 class LiveGeometry {
@@ -69,6 +82,15 @@ private:
         const void* texture;
         std::vector<Vertex> vertices;  // triangle list
     };
+
+    // One entry per sprite already placed this frame, for spotting a stack.
+    struct Stack {
+        float x, z;
+        int layer;
+    };
+    std::vector<Stack> stacks_;
+
+    int StackLayerFor(float cx, float cz);
 
     bool ReadCorners(const float* vertices, int corners, const void* texture, uintptr_t shadowBase,
                      Vertex* out) const;

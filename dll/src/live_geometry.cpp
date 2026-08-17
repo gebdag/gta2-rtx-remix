@@ -106,9 +106,44 @@ void SetSpriteFeather(float strength) {
 
 float SpriteFeather() { return g_spriteFeather; }
 
+// A hundredth of a block. Far below anything visible at GTA2's near-top-down
+// camera, and comfortably above the depth buffer's resolving power at the ten to
+// twenty units the camera actually sits at.
+float g_spriteStackStep = 0.01f;
+
+void SetSpriteStackStep(float blocks) {
+    g_spriteStackStep = blocks < 0.0f ? 0.0f : (blocks > 0.25f ? 0.25f : blocks);
+}
+
+float SpriteStackStep() { return g_spriteStackStep; }
+
 void LiveGeometry::BeginFrame() {
     sprites_.clear();
+    stacks_.clear();
     spriteQuads_ = 0;
+}
+
+// Which layer of a stack this sprite belongs to.
+//
+// Two quads count as stacked when their centres are within about a third of a
+// tile, which is well inside a car and well outside the gap to the next one. The
+// search is linear over the sprites already taken this frame, which is tens of
+// entries - a car's worth of parts, a few pedestrians - so it costs nothing
+// worth indexing away.
+int LiveGeometry::StackLayerFor(float cx, float cz) {
+    const float kSameSpot = 0.33f * 0.33f;
+    int layer = 0;
+    for (const Stack& s : stacks_) {
+        const float dx = s.x - cx, dz = s.z - cz;
+        if (dx * dx + dz * dz <= kSameSpot && s.layer >= layer) layer = s.layer + 1;
+    }
+    // A car with a light and a logo is three deep; anything claiming more than
+    // this is sprites that happen to share a spot rather than a real stack, and
+    // letting it climb would float them.
+    const int kMaxLayers = 6;
+    if (layer > kMaxLayers) layer = kMaxLayers;
+    stacks_.push_back({cx, cz, layer});
+    return layer;
 }
 
 // The game's world frame is x east, y south, level up. Ours is x east, y up,
@@ -196,7 +231,20 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
     // Our y is the game's level, and the quad is flat, so this is along its own
     // normal. See g_spriteLift: the game does not do this, and cannot need to.
-    for (int i = 0; i < corners; ++i) out[i].y += g_spriteLift;
+    // The stack layer is decided from where the sprite sits, before it is
+    // lifted, so a car's lights and logo land on the body rather than on each
+    // other's raised copies.
+    float cx = 0.0f, cz = 0.0f;
+    for (int i = 0; i < corners; ++i) {
+        cx += out[i].x;
+        cz += out[i].z;
+    }
+    cx /= static_cast<float>(corners);
+    cz /= static_cast<float>(corners);
+    const float stacked = g_spriteStackStep > 0.0f
+                              ? StackLayerFor(cx, cz) * g_spriteStackStep
+                              : 0.0f;
+    for (int i = 0; i < corners; ++i) out[i].y += g_spriteLift + stacked;
     Emit(sprites_, texture, out, corners);
     ++spriteQuads_;
     ++drops_.accepted;

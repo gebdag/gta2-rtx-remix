@@ -200,6 +200,8 @@ void SettingsLoadAll() {
 
         if (!_stricmp(key, "SpriteLift")) {
             SetSpriteLift(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "SpriteStackStep")) {
+            SetSpriteStackStep(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "SpriteFeather")) {
             SetSpriteFeather(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "AlphaMode")) {
