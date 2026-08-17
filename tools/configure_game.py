@@ -77,6 +77,21 @@ FALLBACK_RES = (800, 600)
 DXWRAPPER = {"EnableWindowMode": 1, "DdrawUseNativeResolution": 0}
 
 
+def read(hive, path):
+    """Current values, or None when the key is not there at all."""
+    try:
+        with winreg.OpenKey(hive, path) as k:
+            out = {}
+            for name in ("window_width", "window_height"):
+                try:
+                    out[name] = winreg.QueryValueEx(k, name)[0]
+                except FileNotFoundError:
+                    pass
+            return out
+    except OSError:
+        return None
+
+
 def game_resolution(explicit):
     """What to write, or None to leave the existing values untouched."""
     if explicit:

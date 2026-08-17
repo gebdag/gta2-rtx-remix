@@ -36,6 +36,13 @@ namespace gta2dx9 {
 constexpr float kDefaultSpriteLift = 0.125f;
 
 void SetSpriteLift(float blocks);
+
+// How much to soften a sprite's cutout edge, 0..1. GTA2's alpha is 1-bit, so
+// this is invented rather than recovered - see FeatherAlpha in alpha_bleed.h.
+// Sprites only: the world mesh keeps its hard edges, which is what a fence or a
+// wall wants.
+void SetSpriteFeather(float strength);
+float SpriteFeather();
 float SpriteLift();
 
 class LiveGeometry {

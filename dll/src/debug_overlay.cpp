@@ -593,6 +593,20 @@ void DrawAlpha() {
     ImGui::SameLine();
     if (ImGui::RadioButton("Alpha blend", &mode, 1)) gta2::SetAlphaMode(gta2::AlphaMode::Blend);
 
+    ImGui::SeparatorText("Soft edges for sprites");
+    ImGui::TextWrapped(
+        "The alpha itself is 1-bit - GTA2's palette has one key colour and no gradient anywhere - "
+        "so bleeding fixed the colour and the edge stayed a stencil. This invents the ramp the "
+        "artwork never had, dimming each visible texel by how much of its neighbourhood is empty. "
+        "A fence or a tree wants its hard edge, an explosion does not, so it applies to sprites "
+        "only and starts at 0. Takes effect on textures built after the change; drive somewhere "
+        "new or reload the level to rebuild the ones already cached.");
+    float feather = SpriteFeather();
+    if (ImGui::SliderFloat("Sprite edge softness", &feather, 0.0f, 1.0f, "%.2f")) {
+        SetSpriteFeather(feather);
+    }
+
+    ImGui::SeparatorText("Alpha mode");
     int ref = gta2::GetAlphaRef();
     if (ImGui::SliderInt("Alpha test cutoff", &ref, 1, 254)) gta2::SetAlphaRef(ref);
     ImGui::SetItemTooltip("Where the binary cutoff falls. Only used in alpha test mode; blending "

@@ -200,6 +200,8 @@ void SettingsLoadAll() {
 
         if (!_stricmp(key, "SpriteLift")) {
             SetSpriteLift(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "SpriteFeather")) {
+            SetSpriteFeather(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "AlphaMode")) {
             gta2::SetAlphaMode(!_stricmp(value, "blend") ? gta2::AlphaMode::Blend
                                                          : gta2::AlphaMode::Test);

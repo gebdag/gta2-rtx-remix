@@ -1,5 +1,6 @@
 #include "texture_store.h"
 
+#include "live_geometry.h"
 #include "log.h"
 
 #include "../../src/alpha_bleed.h"
@@ -209,6 +210,9 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     // averages that black into the neighbouring colour. That is the hard black
     // rim around cutouts. Give the invisible texels a colour and it goes away.
     gta2::BleedTransparentEdges(image.data(), record->width, record->height);
+    // And then invent the gradient the artwork never had. Off by default: a
+    // fence wants its hard edge, an explosion does not.
+    gta2::FeatherAlpha(image.data(), record->width, record->height, SpriteFeather());
     for (int y = 0; y < record->height; ++y) {
         memcpy(static_cast<uint8_t*>(locked.pBits) + y * locked.Pitch,
                image.data() + static_cast<size_t>(y) * record->width,

@@ -120,6 +120,12 @@ void EnsureBinding() {
     // flame, 0x03 the small one and 0x16 a third. The profile alone could never
     // have separated these from smoke or litter - all three are long-lived,
     // clustered and stationary - which is what the Highlight button is for.
+    // 0x26 is the rocket in flight, confirmed by eye. The profile had it right
+    // all along - 0.28 tiles a frame, two and a half times anything else, alone
+    // and short-lived - and it was unbound only because it was checked against
+    // pistol fire, which has no travelling projectile at all.
+    g_binding[0x26] = kSynthBullet;
+
     g_binding[0x24] = kSynthFire;
     g_binding[0x03] = kSynthFire;
     g_binding[0x16] = kSynthFire;
@@ -408,9 +414,13 @@ void WalkVehicles() {
         const float pitch = c.pitchDegrees * 3.14159265f / 180.0f;
         const float horizontal = std::cos(pitch);
 
-        for (int side = 0; side < 2; ++side) {
+        // `beam` below was once called `side` too, and the loop counter shadowed
+        // it: the offset actually used was the loop index, so one headlight sat
+        // at the car's centre and the other a full tile away, and the separation
+        // setting did nothing at all because nothing read it.
+        for (int lamp = 0; lamp < 2; ++lamp) {
             if (!Room(kSynthHeadlight)) break;
-            const float sign = side == 0 ? -1.0f : 1.0f;
+            const float sign = lamp == 0 ? -1.0f : 1.0f;
             const float px = gx + fx * forward + rx * side * sign;
             const float py = gy + fy * forward + ry * side * sign;
 
@@ -433,7 +443,7 @@ void WalkVehicles() {
             // drive however far it goes rather than being rediscovered by
             // proximity every frame.
             d.explicitId = MixPointer(reinterpret_cast<uintptr_t>(entry),
-                                      static_cast<uint64_t>(side) + 0x48EAD11);
+                                      static_cast<uint64_t>(lamp) + 0x48EAD11);
             LightsSubmitExtra(d);
             ++g_stats.emitted[kSynthHeadlight];
             ++g_stats.totalEmitted[kSynthHeadlight];

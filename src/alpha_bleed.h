@@ -94,4 +94,53 @@ inline void BleedTransparentEdges(uint32_t* pixels, int width, int height, int p
     }
 }
 
+// Soften a cutout's edge.
+//
+// Bleeding fixed the colour, and the edge is still hard, because the alpha was
+// never anything but 0 or 255: GTA2's artwork is palettised with entry 0 as a
+// colour key and there is no gradient anywhere in it. A fence or a tree wants
+// exactly that, but an explosion is a soft glow and reads wrong as a stencil.
+//
+// There is nothing to recover, so this invents it: every visible texel is dimmed
+// in proportion to how much of its neighbourhood is transparent, which turns the
+// one-texel step into a ramp. Strength 0 leaves the artwork alone.
+//
+// Run *after* BleedTransparentEdges - that one keys off alpha being exactly 0 to
+// decide what to fill, and this puts values in between.
+inline void FeatherAlpha(uint32_t* pixels, int width, int height, float strength) {
+    if (!pixels || strength <= 0.0f || width <= 2 || height <= 2) return;
+    const size_t count = static_cast<size_t>(width) * height;
+    std::vector<uint32_t> src(pixels, pixels + count);
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const size_t here = static_cast<size_t>(y) * width + x;
+            const uint32_t alpha = src[here] >> 24;
+            if (!alpha) continue;   // already a hole; leave it one
+
+            int clear = 0, total = 0;
+            for (int dy = -2; dy <= 2; ++dy) {
+                for (int dx = -2; dx <= 2; ++dx) {
+                    const int nx = x + dx, ny = y + dy;
+                    ++total;
+                    // Off the edge of the sprite counts as transparent, so a
+                    // flame running to the border fades rather than being cut.
+                    if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+                        ++clear;
+                        continue;
+                    }
+                    if ((src[static_cast<size_t>(ny) * width + nx] >> 24) == 0) ++clear;
+                }
+            }
+            if (!clear) continue;
+
+            const float open = static_cast<float>(clear) / static_cast<float>(total);
+            float scale = 1.0f - open * strength;
+            if (scale < 0.0f) scale = 0.0f;
+            const uint32_t faded = static_cast<uint32_t>(alpha * scale + 0.5f);
+            pixels[here] = (faded << 24) | (src[here] & 0x00FFFFFFu);
+        }
+    }
+}
+
 }  // namespace gta2

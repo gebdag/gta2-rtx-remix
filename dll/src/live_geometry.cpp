@@ -98,6 +98,14 @@ void SetSpriteLift(float blocks) {
 
 float SpriteLift() { return g_spriteLift; }
 
+float g_spriteFeather = 0.0f;
+
+void SetSpriteFeather(float strength) {
+    g_spriteFeather = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
+}
+
+float SpriteFeather() { return g_spriteFeather; }
+
 void LiveGeometry::BeginFrame() {
     sprites_.clear();
     spriteQuads_ = 0;
