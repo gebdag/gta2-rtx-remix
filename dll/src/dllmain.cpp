@@ -35,6 +35,7 @@ namespace {
 enum class Mode { Proxy, Takeover };
 
 Mode g_mode = Mode::Proxy;
+HMODULE g_self = nullptr;
 char g_backendName[MAX_PATH] = "3dfx.dll";
 HMODULE g_backend = nullptr;
 void* g_system = nullptr;
@@ -87,11 +88,39 @@ const Binding kBindings[] = {
 #undef BIND
 };
 
+// What the loader knows this DLL as. deploy.bat installs a second copy of it as
+// d3ddll.dll, because the renderer list in "gta2 manager.exe" and in the game's
+// own options screen is a hardcoded table of 3dfx.dll / d3ddll.dll / softdll.dll
+// (strings at 0x39D08 in the manager) and can never be made to offer a fourth
+// name. Claiming the Direct3D slot is what stops either of them silently
+// swapping the renderer out the moment you go in to change the resolution.
+const char* OwnModuleLeaf() {
+    static char leaf[MAX_PATH] = "";
+    if (!leaf[0]) {
+        char path[MAX_PATH] = "";
+        GetModuleFileNameA(g_self, path, sizeof(path));
+        const char* slash = strrchr(path, '\\');
+        strncpy(leaf, slash ? slash + 1 : path, sizeof(leaf) - 1);
+    }
+    return leaf;
+}
+
 void LoadConfig() {
     char ini[MAX_PATH];
     PathBesideGame("gta2dx9.ini", ini, sizeof(ini));
-    GetPrivateProfileStringA("renderer", "backend", "3dfx.dll", g_backendName,
-                             sizeof(g_backendName), ini);
+
+    // Proxy mode forwards to the original renderer. Which one that is depends on
+    // the name we were loaded under: as d3ddll.dll the original D3D renderer has
+    // been moved aside to d3ddll_orig.dll, and forwarding to "d3ddll.dll" would
+    // just load us again.
+    const bool wearingD3dName = _stricmp(OwnModuleLeaf(), "d3ddll.dll") == 0;
+    GetPrivateProfileStringA("renderer", "backend", wearingD3dName ? "d3ddll_orig.dll" : "3dfx.dll",
+                             g_backendName, sizeof(g_backendName), ini);
+    if (_stricmp(g_backendName, OwnModuleLeaf()) == 0) {
+        Log("backend '%s' is this DLL; using %s instead", g_backendName,
+            wearingD3dName ? "d3ddll_orig.dll" : "3dfx.dll");
+        strcpy(g_backendName, wearingD3dName ? "d3ddll_orig.dll" : "3dfx.dll");
+    }
     char mode[32] = {};
     GetPrivateProfileStringA("renderer", "mode", "proxy", mode, sizeof(mode), ini);
     g_mode = _stricmp(mode, "takeover") == 0 ? Mode::Takeover : Mode::Proxy;
@@ -111,12 +140,20 @@ void LoadConfig() {
         static_cast<int>(gta2dx9::kDefaultSpriteLift * 1000.0f + 0.5f), ini);
     gta2dx9::SetSpriteLift(lift / 1000.0f);
 
-    Log("mode=%s backend=%s sprite_lift=%.3f blocks", g_mode == Mode::Takeover ? "takeover" : "proxy",
-        g_backendName, gta2dx9::SpriteLift());
+    Log("loaded as %s; mode=%s backend=%s sprite_lift=%.3f blocks", OwnModuleLeaf(),
+        g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName, gta2dx9::SpriteLift());
 }
 
 bool BindBackend() {
     g_backend = LoadLibraryA(g_backendName);
+    if (g_backend == g_self) {
+        // Belt and braces against the name juggling above: loading ourselves as
+        // the backend would recurse through every export until the stack ran out.
+        Log("FATAL: backend '%s' resolved to this DLL; refusing to proxy to myself",
+            g_backendName);
+        g_backend = nullptr;
+        return false;
+    }
     if (!g_backend) {
         Log("FATAL: cannot load backend '%s' (error %lu)", g_backendName, GetLastError());
         return false;
@@ -578,6 +615,7 @@ PASSTHROUGH_2(gbh_Convert16BitGraphic, int, int)
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
+        g_self = module;
         DisableThreadLibraryCalls(module);
         gta2dx9::OpenLog();
         Log("gta2dx9.dll attached to pid %lu", GetCurrentProcessId());
