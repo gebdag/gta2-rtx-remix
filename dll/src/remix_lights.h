@@ -38,6 +38,7 @@ enum LightSource : uint8_t {
     kLightSourceBullet,
     kLightSourceSpark,
     kLightSourceCigarette,
+    kLightSourceFire,
     kLightSourceHeadlight,
     kLightSourceCount
 };

@@ -40,6 +40,17 @@ struct VehicleTrack {
 };
 std::unordered_map<uintptr_t, VehicleTrack> g_vehicles;
 
+// Individual particles between frames, so a type's speed can be measured. Keyed
+// by address; a recycled slot at worst contributes one bogus speed sample.
+struct ParticleTrack {
+    float pos[3] = {};
+    int   type = 0;
+    unsigned frame = 0;
+};
+std::unordered_map<uintptr_t, ParticleTrack> g_particleTracks;
+unsigned g_walkFrame = 0;
+int g_highlightType = -1;
+
 // A list walk in another process's heap needs a stop, in case a pointer is
 // stale mid-frame. Comfortably above anything GTA2 has live at once.
 const int kMaxWalk = 4096;
@@ -49,7 +60,7 @@ const int kMaxWalk = 4096;
 const float kWorldMargin = 8.0f;
 
 const char* const kCategoryNames[kSynthCategoryCount] = {
-    "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Headlights"};
+    "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights"};
 
 // The game's frame is x east, y south, z the level. Ours is x east, y up,
 // z north, with the rows mirrored - the same conversion live_geometry.cpp does
@@ -80,13 +91,31 @@ void EnsureBinding() {
     g_bindingReady = true;
     for (int i = 0; i < kMaxParticleType; ++i) g_binding[i] = -1;
 
-    // The only binding the static analysis supports on its own. FUN_0048CD10 in
-    // the weapon module fires two particles per shot - 0x28 and 0x29 - so both
-    // go to the muzzle flash. Everything else is left unbound on purpose: a
-    // wrong guess puts light on the wrong effect and nothing in the picture says
-    // so, whereas an unbound category says exactly that in the menu.
+    // Muzzle flash: FUN_0048CD10 in the weapon module fires 0x28 and 0x29 as a
+    // pair on every shot. Confirmed in game.
     g_binding[0x28] = kSynthMuzzle;
     g_binding[0x29] = kSynthMuzzle;
+
+    // The other three came from profiling the types in the attract screen rather
+    // than from reading spawners, because behaviour separates them and code does
+    // not. Over a few minutes, measured per type:
+    //
+    //   0x26  speed 0.28 tiles/frame, one at a time, dies in ~10 frames, on the
+    //         ground. Two and a half times faster than anything else in the
+    //         game -- that is a bullet in flight.
+    //   0x07  arrives 24 at once and is gone in 3.5 frames. Nothing else bursts
+    //         remotely that hard or dies that fast -- scrape sparks.
+    //   0x2B  lasts 46 frames, 13 at a time, up to 93 alive, at ground level.
+    //         Long-burning and clustered -- fire.
+    //
+    // Rebindable from the F4 menu, which shows the same profile these were read
+    // off, so a wrong call here costs one click rather than a rebuild.
+    g_binding[0x07] = kSynthSpark;
+    // 0x26 and 0x2B were bound to bullet and fire on the strength of the profile
+    // and both were wrong - each emitted thousands of lights on the wrong sprite.
+    // They stay unbound rather than plausibly wrong: an unbound category says so
+    // in the menu, a mis-bound one just puts light somewhere odd. Use Highlight
+    // on the Effects tab to settle them by eye.
 
     SyntheticCategorySettings& muzzle = g_settings.category[kSynthMuzzle];
     muzzle.rgb[0] = 1.0f; muzzle.rgb[1] = 0.82f; muzzle.rgb[2] = 0.45f;
@@ -109,6 +138,15 @@ void EnsureBinding() {
     cig.intensity = 0.12f;
     cig.radius = 0.6f;
     cig.heightOffset = 0.08f;
+
+    SyntheticCategorySettings& fire = g_settings.category[kSynthFire];
+    fire.rgb[0] = 1.0f; fire.rgb[1] = 0.45f; fire.rgb[2] = 0.10f;
+    fire.intensity = 0.7f;
+    fire.radius = 2.5f;
+    fire.heightOffset = 0.1f;
+    // Fires come in clusters of dozens and each one is a bridge round trip, so
+    // this ceiling matters more here than anywhere else.
+    fire.maxLights = 16;
 
     SyntheticCategorySettings& head = g_settings.category[kSynthHeadlight];
     head.rgb[0] = 1.0f; head.rgb[1] = 0.93f; head.rgb[2] = 0.80f;
@@ -156,10 +194,13 @@ void SubmitPoint(int category, const float* world, float extraIntensity) {
     d.source = static_cast<uint8_t>(kLightSourceMuzzle + category);
     LightsSubmitExtra(d);
     ++g_stats.emitted[category];
+    ++g_stats.totalEmitted[category];
 }
 
 void WalkParticles() {
     for (ParticleTypeInfo& info : g_types) info.liveNow = 0;
+    ++g_walkFrame;
+    std::unordered_map<int, int> spawnedThisFrame;
 
     uint8_t* entry = game::ParticleListHead();
     g_stats.particleListFound = entry != nullptr;
@@ -182,12 +223,76 @@ void WalkParticles() {
             info.lastLife = *reinterpret_cast<const int16_t*>(entry + game::kParticleLife);
             ToWorld(gx, gy, gz, info.lastPos);
 
+            // Behaviour, measured rather than assumed.
+            ParticleTrack& track = g_particleTracks[reinterpret_cast<uintptr_t>(entry)];
+            if (track.frame && track.type == type) {
+                const float dx = info.lastPos[0] - track.pos[0];
+                const float dy = info.lastPos[1] - track.pos[1];
+                const float dz = info.lastPos[2] - track.pos[2];
+                const float speed = std::sqrt(dx * dx + dy * dy + dz * dz);
+                // A jump larger than this is the slot being reused by a new
+                // particle somewhere else, not motion. The first cut allowed 8
+                // tiles and every fast-turnover type came out looking supersonic.
+                if (speed < 1.5f) {
+                    info.speedSum += speed;
+                    info.riseSum += dy;
+                    ++info.speedSamples;
+                    if (speed > info.peakSpeed) info.peakSpeed = speed;
+                }
+            } else {
+                ++info.spawns;
+                ++spawnedThisFrame[type];
+            }
+            track.pos[0] = info.lastPos[0];
+            track.pos[1] = info.lastPos[1];
+            track.pos[2] = info.lastPos[2];
+            track.type = type;
+            track.frame = g_walkFrame;
+
+            info.lifeSum += info.lastLife;
+            info.heightSum += info.lastPos[1];
+            ++info.lifeSamples;
+            if (info.liveNow > info.maxLive) info.maxLive = info.liveNow;
+
+            if (type == g_highlightType) {
+                // Deliberately not routed through a category: it must show up
+                // even when the category it would land in is switched off, and
+                // it must not be confusable with a real effect light.
+                RemixLightDesc d;
+                d.pos[0] = info.lastPos[0];
+                d.pos[1] = info.lastPos[1] + 0.1f;
+                d.pos[2] = info.lastPos[2];
+                d.rgb[0] = 1.0f; d.rgb[1] = 0.0f; d.rgb[2] = 1.0f;
+                d.intensity = 4.0f;
+                d.radius = 3.0f;
+                d.source = kLightSourceMuzzle;
+                LightsSubmitExtra(d);
+            }
+
             const int category = g_binding[type];
             if (category >= 0 && g_settings.category[category].enabled) {
                 SubmitPoint(category, info.lastPos, 1.0f);
             }
         }
         entry = next;
+    }
+
+    for (auto& kv : spawnedThisFrame) {
+        ParticleTypeInfo& info = TypeSlot(kv.first);
+        if (kv.second > info.maxBurst) info.maxBurst = kv.second;
+    }
+    for (ParticleTypeInfo& info : g_types) {
+        if (info.speedSamples) {
+            info.meanSpeed = static_cast<float>(info.speedSum / info.speedSamples);
+            info.meanRise = static_cast<float>(info.riseSum / info.speedSamples);
+        }
+        if (info.lifeSamples) {
+            info.meanLife = static_cast<float>(info.lifeSum / info.lifeSamples);
+            info.meanHeight = static_cast<float>(info.heightSum / info.lifeSamples);
+        }
+    }
+    for (auto it = g_particleTracks.begin(); it != g_particleTracks.end();) {
+        it = (g_walkFrame - it->second.frame > 4) ? g_particleTracks.erase(it) : ++it;
     }
 }
 
@@ -281,6 +386,7 @@ void WalkVehicles() {
                                       static_cast<uint64_t>(side) + 0x48EAD11);
             LightsSubmitExtra(d);
             ++g_stats.emitted[kSynthHeadlight];
+            ++g_stats.totalEmitted[kSynthHeadlight];
         }
         entry = next;
     }
@@ -629,6 +735,22 @@ void SyntheticLightsUpdate() {
             g_stats.emitted[kSynthMuzzle], g_stats.emitted[kSynthBullet],
             g_stats.emitted[kSynthSpark], g_stats.emitted[kSynthCigarette],
             g_stats.emitted[kSynthHeadlight]);
+        Log("synthetic: totals since start | muzzle %u bullet %u spark %u cigarette %u fire %u "
+            "headlight %u",
+            g_stats.totalEmitted[kSynthMuzzle], g_stats.totalEmitted[kSynthBullet],
+            g_stats.totalEmitted[kSynthSpark], g_stats.totalEmitted[kSynthCigarette],
+            g_stats.totalEmitted[kSynthFire], g_stats.totalEmitted[kSynthHeadlight]);
+        // The profile is what separates a bullet from a spark from a fire, and
+        // no amount of decompiling says it: speed, how many arrive at once, how
+        // long they last.
+        Log("synthetic: type profile (speed in tiles/frame, life in frames)");
+        for (const ParticleTypeInfo& t : g_types) {
+            if (!t.spawns) continue;
+            Log("synthetic:   0x%02X  spawns %5u  burst %3d  live %3d  speed %.4f  rise %+.4f"
+                "  life %6.1f  height %.2f",
+                t.type, t.spawns, t.maxBurst, t.maxLive, t.meanSpeed, t.meanRise, t.meanLife,
+                t.meanHeight);
+        }
     }
     if (g_probeStage == 1) {
         if (--g_probeWaitFrames <= 0) SyntheticProbe(nullptr);
@@ -638,6 +760,12 @@ void SyntheticLightsUpdate() {
 }
 
 const std::vector<ParticleTypeInfo>& SyntheticParticleTypes() { return g_types; }
+
+void SyntheticHighlightType(int particleType) {
+    g_highlightType = (particleType >= 0 && particleType < kMaxParticleType) ? particleType : -1;
+}
+
+int SyntheticHighlightedType() { return g_highlightType; }
 
 void SyntheticForgetParticleTypes() {
     g_types.clear();

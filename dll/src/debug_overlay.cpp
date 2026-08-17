@@ -359,7 +359,11 @@ void DrawSynthetic() {
             } else {
                 ImGui::TextColored(kGood, "%d particle type(s) bound.", boundTypes);
             }
-            ImGui::Text("emitted last frame: %d", st.emitted[i]);
+            ImGui::Text("emitted last frame: %d   (%u since start)", st.emitted[i],
+                        st.totalEmitted[i]);
+            ImGui::SetItemTooltip("The running total is the one to watch for anything brief: a "
+                                  "spark burst lives three frames, so the per-frame count reads "
+                                  "zero almost every time you look at it.");
             if (st.capped[i]) {
                 ImGui::SameLine();
                 ImGui::TextColored(kWarn, "(%d dropped at the ceiling)", st.capped[i]);
@@ -388,7 +392,11 @@ void DrawEffectInspector() {
         "particle with a type id but nothing names them, so this is how a category gets bound: "
         "clear the list, trigger one effect -- fire a gun, scrape a wall, stand still until the "
         "cigarette comes out -- and the id that appears is the one. Rows seen in the last two "
-        "seconds are highlighted.");
+        "seconds are highlighted.\n\n"
+        "The behaviour columns are what actually tell the effects apart, and they are how bullet, "
+        "sparks and fire were identified: a bullet is far faster than anything else and travels "
+        "alone; sparks arrive two dozen at once and are gone in three frames; a fire lasts ten "
+        "times longer than that and clusters. Speed is tiles per frame, life is frames.");
 
     ImGui::Spacing();
     if (ImGui::Button("Clear list")) SyntheticForgetParticleTypes();
@@ -405,13 +413,16 @@ void DrawEffectInspector() {
 
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                 | ImGuiTableFlags_ScrollY;
-    if (!ImGui::BeginTable("types", 6, flags, ImVec2(0.0f, 380.0f))) return;
+    if (!ImGui::BeginTable("types", 9, flags, ImVec2(0.0f, 380.0f))) return;
     ImGui::TableSetupScrollFreeze(0, 1);
-    ImGui::TableSetupColumn("type", ImGuiTableColumnFlags_WidthFixed, 54.0f);
-    ImGui::TableSetupColumn("live", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-    ImGui::TableSetupColumn("seen", ImGuiTableColumnFlags_WidthFixed, 62.0f);
-    ImGui::TableSetupColumn("life", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-    ImGui::TableSetupColumn("last position", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+    ImGui::TableSetupColumn("type", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+    ImGui::TableSetupColumn("live", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+    ImGui::TableSetupColumn("spawns", ImGuiTableColumnFlags_WidthFixed, 58.0f);
+    ImGui::TableSetupColumn("burst", ImGuiTableColumnFlags_WidthFixed, 46.0f);
+    ImGui::TableSetupColumn("speed", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+    ImGui::TableSetupColumn("rise", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+    ImGui::TableSetupColumn("life", ImGuiTableColumnFlags_WidthFixed, 52.0f);
+    ImGui::TableSetupColumn("height", ImGuiTableColumnFlags_WidthFixed, 54.0f);
     ImGui::TableSetupColumn("bound to");
     ImGui::TableHeadersRow();
 
@@ -426,13 +437,32 @@ void DrawEffectInspector() {
         ImGui::TableNextColumn();
         ImGui::Text("%d", info.liveNow);
         ImGui::TableNextColumn();
-        ImGui::Text("%u", info.totalSeen);
+        ImGui::Text("%u", info.spawns);
         ImGui::TableNextColumn();
-        ImGui::Text("%d", info.lastLife);
+        ImGui::Text("%d", info.maxBurst);
         ImGui::TableNextColumn();
-        ImGui::Text("%7.2f %5.2f %7.2f", info.lastPos[0], info.lastPos[1], info.lastPos[2]);
+        ImGui::Text("%.3f", info.meanSpeed);
+        ImGui::TableNextColumn();
+        ImGui::TextColored(info.meanRise > 0.002f ? kWarn : kDim, "%+.4f", info.meanRise);
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f", info.meanLife);
+        ImGui::TableNextColumn();
+        ImGui::Text("%.2f", info.meanHeight);
 
         ImGui::TableNextColumn();
+        const bool lit = SyntheticHighlightedType() == info.type;
+        if (lit) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.2f, 0.75f, 1.0f));
+        if (ImGui::SmallButton(lit ? "lit" : "light")) {
+            SyntheticHighlightType(lit ? -1 : info.type);
+        }
+        if (lit) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Paint every particle of this type bright magenta, whatever it is "
+                              "bound to. Look at the screen: that is the only way to tell the "
+                              "fire from the smoke above it from the litter on the pavement.");
+        }
+        ImGui::SameLine();
+
         const int bound = SyntheticTypeBinding(info.type);
         for (int i = 0; i < kSynthCategoryCount; ++i) {
             if (i == kSynthHeadlight) continue;   // vehicles, not particles

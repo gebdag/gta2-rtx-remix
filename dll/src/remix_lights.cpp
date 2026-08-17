@@ -372,6 +372,7 @@ const char* LightSourceName(uint8_t source) {
         case kLightSourceBullet: return "bullet";
         case kLightSourceSpark: return "spark";
         case kLightSourceCigarette: return "cigarette";
+        case kLightSourceFire: return "fire";
         case kLightSourceHeadlight: return "headlight";
         default: return "?";
     }

@@ -33,6 +33,7 @@ enum SyntheticCategory {
     kSynthBullet,
     kSynthSpark,
     kSynthCigarette,
+    kSynthFire,
     kSynthHeadlight,
     kSynthCategoryCount
 };
@@ -109,11 +110,40 @@ struct ParticleTypeInfo {
     unsigned firstSeenTick = 0;
     float lastPos[3] = {};    // renderer world space
     int lastLife = 0;
+
+    // What the type *behaves* like, which is what actually tells the effects
+    // apart. A bullet is fast and travels; a spark arrives in a burst, moves a
+    // little and dies at once; a fire sits still for a long time; a cigarette
+    // sits still on its own. None of that is legible in a decompiler.
+    unsigned spawns = 0;
+    int      maxBurst = 0;      // most that appeared in a single frame
+    int      maxLive = 0;
+    float    meanSpeed = 0.0f;  // tiles per frame
+    float    peakSpeed = 0.0f;
+    float    meanLife = 0.0f;   // frames, from the game's own countdown
+    float    meanHeight = 0.0f; // map level
+    // Smoke rises and fire does not, which is the one measurement that tells
+    // those two apart - they otherwise look identical: long-lived, clustered,
+    // many at once.
+    float    meanRise = 0.0f;   // tiles per frame, signed
+    double   riseSum = 0.0;
+    double   speedSum = 0.0;
+    unsigned speedSamples = 0;
+    double   lifeSum = 0.0;
+    double   heightSum = 0.0;
+    unsigned lifeSamples = 0;
 };
 
 // Ordered by type id so the menu list does not reshuffle under the cursor.
 const std::vector<ParticleTypeInfo>& SyntheticParticleTypes();
 void SyntheticForgetParticleTypes();
+
+// Paints every particle of one type with a hard magenta light, whatever it is
+// bound to. This is how a type gets identified: the numbers narrow it down, but
+// only looking at the screen while one type is lit tells you whether that is the
+// fire, the smoke above it, or the litter on the pavement. 0 clears.
+void SyntheticHighlightType(int particleType);
+int  SyntheticHighlightedType();
 
 struct SyntheticStats {
     int particlesWalked = 0;
@@ -121,6 +151,10 @@ struct SyntheticStats {
     int vehiclesDriven = 0;
     int emitted[kSynthCategoryCount] = {};
     int capped[kSynthCategoryCount] = {};   // wanted a light, hit the ceiling
+    // Cumulative, because the per-frame count is a single instant and a spark
+    // burst is gone in three frames: sampling it almost always reads zero and
+    // makes a working category look dead.
+    unsigned totalEmitted[kSynthCategoryCount] = {};
     bool particleListFound = false;
     bool vehicleListFound = false;
     bool trigTablesReady = false;
