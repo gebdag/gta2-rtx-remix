@@ -14,6 +14,7 @@
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
+#include "synthetic_lights.h"
 #include "texture_store.h"
 
 namespace gta2dx9 {
@@ -608,6 +609,11 @@ void WorldView::RenderFrame() {
     // says so, which it cannot do if it only exists once Remix is there.
     DebugMenuInit(gameWindow_, window_, renderer_.Device());
     DebugMenuPoll();
+
+    // Lights for the effects the game draws but never lights, read straight off
+    // its particle and vehicle lists. Before the reconcile, so they are matched
+    // and handled in the same pass as the game's own.
+    SyntheticLightsUpdate();
 
     // The game lists this frame's lights during its own world pass, which runs
     // between gbh_BeginScene and the gbh_EndScene that brought us here - so by

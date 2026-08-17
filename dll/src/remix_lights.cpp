@@ -20,7 +20,9 @@ namespace {
 RemixLightSettings g_settings;
 
 std::vector<RemixTrackedLight>         g_tracked;
-std::vector<RemixLightDesc>            g_pending;     // this frame's list, as submitted
+std::vector<RemixLightDesc>            g_pending;     // this frame's list, as the game gave it
+std::vector<RemixLightDesc>            g_extra;       // this frame's invented lights
+std::vector<RemixLightDesc>            g_working;     // the two above, merged
 std::map<uint64_t, RemixLightOverride> g_overrides;   // ordered: the menu lists these
 
 RemixLightStats g_stats;
@@ -90,13 +92,15 @@ uint64_t PositionKey(const RemixLightDesc& d) {
 }
 
 bool SameColourAndRadius(const RemixLightDesc& a, const RemixLightDesc& b) {
-    return a.rgb[0] == b.rgb[0] && a.rgb[1] == b.rgb[1] && a.rgb[2] == b.rgb[2]
-        && a.radius == b.radius;
+    return a.source == b.source && a.rgb[0] == b.rgb[0] && a.rgb[1] == b.rgb[1]
+        && a.rgb[2] == b.rgb[2] && a.radius == b.radius;
 }
 
 bool SameDesc(const RemixLightDesc& a, const RemixLightDesc& b) {
     return SameColourAndRadius(a, b) && a.intensity == b.intensity && a.pos[0] == b.pos[0]
-        && a.pos[1] == b.pos[1] && a.pos[2] == b.pos[2];
+        && a.pos[1] == b.pos[1] && a.pos[2] == b.pos[2] && a.spot == b.spot
+        && a.coneAngleDeg == b.coneAngleDeg && a.dir[0] == b.dir[0] && a.dir[1] == b.dir[1]
+        && a.dir[2] == b.dir[2];
 }
 
 float DistanceSquared(const float* a, const float* b) {
@@ -193,6 +197,15 @@ void Apply(RemixTrackedLight& t) {
     sphere.radius = (ov && ov->emitterRadius > 0.0f) ? ov->emitterRadius
                                                      : g_settings.emitterRadius;
     sphere.volumetricRadianceScale = 1.0f;
+    // A headlight is a cone, not a bare bulb. Remix calls that shaping, and it
+    // is the one thing here the game's own light model had no way to express.
+    if (t.def.spot) {
+        sphere.shaping_hasvalue = 1;
+        sphere.shaping_value.direction = ToRemix(t.def.dir);
+        sphere.shaping_value.coneAngleDegrees = t.def.coneAngleDeg;
+        sphere.shaping_value.coneSoftness = g_settings.coneSoftness;
+        sphere.shaping_value.focusExponent = 0.0f;
+    }
     info.pNext = &sphere;
 
     const bool existed = t.handle != nullptr;
@@ -257,7 +270,8 @@ bool SameSettings(const RemixLightSettings& a, const RemixLightSettings& b) {
         && a.movingScale == b.movingScale && a.referenceRadius == b.referenceRadius
         && a.radiusExponent == b.radiusExponent && a.emitterRadius == b.emitterRadius
         && a.minIntensity == b.minIntensity && a.saturation == b.saturation
-        && a.ambientFill == b.ambientFill && a.ambientFillScale == b.ambientFillScale;
+        && a.ambientFill == b.ambientFill && a.ambientFillScale == b.ambientFillScale
+        && a.coneSoftness == b.coneSoftness;
 }
 
 char* TrimInPlace(char* s) {
@@ -290,6 +304,8 @@ void LightsShutdown() {
     // being tried out; the Save button is.
     ClearAll();
     g_pending.clear();
+    g_extra.clear();
+    g_working.clear();
 }
 
 RemixLightSettings& LightsSettings() { return g_settings; }
@@ -345,6 +361,22 @@ void LightsAddRaw(const void* descriptor) {
 
 void LightsSetAmbient(float ambient) { g_ambient = ambient; }
 
+void LightsBeginExtra() { g_extra.clear(); }
+
+void LightsSubmitExtra(const RemixLightDesc& desc) { g_extra.push_back(desc); }
+
+const char* LightSourceName(uint8_t source) {
+    switch (source) {
+        case kLightSourceGame: return "game";
+        case kLightSourceMuzzle: return "muzzle";
+        case kLightSourceBullet: return "bullet";
+        case kLightSourceSpark: return "spark";
+        case kLightSourceCigarette: return "cigarette";
+        case kLightSourceHeadlight: return "headlight";
+        default: return "?";
+    }
+}
+
 void LightsSetScene(const char* name) {
     const char* safe = name ? name : "";
     if (strncmp(safe, g_sceneName, sizeof(g_sceneName) - 1) == 0) return;
@@ -384,52 +416,73 @@ void LightsReconcile() {
     const bool listValid = fresh || g_framesSinceCollect <= kExpireFrames;
     if (!listValid) g_pending.clear();
 
-    g_stats.submittedLastFrame = static_cast<int>(g_pending.size());
+    // The game's list plus the ones we invented. Merged into one working set so
+    // both go through the same matching, handle and expiry path.
+    g_working.clear();
+    g_working.insert(g_working.end(), g_pending.begin(), g_pending.end());
+    g_working.insert(g_working.end(), g_extra.begin(), g_extra.end());
+    g_extra.clear();
+
+    g_stats.submittedLastFrame = static_cast<int>(g_working.size());
     g_stats.suppressedByClass = 0;
     g_stats.suppressedByIntensity = 0;
 
     // --- Match this frame's list onto the tracked set ---------------------
     //
-    // Static lights are matched on position, which is exact and unique for
-    // almost all of them; a traffic light keeps its identity through a colour
-    // change that way. Whatever is left is a light that moved - a headlight on a
-    // car - and is matched to the nearest tracked light of the same colour and
-    // reach.
+    // Three passes, most specific first. A light that carries its own identity
+    // takes it. Otherwise position, which is exact and unique for almost every
+    // static light and keeps a traffic light's identity through a colour change.
+    // Whatever is left has moved - a headlight, a bullet - and goes to the
+    // nearest tracked light of the same kind, colour and reach.
     std::vector<bool> claimed(g_tracked.size(), false);
-    std::vector<int> match(g_pending.size(), -1);
+    std::vector<int> match(g_working.size(), -1);
 
+    std::unordered_map<uint64_t, size_t> byExplicitId;
     std::unordered_multimap<uint64_t, size_t> byPosition;
     byPosition.reserve(g_tracked.size() * 2);
     for (size_t i = 0; i < g_tracked.size(); ++i) {
+        if (g_tracked[i].def.explicitId) byExplicitId[g_tracked[i].def.explicitId] = i;
         byPosition.emplace(PositionKey(g_tracked[i].def), i);
     }
 
-    for (size_t p = 0; p < g_pending.size(); ++p) {
-        const uint64_t key = PositionKey(g_pending[p]);
+    for (size_t p = 0; p < g_working.size(); ++p) {
+        if (!g_working[p].explicitId) continue;
+        auto it = byExplicitId.find(g_working[p].explicitId);
+        if (it == byExplicitId.end() || claimed[it->second]) continue;
+        match[p] = static_cast<int>(it->second);
+        claimed[it->second] = true;
+    }
+
+    for (size_t p = 0; p < g_working.size(); ++p) {
+        if (match[p] >= 0 || g_working[p].explicitId) continue;
+        const uint64_t key = PositionKey(g_working[p]);
         auto range = byPosition.equal_range(key);
         int fallback = -1;
         for (auto it = range.first; it != range.second; ++it) {
             const size_t i = it->second;
-            if (claimed[i]) continue;
-            if (SameColourAndRadius(g_tracked[i].def, g_pending[p])) {
+            if (claimed[i] || g_tracked[i].def.explicitId) continue;
+            if (SameColourAndRadius(g_tracked[i].def, g_working[p])) {
                 match[p] = static_cast<int>(i);
                 break;
             }
             // Same spot but recoloured - a traffic light changing phase. Take it
             // only if no exact candidate turns up.
-            if (fallback < 0) fallback = static_cast<int>(i);
+            if (fallback < 0 && g_tracked[i].def.source == g_working[p].source) {
+                fallback = static_cast<int>(i);
+            }
         }
         if (match[p] < 0 && fallback >= 0) match[p] = fallback;
         if (match[p] >= 0) claimed[match[p]] = true;
     }
 
-    for (size_t p = 0; p < g_pending.size(); ++p) {
-        if (match[p] >= 0) continue;
+    for (size_t p = 0; p < g_working.size(); ++p) {
+        if (match[p] >= 0 || g_working[p].explicitId) continue;
         int best = -1;
         float bestDistance = kMoveMatchDistance * kMoveMatchDistance;
         for (size_t i = 0; i < g_tracked.size(); ++i) {
-            if (claimed[i] || !SameColourAndRadius(g_tracked[i].def, g_pending[p])) continue;
-            const float d2 = DistanceSquared(g_tracked[i].def.pos, g_pending[p].pos);
+            if (claimed[i] || g_tracked[i].def.explicitId) continue;
+            if (!SameColourAndRadius(g_tracked[i].def, g_working[p])) continue;
+            const float d2 = DistanceSquared(g_tracked[i].def.pos, g_working[p].pos);
             if (d2 < bestDistance) {
                 bestDistance = d2;
                 best = static_cast<int>(i);
@@ -442,19 +495,19 @@ void LightsReconcile() {
     }
 
     // --- Fold the matches in ----------------------------------------------
-    for (size_t p = 0; p < g_pending.size(); ++p) {
+    for (size_t p = 0; p < g_working.size(); ++p) {
         if (match[p] >= 0) {
             RemixTrackedLight& t = g_tracked[match[p]];
-            if (!SameDesc(t.def, g_pending[p])) {
+            if (!SameDesc(t.def, g_working[p])) {
                 // A light that has been seen somewhere else is a moving one, and
                 // moving lights get no persistent override key: there is nothing
                 // stable to hang one on.
-                if (t.def.pos[0] != g_pending[p].pos[0] || t.def.pos[1] != g_pending[p].pos[1]
-                    || t.def.pos[2] != g_pending[p].pos[2]) {
+                if (t.def.pos[0] != g_working[p].pos[0] || t.def.pos[1] != g_working[p].pos[1]
+                    || t.def.pos[2] != g_working[p].pos[2]) {
                     t.moving = true;
                     t.key = 0;
                 }
-                t.def = g_pending[p];
+                t.def = g_working[p];
                 t.dirty = true;
             }
             t.lastSeenFrame = g_frame;
@@ -462,8 +515,12 @@ void LightsReconcile() {
         }
         RemixTrackedLight t;
         t.id = g_nextId++;
-        t.def = g_pending[p];
-        t.key = StableKey(t.def);
+        t.def = g_working[p];
+        // Only the game's own static lights get an identity that survives a
+        // restart. Ours are transient by nature and there is nothing to pin one
+        // to; the per-category controls are what tunes those.
+        t.key = t.def.source == kLightSourceGame && !t.def.explicitId ? StableKey(t.def) : 0;
+        t.moving = t.def.explicitId != 0;
         t.lastSeenFrame = g_frame;
         t.firstFrame = g_frame;
         g_tracked.push_back(t);
@@ -499,8 +556,10 @@ void LightsReconcile() {
     // --- Create, redefine, suppress ----------------------------------------
     g_stats.suppressedByOverride = 0;
     g_stats.moving = 0;
+    for (int i = 0; i < kLightSourceCount; ++i) g_stats.bySource[i] = 0;
     for (RemixTrackedLight& t : g_tracked) {
         if (t.moving) ++g_stats.moving;
+        if (t.def.source < kLightSourceCount) ++g_stats.bySource[t.def.source];
 
         const RemixLightOverride* ov = LightsFindOverride(t.key);
         const bool identified = t.key != 0 && t.key == g_identify;
@@ -509,7 +568,10 @@ void LightsReconcile() {
         if (ov && ov->disabled && !identified) {
             ++g_stats.suppressedByOverride;
             suppressed = true;
-        } else if (!(t.moving ? g_settings.injectMoving : g_settings.injectStatic)) {
+        } else if (t.def.source == kLightSourceGame
+                   && !(t.moving ? g_settings.injectMoving : g_settings.injectStatic)) {
+            // Only the game's own lights are filtered this way. Ours are gated by
+            // their category, upstream, and never reach here when switched off.
             ++g_stats.suppressedByClass;
             suppressed = true;
         } else if (t.def.intensity < g_settings.minIntensity && !identified) {

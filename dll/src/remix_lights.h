@@ -29,13 +29,39 @@
 
 namespace gta2dx9 {
 
-// One light as the game described it, already converted into renderer world
-// space and 0..1 colour.
+// Where a light came from. The game's own lights all arrive through
+// gbh_AddLight; everything above kLightSourceGame is invented by
+// synthetic_lights.cpp from effects GTA2 draws but does not light.
+enum LightSource : uint8_t {
+    kLightSourceGame = 0,
+    kLightSourceMuzzle,
+    kLightSourceBullet,
+    kLightSourceSpark,
+    kLightSourceCigarette,
+    kLightSourceHeadlight,
+    kLightSourceCount
+};
+
+const char* LightSourceName(uint8_t source);
+
+// One light, already converted into renderer world space and 0..1 colour.
 struct RemixLightDesc {
     float pos[3] = {};      // world units: +X east, +Y up, +Z north
     float rgb[3] = {};      // 0..1
-    float intensity = 0.0f; // 0..1, the game's own byte scaled
-    float radius = 0.0f;    // the game's reach in tiles; drives brightness
+    float intensity = 0.0f; // 0..1
+    float radius = 0.0f;    // reach in tiles; drives brightness, not emitter size
+
+    // Cone shaping, for headlights. dir is a unit vector in world space.
+    bool  spot = false;
+    float dir[3] = {};
+    float coneAngleDeg = 0.0f;
+
+    uint8_t source = kLightSourceGame;
+
+    // When non-zero this light carries its own identity and is matched on it
+    // rather than by position or proximity. Headlights use it so a car's beams
+    // keep one handle for as long as the car exists, however far it drives.
+    uint64_t explicitId = 0;
 };
 
 // A user's per-light edits, persisted to gta2dx9_lights.ini beside the game.
@@ -107,6 +133,9 @@ struct RemixLightSettings {
     // equivalent for. Optionally stand one up as a dim overhead distant light.
     bool  ambientFill = false;
     float ambientFillScale = 1.0f;
+
+    // Softness of the headlight cone edge, 0 is a hard rim.
+    float coneSoftness = 0.35f;
 };
 
 void LightsInit(const char* overridePath);
@@ -129,6 +158,16 @@ void LightsAddRaw(const void* descriptor);
 
 // gbh_SetAmbient, in the game's own 0..1 scale.
 void LightsSetAmbient(float ambient);
+
+// --- Lights we invent ---
+//
+// Kept in a list of their own rather than appended to the game's, because the
+// game's is discarded when it goes stale (menus, load screens) and these are
+// rebuilt from live state every frame regardless.
+
+// Clears the invented list. Call once per frame before submitting.
+void LightsBeginExtra();
+void LightsSubmitExtra(const RemixLightDesc& desc);
 
 // Which district is loaded. Salts the override keys so two maps cannot share an
 // entry just because a lamp happens to stand in the same place in both.
@@ -182,6 +221,7 @@ struct RemixLightStats {
     int suppressedByOverride = 0;
     int suppressedByClass = 0;
     int suppressedByIntensity = 0;
+    int bySource[kLightSourceCount] = {};   // tracked lights, by where they came from
     unsigned created = 0;
     unsigned destroyed = 0;
     unsigned updated = 0;

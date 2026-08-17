@@ -27,6 +27,7 @@ cl /nologo /std:c++17 /EHsc /O2 /W3 /MT /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS ^
    /LD /Fe:build\gta2dx9.dll /Fo:build\ ^
    src\dllmain.cpp src\world_view.cpp src\log.cpp src\texture_store.cpp src\overlay.cpp ^
    src\live_geometry.cpp src\remix_api.cpp src\remix_lights.cpp src\debug_overlay.cpp ^
+   src\synthetic_lights.cpp ^
    deps\imgui\imgui.cpp deps\imgui\imgui_draw.cpp deps\imgui\imgui_tables.cpp ^
    deps\imgui\imgui_widgets.cpp deps\imgui\backends\imgui_impl_dx9.cpp ^
    deps\imgui\backends\imgui_impl_win32.cpp ^

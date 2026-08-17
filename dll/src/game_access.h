@@ -201,6 +201,87 @@ inline int TileForTexture(const void* record) {
     return -1;
 }
 
+// ---------------------------------------------------------------------------
+// Live effect state, for the lights GTA2 does not emit itself.
+//
+// Particles, objects and vehicles all carry the same placement block, because
+// they all go through FUN_00420600 (position) and FUN_00420690 (heading).
+// ---------------------------------------------------------------------------
+
+constexpr uintptr_t kPlaceHeading = 0x00;  // uint16, indexes the trig tables below
+constexpr uintptr_t kPlaceX = 0x14;        // 16.14 fixed, tiles east
+constexpr uintptr_t kPlaceY = 0x18;        // 16.14 fixed, tiles south
+constexpr uintptr_t kPlaceZ = 0x1C;        // 16.14 fixed, map level
+
+// particle.cpp. The manager (FUN_00491B90 allocates it, 0x947C bytes) is also
+// the pool: free list at +0, live list at +4, walked through +0x3C.
+constexpr uintptr_t kParticleManagerPtr = 0x00669E70;
+constexpr uintptr_t kParticleLiveHead = 0x04;
+constexpr uintptr_t kParticleNext = 0x3C;
+constexpr uintptr_t kParticleLife = 0x2C;  // int16, frames remaining
+constexpr uintptr_t kParticleType = 0x38;  // int32
+
+// Same shape for vehicles: FUN_004254A0 appends, FUN_00425480 prepends.
+constexpr uintptr_t kVehiclePoolPtr = 0x005E4CA0;
+constexpr uintptr_t kVehicleLiveHead = 0x04;
+constexpr uintptr_t kVehicleNext = 0x4C;
+constexpr uintptr_t kVehicleModel = 0x84;  // int32, car model id
+
+// Sine and cosine of a heading, in 16.14 fixed, indexed by the raw heading with
+// no masking - which is how FUN_0040F500 and FUN_0040F520 do it, so any heading
+// the game stores is already in range. Like the slope table these are built at
+// startup, so they read as zeroes in the image and only exist in the process.
+constexpr uintptr_t kSinTablePtr = 0x005D3938;
+constexpr uintptr_t kCosTablePtr = 0x005D6718;
+constexpr int kTrigTableEntries = (kCosTablePtr - kSinTablePtr) / 4;
+
+// A linked list read out of another process's heap is one bad pointer away from
+// taking the game down with it, and these lists are walked every frame.
+inline bool PlausiblePointer(const void* p) {
+    const uintptr_t address = reinterpret_cast<uintptr_t>(p);
+    return address >= 0x00010000 && address < 0x7FFE0000 && (address & 3) == 0;
+}
+
+inline uint8_t* ParticleListHead() {
+    uint8_t* manager = *reinterpret_cast<uint8_t**>(kParticleManagerPtr);
+    if (!PlausiblePointer(manager)) return nullptr;
+    uint8_t* head = *reinterpret_cast<uint8_t**>(manager + kParticleLiveHead);
+    return PlausiblePointer(head) ? head : nullptr;
+}
+
+inline uint8_t* VehicleListHead() {
+    uint8_t* pool = *reinterpret_cast<uint8_t**>(kVehiclePoolPtr);
+    if (!PlausiblePointer(pool)) return nullptr;
+    uint8_t* head = *reinterpret_cast<uint8_t**>(pool + kVehicleLiveHead);
+    return PlausiblePointer(head) ? head : nullptr;
+}
+
+inline uint8_t* NextInList(const uint8_t* entry, uintptr_t nextOffset) {
+    uint8_t* next = *reinterpret_cast<uint8_t* const*>(entry + nextOffset);
+    return PlausiblePointer(next) ? next : nullptr;
+}
+
+// x east, y south, z the map level - the game's own frame, not the renderer's.
+inline void ReadPlacement(const uint8_t* entry, float* x, float* y, float* z) {
+    *x = *reinterpret_cast<const int32_t*>(entry + kPlaceX) * kFixedScale;
+    *y = *reinterpret_cast<const int32_t*>(entry + kPlaceY) * kFixedScale;
+    *z = *reinterpret_cast<const int32_t*>(entry + kPlaceZ) * kFixedScale;
+}
+
+// Forward direction in the game's frame, as the game computes it
+// (FUN_0041FC20: x = sin(heading), y = cos(heading)). False when the trig
+// tables have not been built yet, which is the case in the menus.
+inline bool ReadFacing(const uint8_t* entry, float* dirX, float* dirY) {
+    const uint16_t heading = *reinterpret_cast<const uint16_t*>(entry + kPlaceHeading);
+    if (heading >= kTrigTableEntries) return false;
+    const int32_t s = *reinterpret_cast<const int32_t*>(kSinTablePtr + heading * 4u);
+    const int32_t c = *reinterpret_cast<const int32_t*>(kCosTablePtr + heading * 4u);
+    if (s == 0 && c == 0) return false;   // table not built
+    *dirX = s * kFixedScale;
+    *dirY = c * kFixedScale;
+    return true;
+}
+
 inline bool CameraPosition(float* x, float* y) {
     uint8_t* camera = CameraStruct();
     if (!camera) return false;

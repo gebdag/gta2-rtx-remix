@@ -5,6 +5,7 @@
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
+#include "synthetic_lights.h"
 
 #include <d3d9.h>
 
@@ -259,6 +260,182 @@ void DrawTuning() {
     ImGui::TextColored(LightsOverridesDirty() ? kWarn : kDim, "%d override(s) in %s%s",
                        static_cast<int>(LightsOverrides().size()), LightsOverridePath(),
                        LightsOverridesDirty() ? "  (unsaved)" : "");
+}
+
+void DrawCategory(int category) {
+    SyntheticCategorySettings& c = SyntheticLightsSettings().category[category];
+    ImGui::PushID(category);
+
+    bool changed = ImGui::Checkbox("Enabled", &c.enabled);
+    ImGui::SameLine();
+    ImGui::ColorButton("##swatch", ImVec4(c.rgb[0], c.rgb[1], c.rgb[2], 1.0f),
+                       ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
+    ImGui::SameLine();
+    changed |= ImGui::ColorEdit3("Colour", c.rgb, ImGuiColorEditFlags_NoInputs);
+
+    changed |= ImGui::SliderFloat("Intensity", &c.intensity, 0.0f, 8.0f, "%.3f",
+                                  ImGuiSliderFlags_Logarithmic);
+    ImGui::SetItemTooltip("Multiplied by the global brightness on the Status tab, like every "
+                          "other light.");
+    changed |= ImGui::SliderFloat("Reach (tiles)", &c.radius, 0.1f, 12.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Height offset", &c.heightOffset, -0.5f, 2.0f, "%.3f");
+    changed |= ImGui::SliderInt("Max lights", &c.maxLights, 1, 128);
+    ImGui::SetItemTooltip("Every light is a CreateLight across the 32-bit Remix bridge, and some "
+                          "particle types arrive in bursts of dozens. This is the ceiling per "
+                          "frame for this category.");
+
+    if (category == kSynthHeadlight) {
+        ImGui::SeparatorText("Beam");
+        changed |= ImGui::SliderFloat("Cone angle", &c.coneAngleDeg, 5.0f, 90.0f, "%.1f deg");
+        changed |= ImGui::SliderFloat("Downward pitch", &c.pitchDegrees, 0.0f, 45.0f, "%.1f deg");
+        changed |= ImGui::SliderFloat("Forward from centre", &c.forwardOffset, 0.0f, 2.0f, "%.3f");
+        ImGui::SetItemTooltip("Distance from the car's centre to its nose, in tiles.");
+        changed |= ImGui::SliderFloat("Beam separation", &c.sideOffset, 0.0f, 1.0f, "%.3f");
+        ImGui::SetItemTooltip("Half the spacing between the two beams.");
+        changed |= ImGui::SliderFloat("Cone softness", &LightsSettings().coneSoftness, 0.0f, 1.0f,
+                                      "%.2f");
+    }
+
+    if (changed) SyntheticLightsMarkDirty();
+    ImGui::PopID();
+}
+
+void DrawSynthetic() {
+    SyntheticSettings& s = SyntheticLightsSettings();
+    const SyntheticStats& st = SyntheticLightsStats();
+
+    ImGui::TextWrapped(
+        "GTA2 emits no light for gunfire, bullets, sparks or cigarettes, and its headlamps are "
+        "point lights with no beam. These are invented from the game's live particle and vehicle "
+        "lists. Which particle type is which effect is not written down anywhere in the game, so "
+        "it is bound on the Effects tab by triggering the effect and watching which id appears.");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Inject invented lights", &s.enabled)) SyntheticLightsMarkDirty();
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "particles walked %d  |  vehicles %d, %d driven", st.particlesWalked,
+                       st.vehiclesWalked, st.vehiclesDriven);
+
+    if (!st.particleListFound) {
+        ImGui::TextColored(kWarn, "No particle list -- normal in the menus, and while nothing has "
+                                  "spawned one yet.");
+    }
+    if (!st.vehicleListFound) {
+        ImGui::TextColored(kWarn, "No vehicle list yet.");
+    }
+
+    ImGui::Spacing();
+    if (ImGui::BeginTabBar("categories")) {
+        for (int i = 0; i < kSynthCategoryCount; ++i) {
+            if (!ImGui::BeginTabItem(SyntheticCategoryName(i))) continue;
+
+            int boundTypes = 0;
+            for (int t = 0; t < kMaxParticleType; ++t) {
+                if (SyntheticTypeBinding(t) == i) ++boundTypes;
+            }
+            if (i == kSynthHeadlight) {
+                ImGui::TextColored(kDim, "From the vehicle list. A car counts as driven while it "
+                                         "has moved recently, which covers the player and the "
+                                         "traffic and leaves parked cars dark.");
+                bool changed = false;
+                int window = static_cast<int>(s.drivenWindowMs);
+                changed |= ImGui::SliderInt("Driven window (ms)", &window, 0, 10000);
+                s.drivenWindowMs = static_cast<unsigned>(window);
+                ImGui::SetItemTooltip("How long a car keeps its beams after it stops moving. Long "
+                                      "enough that waiting at a junction does not switch them "
+                                      "off.");
+                changed |= ImGui::SliderFloat("Movement threshold", &s.drivenMinMovement, 0.0f,
+                                              0.05f, "%.4f");
+                if (changed) SyntheticLightsMarkDirty();
+            } else if (boundTypes == 0) {
+                ImGui::TextColored(kBad, "No particle type is bound to this category, so it emits "
+                                         "nothing. Go to the Effects tab, trigger the effect in "
+                                         "game, and bind the id that appears.");
+            } else {
+                ImGui::TextColored(kGood, "%d particle type(s) bound.", boundTypes);
+            }
+            ImGui::Text("emitted last frame: %d", st.emitted[i]);
+            if (st.capped[i]) {
+                ImGui::SameLine();
+                ImGui::TextColored(kWarn, "(%d dropped at the ceiling)", st.capped[i]);
+            }
+            ImGui::Separator();
+            DrawCategory(i);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button(SyntheticLightsDirty() ? "Save effect settings *" : "Save effect settings")) {
+        SyntheticLightsSave();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload")) SyntheticLightsLoad(nullptr);
+    ImGui::SameLine();
+    ImGui::TextColored(SyntheticLightsDirty() ? kWarn : kDim, "%s%s", SyntheticLightsPath(),
+                       SyntheticLightsDirty() ? "  (unsaved)" : "");
+}
+
+void DrawEffectInspector() {
+    ImGui::TextWrapped(
+        "Every particle type the game has spawned since this list was last cleared. GTA2 tags each "
+        "particle with a type id but nothing names them, so this is how a category gets bound: "
+        "clear the list, trigger one effect -- fire a gun, scrape a wall, stand still until the "
+        "cigarette comes out -- and the id that appears is the one. Rows seen in the last two "
+        "seconds are highlighted.");
+
+    ImGui::Spacing();
+    if (ImGui::Button("Clear list")) SyntheticForgetParticleTypes();
+    ImGui::SameLine();
+    const SyntheticStats& st = SyntheticLightsStats();
+    ImGui::TextColored(kDim, "%d type(s) seen, %d particle(s) live",
+                       static_cast<int>(SyntheticParticleTypes().size()), st.particlesWalked);
+
+    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                | ImGuiTableFlags_ScrollY;
+    if (!ImGui::BeginTable("types", 6, flags, ImVec2(0.0f, 380.0f))) return;
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("type", ImGuiTableColumnFlags_WidthFixed, 54.0f);
+    ImGui::TableSetupColumn("live", ImGuiTableColumnFlags_WidthFixed, 46.0f);
+    ImGui::TableSetupColumn("seen", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+    ImGui::TableSetupColumn("life", ImGuiTableColumnFlags_WidthFixed, 46.0f);
+    ImGui::TableSetupColumn("last position", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+    ImGui::TableSetupColumn("bound to");
+    ImGui::TableHeadersRow();
+
+    const unsigned now = GetTickCount();
+    for (const ParticleTypeInfo& info : SyntheticParticleTypes()) {
+        ImGui::PushID(info.type);
+        ImGui::TableNextRow();
+        const bool recent = now - info.lastSeenTick < 2000;
+
+        ImGui::TableNextColumn();
+        ImGui::TextColored(recent ? kGood : kDim, "0x%02X", info.type);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", info.liveNow);
+        ImGui::TableNextColumn();
+        ImGui::Text("%u", info.totalSeen);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", info.lastLife);
+        ImGui::TableNextColumn();
+        ImGui::Text("%7.2f %5.2f %7.2f", info.lastPos[0], info.lastPos[1], info.lastPos[2]);
+
+        ImGui::TableNextColumn();
+        const int bound = SyntheticTypeBinding(info.type);
+        for (int i = 0; i < kSynthCategoryCount; ++i) {
+            if (i == kSynthHeadlight) continue;   // vehicles, not particles
+            if (i) ImGui::SameLine();
+            const bool on = bound == i;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.55f, 0.25f, 1.0f));
+            if (ImGui::SmallButton(SyntheticCategoryName(i))) {
+                SyntheticBindType(info.type, on ? -1 : i);
+            }
+            if (on) ImGui::PopStyleColor();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
 }
 
 void DrawSprites() {
@@ -662,6 +839,14 @@ void DebugMenuRender() {
                 DrawStatus();
                 ImGui::Separator();
                 DrawTuning();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Invented")) {
+                DrawSynthetic();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Effects")) {
+                DrawEffectInspector();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Sprites")) {

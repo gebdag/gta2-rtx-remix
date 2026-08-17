@@ -24,6 +24,7 @@
 #include "live_geometry.h"
 #include "log.h"
 #include "remix_lights.h"
+#include "synthetic_lights.h"
 #include "texture_store.h"
 #include "world_view.h"
 
@@ -194,9 +195,11 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         Log("proxy live");
     } else {
         Log("takeover mode: the original renderer is not loaded");
-        char overrides[MAX_PATH];
-        PathBesideGame("gta2dx9_lights.ini", overrides, sizeof(overrides));
-        gta2dx9::LightsInit(overrides);
+        char path[MAX_PATH];
+        PathBesideGame("gta2dx9_lights.ini", path, sizeof(path));
+        gta2dx9::LightsInit(path);
+        PathBesideGame("gta2dx9_effects.ini", path, sizeof(path));
+        gta2dx9::SyntheticLightsLoad(path);
     }
 }
 
