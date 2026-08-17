@@ -66,8 +66,14 @@ struct SyntheticSettings {
     bool enabled = true;
     SyntheticCategorySettings category[kSynthCategoryCount];
 
-    // A vehicle counts as driven while it has moved within this window. Covers
-    // waiting at a junction without lighting up every parked car in the city.
+    // A vehicle counts as driven when someone is sitting in it. That is the
+    // honest test and it needs no window: a car waiting at a red light with a
+    // driver in it keeps its beams, and a parked one never gets them.
+    bool drivenNeedsDriver = true;
+    // Kept as an alternative rather than deleted: a car being pushed, or one
+    // whose occupant field ever turns out to mean something else, still reads as
+    // driven if it is moving.
+    bool drivenAllowsMovement = false;
     unsigned drivenWindowMs = 2500;
     float drivenMinMovement = 0.004f;   // tiles per frame; below this it is parked
 };
@@ -120,5 +126,25 @@ struct SyntheticStats {
     bool trigTablesReady = false;
 };
 const SyntheticStats& SyntheticLightsStats();
+
+// --- Structure probe ---
+//
+// Where a field sits inside a particle or a vehicle was read off a decompiler,
+// and a wrong offset produces a light in the wrong place with nothing to say so.
+// This finds them from the running game instead: it walks the lists and scores
+// every offset by how often it holds something that could only be what we are
+// looking for.
+//
+// The camera position is the key. A vehicle on screen is within a dozen tiles
+// of it, so the offset whose 16.14 value tracks the camera across many vehicles
+// is the position - no other field behaves like that. The driver pointer is
+// found the same way: the offset that is non-null on cars that move and null on
+// cars that do not.
+//
+// Results go to gta2dx9.log. Runs on demand from the F4 menu, and once
+// automatically a few seconds into a level so a plain run leaves the evidence
+// behind without anyone having to ask for it.
+void SyntheticProbe(const char* reason);
+bool SyntheticProbeHasRun();
 
 }  // namespace gta2dx9

@@ -208,10 +208,22 @@ inline int TileForTexture(const void* record) {
 // they all go through FUN_00420600 (position) and FUN_00420690 (heading).
 // ---------------------------------------------------------------------------
 
+// The placement block itself, allocated by FUN_00421000 and written by
+// FUN_00420600 (position) and FUN_00420690 (heading). Entities do not embed it:
+// each holds a *pointer* to one, at an offset that differs per entity type.
+// Reading these straight off the entity - which is what the first attempt did -
+// puts every effect at the corner of the map.
 constexpr uintptr_t kPlaceHeading = 0x00;  // uint16, indexes the trig tables below
 constexpr uintptr_t kPlaceX = 0x14;        // 16.14 fixed, tiles east
 constexpr uintptr_t kPlaceY = 0x18;        // 16.14 fixed, tiles south
 constexpr uintptr_t kPlaceZ = 0x1C;        // 16.14 fixed, map level
+
+// Where each entity keeps that pointer. Both were found by the structure probe
+// in synthetic_lights.cpp rather than read off a decompiler: it snapshots the
+// lists a second apart and looks for the field that is always a map coordinate
+// and moves by a fraction of a tile, which nothing else does.
+constexpr uintptr_t kVehiclePlacementPtr = 0x50;
+constexpr uintptr_t kParticlePlacementPtr = 0x30;
 
 // particle.cpp. The manager (FUN_00491B90 allocates it, 0x947C bytes) is also
 // the pool: free list at +0, live list at +4, walked through +0x3C.
@@ -225,7 +237,14 @@ constexpr uintptr_t kParticleType = 0x38;  // int32
 constexpr uintptr_t kVehiclePoolPtr = 0x005E4CA0;
 constexpr uintptr_t kVehicleLiveHead = 0x04;
 constexpr uintptr_t kVehicleNext = 0x4C;
-constexpr uintptr_t kVehicleModel = 0x84;  // int32, car model id
+constexpr uintptr_t kVehicleModel = 0x84;   // int32, car model id
+// The occupant. Found by the structure probe correlating pointer fields against
+// which cars actually moved: this one is a pointer on 100% of moving cars and on
+// 0% of parked ones, and it points into the entity heap rather than the
+// placement heap - it is a ped sitting in the car. +0x58 behaves the same way
+// and is presumably a passenger.
+constexpr uintptr_t kVehicleDriver = 0x54;
+
 
 // Sine and cosine of a heading, in 16.14 fixed, indexed by the raw heading with
 // no masking - which is how FUN_0040F500 and FUN_0040F520 do it, so any heading
@@ -256,23 +275,41 @@ inline uint8_t* VehicleListHead() {
     return PlausiblePointer(head) ? head : nullptr;
 }
 
+// Someone in the driving seat, which is what makes a car's headlights its own
+// rather than a parked car's.
+inline bool VehicleHasDriver(const uint8_t* vehicle) {
+    return PlausiblePointer(*reinterpret_cast<const void* const*>(vehicle + kVehicleDriver));
+}
+
 inline uint8_t* NextInList(const uint8_t* entry, uintptr_t nextOffset) {
     uint8_t* next = *reinterpret_cast<uint8_t* const*>(entry + nextOffset);
     return PlausiblePointer(next) ? next : nullptr;
 }
 
+inline const uint8_t* Placement(const uint8_t* entity, uintptr_t placementPtrOffset) {
+    const uint8_t* place = *reinterpret_cast<const uint8_t* const*>(entity + placementPtrOffset);
+    return PlausiblePointer(place) ? place : nullptr;
+}
+
 // x east, y south, z the map level - the game's own frame, not the renderer's.
-inline void ReadPlacement(const uint8_t* entry, float* x, float* y, float* z) {
-    *x = *reinterpret_cast<const int32_t*>(entry + kPlaceX) * kFixedScale;
-    *y = *reinterpret_cast<const int32_t*>(entry + kPlaceY) * kFixedScale;
-    *z = *reinterpret_cast<const int32_t*>(entry + kPlaceZ) * kFixedScale;
+inline bool ReadPlacement(const uint8_t* entity, uintptr_t placementPtrOffset, float* x, float* y,
+                          float* z) {
+    const uint8_t* place = Placement(entity, placementPtrOffset);
+    if (!place) return false;
+    *x = *reinterpret_cast<const int32_t*>(place + kPlaceX) * kFixedScale;
+    *y = *reinterpret_cast<const int32_t*>(place + kPlaceY) * kFixedScale;
+    *z = *reinterpret_cast<const int32_t*>(place + kPlaceZ) * kFixedScale;
+    return true;
 }
 
 // Forward direction in the game's frame, as the game computes it
 // (FUN_0041FC20: x = sin(heading), y = cos(heading)). False when the trig
 // tables have not been built yet, which is the case in the menus.
-inline bool ReadFacing(const uint8_t* entry, float* dirX, float* dirY) {
-    const uint16_t heading = *reinterpret_cast<const uint16_t*>(entry + kPlaceHeading);
+inline bool ReadFacing(const uint8_t* entity, uintptr_t placementPtrOffset, float* dirX,
+                       float* dirY) {
+    const uint8_t* place = Placement(entity, placementPtrOffset);
+    if (!place) return false;
+    const uint16_t heading = *reinterpret_cast<const uint16_t*>(place + kPlaceHeading);
     if (heading >= kTrigTableEntries) return false;
     const int32_t s = *reinterpret_cast<const int32_t*>(kSinTablePtr + heading * 4u);
     const int32_t c = *reinterpret_cast<const int32_t*>(kCosTablePtr + heading * 4u);

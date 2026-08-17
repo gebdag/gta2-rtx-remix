@@ -334,18 +334,23 @@ void DrawSynthetic() {
                 if (SyntheticTypeBinding(t) == i) ++boundTypes;
             }
             if (i == kSynthHeadlight) {
-                ImGui::TextColored(kDim, "From the vehicle list. A car counts as driven while it "
-                                         "has moved recently, which covers the player and the "
-                                         "traffic and leaves parked cars dark.");
+                ImGui::TextColored(kDim, "From the vehicle list. A car is driven when someone is "
+                                         "sitting in it -- vehicle+0x54, a pointer on every "
+                                         "moving car and on no parked one.");
                 bool changed = false;
-                int window = static_cast<int>(s.drivenWindowMs);
-                changed |= ImGui::SliderInt("Driven window (ms)", &window, 0, 10000);
-                s.drivenWindowMs = static_cast<unsigned>(window);
-                ImGui::SetItemTooltip("How long a car keeps its beams after it stops moving. Long "
-                                      "enough that waiting at a junction does not switch them "
-                                      "off.");
-                changed |= ImGui::SliderFloat("Movement threshold", &s.drivenMinMovement, 0.0f,
-                                              0.05f, "%.4f");
+                changed |= ImGui::Checkbox("Needs a driver", &s.drivenNeedsDriver);
+                ImGui::SameLine();
+                changed |= ImGui::Checkbox("...or just moving", &s.drivenAllowsMovement);
+                ImGui::SetItemTooltip("Fallback for a car being pushed. Off by default: the "
+                                      "occupant test already covers a car stopped at a red "
+                                      "light, which is what the movement window was for.");
+                if (s.drivenAllowsMovement) {
+                    int window = static_cast<int>(s.drivenWindowMs);
+                    changed |= ImGui::SliderInt("Movement window (ms)", &window, 0, 10000);
+                    s.drivenWindowMs = static_cast<unsigned>(window);
+                    changed |= ImGui::SliderFloat("Movement threshold", &s.drivenMinMovement, 0.0f,
+                                                  0.05f, "%.4f");
+                }
                 if (changed) SyntheticLightsMarkDirty();
             } else if (boundTypes == 0) {
                 ImGui::TextColored(kBad, "No particle type is bound to this category, so it emits "
@@ -387,6 +392,12 @@ void DrawEffectInspector() {
 
     ImGui::Spacing();
     if (ImGui::Button("Clear list")) SyntheticForgetParticleTypes();
+    ImGui::SameLine();
+    if (ImGui::Button("Run structure probe")) SyntheticProbe("F4 menu");
+    ImGui::SetItemTooltip("Writes an offset report to gta2dx9.log: which field in a particle or a "
+                          "vehicle is the position, and which is the driver. Scored against the "
+                          "camera position and against which cars are moving, so it does not "
+                          "depend on anything having been read correctly off a decompiler.");
     ImGui::SameLine();
     const SyntheticStats& st = SyntheticLightsStats();
     ImGui::TextColored(kDim, "%d type(s) seen, %d particle(s) live",
