@@ -6,6 +6,7 @@
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
+#include "settings.h"
 #include "synthetic_lights.h"
 
 #include <d3d9.h>
@@ -124,7 +125,30 @@ const char* ErrorText(int code) {
     }
 }
 
+// The one button. Which of the three files a given setting lands in is an
+// implementation detail nobody should have to remember, so this saves all of
+// them and appears on every tab that can change something.
+void DrawSaveBar() {
+    if (ImGui::Button(SettingsDirty() ? "Save all settings *" : "Save all settings")) {
+        SettingsSaveAll();
+    }
+    ImGui::SetItemTooltip("Writes gta2dx9_settings.ini, gta2dx9_lights.ini and "
+                          "gta2dx9_effects.ini. All three are read back at startup.");
+    ImGui::SameLine();
+    if (ImGui::Button("Reload all")) {
+        SettingsLoadAll();
+        LightsLoadOverrides();
+        SyntheticLightsLoad(nullptr);
+        LightsInvalidate(0);
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(SettingsDirty() ? kWarn : kDim, "%s%s", SettingsPath(),
+                       SettingsDirty() ? "  (unsaved)" : "");
+}
+
 void DrawStatus() {
+    DrawSaveBar();
+    ImGui::Separator();
     ImGui::TextColored(RemixApiAvailable() ? kGood : kBad, "Remix API: %s", RemixApiStatusText());
 
     const char* scene = LightsScene();
@@ -1003,6 +1027,10 @@ void DebugMenuRender() {
         }
     }
     ImGui::End();
+
+    // Anything the menu touched this frame is unsaved. Cheaper and more honest
+    // than trying to mark every individual widget.
+    if (ImGui::GetIO().WantCaptureMouse && ImGui::IsAnyItemActive()) SettingsMarkDirty();
 
     ImGui::EndFrame();
     ImGui::Render();

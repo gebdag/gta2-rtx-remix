@@ -24,6 +24,7 @@
 #include "live_geometry.h"
 #include "log.h"
 #include "remix_lights.h"
+#include "settings.h"
 #include "synthetic_lights.h"
 #include "texture_store.h"
 #include "world_view.h"
@@ -244,6 +245,11 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         gta2dx9::LightsInit(path);
         PathBesideGame("gta2dx9_effects.ini", path, sizeof(path));
         gta2dx9::SyntheticLightsLoad(path);
+        // Last, so it can override anything gta2dx9.ini set: deploy rewrites that
+        // file on every build, this one is the user's own tuning.
+        PathBesideGame("gta2dx9_settings.ini", path, sizeof(path));
+        gta2dx9::SettingsInit(path);
+        gta2dx9::SettingsLoadAll();
     }
 }
 
