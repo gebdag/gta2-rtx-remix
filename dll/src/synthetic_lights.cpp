@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <unordered_map>
 
 namespace gta2dx9 {
@@ -50,6 +51,9 @@ struct ParticleTrack {
 std::unordered_map<uintptr_t, ParticleTrack> g_particleTracks;
 unsigned g_walkFrame = 0;
 int g_highlightType = -1;
+int g_highlightModel = -1;
+std::map<int, BeamOverride> g_beams;          // ordered: the menu lists these
+std::vector<VehicleModelInfo> g_models;       // ordered by model id
 
 // A list walk in another process's heap needs a stop, in case a pointer is
 // stale mid-frame. Comfortably above anything GTA2 has live at once.
@@ -111,6 +115,14 @@ void EnsureBinding() {
     // Rebindable from the F4 menu, which shows the same profile these were read
     // off, so a wrong call here costs one click rather than a rebuild.
     g_binding[0x07] = kSynthSpark;
+
+    // Fire, confirmed by lighting each type magenta and looking: 0x24 is the big
+    // flame, 0x03 the small one and 0x16 a third. The profile alone could never
+    // have separated these from smoke or litter - all three are long-lived,
+    // clustered and stationary - which is what the Highlight button is for.
+    g_binding[0x24] = kSynthFire;
+    g_binding[0x03] = kSynthFire;
+    g_binding[0x16] = kSynthFire;
     // 0x26 and 0x2B were bound to bullet and fire on the strength of the profile
     // and both were wrong - each emitted thousands of lights on the wrong sprite.
     // They stay unbound rather than plausibly wrong: an unbound category says so
@@ -296,7 +308,26 @@ void WalkParticles() {
     }
 }
 
+// Models seen, so the menu can list real ids instead of asking you to guess.
+void NoteModel(int model, bool driven) {
+    size_t at = 0;
+    while (at < g_models.size() && g_models[at].model < model) ++at;
+    if (at >= g_models.size() || g_models[at].model != model) {
+        VehicleModelInfo info;
+        info.model = model;
+        g_models.insert(g_models.begin() + at, info);
+    }
+    VehicleModelInfo& info = g_models[at];
+    ++info.seen;
+    if (driven) ++info.driven;
+    info.lastSeenTick = GetTickCount();
+}
+
 void WalkVehicles() {
+    for (VehicleModelInfo& m : g_models) {
+        m.seen = 0;
+        m.driven = 0;
+    }
     const SyntheticCategorySettings& c = g_settings.category[kSynthHeadlight];
     uint8_t* entry = game::VehicleListHead();
     g_stats.vehicleListFound = entry != nullptr;
@@ -308,6 +339,7 @@ void WalkVehicles() {
         uint8_t* next = game::NextInList(entry, game::kVehicleNext);
         ++g_stats.vehiclesWalked;
 
+        const int model = *reinterpret_cast<const int32_t*>(entry + game::kVehicleModel);
         float gx = 0.0f, gy = 0.0f, gz = 0.0f;
         if (!game::ReadPlacement(entry, game::kVehiclePlacementPtr, &gx, &gy, &gz)
             || !InsideWorld(gx, gy, gz)) {
@@ -335,11 +367,13 @@ void WalkVehicles() {
         const bool rolling = g_settings.drivenAllowsMovement && track.lastMovedTick != 0
                           && now - track.lastMovedTick <= g_settings.drivenWindowMs;
         const bool driven = occupied || rolling;
+        if (!driven) NoteModel(model, false);
         if (!driven) {
             entry = next;
             continue;
         }
         ++g_stats.vehiclesDriven;
+        NoteModel(model, true);
         if (!c.enabled) {
             entry = next;
             continue;
@@ -356,28 +390,36 @@ void WalkVehicles() {
         // Forward and right in the game's frame, then converted the same way the
         // positions are: our +Z is north, which is the game's -y.
         const float rx = fy, ry = -fx;   // right-hand perpendicular
+        // Per model where one has been set, category default otherwise.
+        const BeamOverride* beam = SyntheticFindBeam(model);
+        const float cone = (beam && beam->coneAngleDeg > 0.0f) ? beam->coneAngleDeg
+                                                               : c.coneAngleDeg;
+        const float side = (beam && beam->sideOffset > 0.0f) ? beam->sideOffset : c.sideOffset;
+        const float forward = (beam && beam->forwardOffset > 0.0f) ? beam->forwardOffset
+                                                                   : c.forwardOffset;
         const float pitch = c.pitchDegrees * 3.14159265f / 180.0f;
         const float horizontal = std::cos(pitch);
 
         for (int side = 0; side < 2; ++side) {
             if (!Room(kSynthHeadlight)) break;
             const float sign = side == 0 ? -1.0f : 1.0f;
-            const float px = gx + fx * c.forwardOffset + rx * c.sideOffset * sign;
-            const float py = gy + fy * c.forwardOffset + ry * c.sideOffset * sign;
+            const float px = gx + fx * forward + rx * side * sign;
+            const float py = gy + fy * forward + ry * side * sign;
 
             RemixLightDesc d;
             ToWorld(px, py, gz, d.pos);
             d.pos[1] += c.heightOffset;
-            d.rgb[0] = c.rgb[0];
-            d.rgb[1] = c.rgb[1];
-            d.rgb[2] = c.rgb[2];
-            d.intensity = c.intensity;
+            const bool lit = model == g_highlightModel;
+            d.rgb[0] = lit ? 1.0f : c.rgb[0];
+            d.rgb[1] = lit ? 0.0f : c.rgb[1];
+            d.rgb[2] = lit ? 1.0f : c.rgb[2];
+            d.intensity = lit ? 4.0f : c.intensity;
             d.radius = c.radius;
             d.spot = true;
             d.dir[0] = fx * horizontal;
             d.dir[1] = -std::sin(pitch);      // tilted down towards the road
             d.dir[2] = -fy * horizontal;      // game south is our -Z
-            d.coneAngleDeg = c.coneAngleDeg;
+            d.coneAngleDeg = cone;
             d.source = kLightSourceHeadlight;
             // One identity per beam per car, so a handle survives the whole
             // drive however far it goes rather than being rediscovered by
@@ -761,6 +803,25 @@ void SyntheticLightsUpdate() {
 
 const std::vector<ParticleTypeInfo>& SyntheticParticleTypes() { return g_types; }
 
+const std::vector<VehicleModelInfo>& SyntheticVehicleModels() { return g_models; }
+
+BeamOverride* SyntheticFindBeam(int model) {
+    auto it = g_beams.find(model);
+    return it == g_beams.end() ? nullptr : &it->second;
+}
+
+BeamOverride& SyntheticEditBeam(int model) {
+    g_dirty = true;
+    return g_beams[model];
+}
+
+void SyntheticEraseBeam(int model) {
+    if (g_beams.erase(model)) g_dirty = true;
+}
+
+void SyntheticHighlightModel(int model) { g_highlightModel = model; }
+int SyntheticHighlightedModel() { return g_highlightModel; }
+
 void SyntheticHighlightType(int particleType) {
     g_highlightType = (particleType >= 0 && particleType < kMaxParticleType) ? particleType : -1;
 }
@@ -820,6 +881,14 @@ void SyntheticLightsLoad(const char* path) {
             else if (_stricmp(key, "DrivenWindowMs") == 0) g_settings.drivenWindowMs = atoi(value);
             else if (_stricmp(key, "DrivenMinMovement") == 0) {
                 g_settings.drivenMinMovement = static_cast<float>(atof(value));
+            } else if (_stricmp(key, "Beam") == 0) {
+                // Beam=<model> <cone> <side> <forward>
+                int model = 0;
+                BeamOverride b;
+                if (sscanf(value, "%d %f %f %f", &model, &b.coneAngleDeg, &b.sideOffset,
+                           &b.forwardOffset) == 4) {
+                    g_beams[model] = b;
+                }
             } else if (_stricmp(key, "Bind") == 0) {
                 // Bind=<type hex> <category index>
                 int type = 0, category = -1;

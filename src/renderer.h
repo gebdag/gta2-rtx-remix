@@ -27,6 +27,16 @@ struct RenderStats {
 // Remix's own bridge logs; the standalone viewer leaves it null.
 void SetRendererTrace(void (*sink)(const char*));
 
+// How a cutout's edge is resolved. Alpha test is the default and is what a path
+// tracer wants - a blended surface has no single depth for a ray to hit - but
+// now that transparent texels carry a sensible colour (see alpha_bleed.h) it is
+// worth being able to compare them by eye rather than by argument.
+enum class AlphaMode { Test, Blend };
+void SetAlphaMode(AlphaMode mode);
+AlphaMode GetAlphaMode();
+void SetAlphaRef(int ref);   // 1..254, the alpha-test cutoff
+int  GetAlphaRef();
+
 class Renderer {
 public:
     ~Renderer();

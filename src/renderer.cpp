@@ -59,6 +59,17 @@ constexpr DWORD kWorldFvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1;
 // behaves far better than alpha blending under Remix.
 constexpr DWORD kAlphaRef = 128;
 
+AlphaMode g_alphaMode = AlphaMode::Test;
+DWORD g_alphaRef = kAlphaRef;
+}  // namespace
+
+void SetAlphaMode(AlphaMode mode) { g_alphaMode = mode; }
+AlphaMode GetAlphaMode() { return g_alphaMode; }
+void SetAlphaRef(int ref) { g_alphaRef = static_cast<DWORD>(ref < 1 ? 1 : (ref > 254 ? 254 : ref)); }
+int GetAlphaRef() { return static_cast<int>(g_alphaRef); }
+
+namespace {
+
 void SetMatrix(IDirect3DDevice9* device, D3DTRANSFORMSTATETYPE state, const Mat4& matrix) {
     D3DMATRIX d3dMatrix;
     memcpy(&d3dMatrix, matrix.m, sizeof(d3dMatrix));
@@ -290,12 +301,22 @@ void Renderer::DrawWorld(const Camera& camera) {
     bool alphaTestEnabled = false;
     device_->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
     device_->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
-    device_->SetRenderState(D3DRS_ALPHAREF, kAlphaRef);
+    device_->SetRenderState(D3DRS_ALPHAREF, g_alphaRef);
+    device_->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    device_->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    device_->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
     for (const TileBatch& batch : batches_) {
         if (batch.needsAlphaTest != alphaTestEnabled) {
             alphaTestEnabled = batch.needsAlphaTest;
+            const bool blending = g_alphaMode == AlphaMode::Blend;
+            // Blend mode still keeps a very low alpha test: without it the fully
+            // transparent texels are still rasterised and still write depth,
+            // which puts an invisible wall in front of everything behind them.
             device_->SetRenderState(D3DRS_ALPHATESTENABLE, alphaTestEnabled ? TRUE : FALSE);
+            device_->SetRenderState(D3DRS_ALPHAREF, blending ? 1u : g_alphaRef);
+            device_->SetRenderState(D3DRS_ALPHABLENDENABLE,
+                                    (blending && alphaTestEnabled) ? TRUE : FALSE);
         }
         device_->SetTexture(0, textures_[batch.tile]);
         device_->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, batch.vertexStart, batch.vertexCount,

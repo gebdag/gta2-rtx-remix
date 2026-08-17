@@ -81,6 +81,35 @@ struct SyntheticSettings {
 
 SyntheticSettings& SyntheticLightsSettings();
 
+// A GTA2 car model is a fixed sprite, and one cone width cannot suit a bike, a
+// bus and a squad car. The model id sits at vehicle+0x84, so the beam geometry
+// can be tuned per model and saved. Zero on any field means "use the category
+// default", which is what every model starts on.
+struct BeamOverride {
+    float coneAngleDeg = 0.0f;
+    float sideOffset = 0.0f;
+    float forwardOffset = 0.0f;
+};
+
+// Models seen this session, so the menu can list them rather than making you
+// guess an id. Ordered by id.
+struct VehicleModelInfo {
+    int model = 0;
+    int seen = 0;        // live right now
+    int driven = 0;
+    unsigned lastSeenTick = 0;
+};
+const std::vector<VehicleModelInfo>& SyntheticVehicleModels();
+
+BeamOverride* SyntheticFindBeam(int model);        // null when unset
+BeamOverride& SyntheticEditBeam(int model);
+void SyntheticEraseBeam(int model);
+
+// Paints one model's beams magenta so the model id in the list can be matched to
+// the car on screen. -1 clears.
+void SyntheticHighlightModel(int model);
+int  SyntheticHighlightedModel();
+
 // Which particle types feed which category. A type may be bound to at most one.
 // kSynthHeadlight takes no types - it comes off the vehicle list.
 int  SyntheticTypeBinding(int particleType);        // category, or -1

@@ -2,6 +2,7 @@
 
 #include "game_access.h"
 #include "live_geometry.h"
+#include "../../src/renderer.h"
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
@@ -294,6 +295,56 @@ void DrawCategory(int category) {
         ImGui::SetItemTooltip("Half the spacing between the two beams.");
         changed |= ImGui::SliderFloat("Cone softness", &LightsSettings().coneSoftness, 0.0f, 1.0f,
                                       "%.2f");
+
+        ImGui::SeparatorText("Per car model");
+        ImGui::TextWrapped("A GTA2 car model is a fixed sprite, so one cone width cannot suit a "
+                           "bike, a bus and a squad car. These override the three above for one "
+                           "model; 0 means use the value above. Light one to see which car it is.");
+        if (ImGui::BeginTable("beams", 6,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                  | ImGuiTableFlags_ScrollY,
+                              ImVec2(0.0f, 220.0f))) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("model", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+            ImGui::TableSetupColumn("live", ImGuiTableColumnFlags_WidthFixed, 44.0f);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 52.0f);
+            ImGui::TableSetupColumn("cone", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("separation", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("nose offset");
+            ImGui::TableHeadersRow();
+            for (const VehicleModelInfo& m : SyntheticVehicleModels()) {
+                ImGui::PushID(m.model);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(m.driven ? kGood : kDim, "%d", m.model);
+                ImGui::TableNextColumn();
+                ImGui::Text("%d/%d", m.driven, m.seen);
+
+                ImGui::TableNextColumn();
+                const bool lit = SyntheticHighlightedModel() == m.model;
+                if (lit) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.2f, 0.75f, 1.0f));
+                if (ImGui::SmallButton(lit ? "lit" : "light")) {
+                    SyntheticHighlightModel(lit ? -1 : m.model);
+                }
+                if (lit) ImGui::PopStyleColor();
+
+                BeamOverride* b = SyntheticFindBeam(m.model);
+                BeamOverride edit = b ? *b : BeamOverride();
+                bool touched = false;
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-1);
+                touched |= ImGui::SliderFloat("##cone", &edit.coneAngleDeg, 0.0f, 90.0f, "%.0f deg");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-1);
+                touched |= ImGui::SliderFloat("##side", &edit.sideOffset, 0.0f, 1.0f, "%.3f");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-1);
+                touched |= ImGui::SliderFloat("##fwd", &edit.forwardOffset, 0.0f, 2.0f, "%.3f");
+                if (touched) SyntheticEditBeam(m.model) = edit;
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
     }
 
     if (changed) SyntheticLightsMarkDirty();
@@ -477,9 +528,51 @@ void DrawEffectInspector() {
         ImGui::PopID();
     }
     ImGui::EndTable();
+
+    ImGui::Separator();
+    ImGui::TextColored(kDim, "Light settings for each category, the same controls as the Invented "
+                             "tab - here too because this is where you are standing when you "
+                             "decide a fire is too dim.");
+    if (ImGui::BeginTabBar("effectcats")) {
+        for (int i = 0; i < kSynthCategoryCount; ++i) {
+            if (!ImGui::BeginTabItem(SyntheticCategoryName(i))) continue;
+            const SyntheticStats& s = SyntheticLightsStats();
+            ImGui::Text("emitted last frame: %d   (%u since start)", s.emitted[i],
+                        s.totalEmitted[i]);
+            DrawCategory(i);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void DrawAlpha() {
+    ImGui::SeparatorText("Cutout edges");
+    ImGui::TextWrapped(
+        "GTA2's artwork is palettised with entry 0 as a colour key, so there is no real alpha to "
+        "blend - every edge is binary. The black rim that used to show was not the alpha but the "
+        "colour behind it: keyed texels were transparent *black*, and every filter, above all the "
+        "mipmaps Remix builds, averaged that black into the neighbouring colour. Those texels now "
+        "carry their neighbours' colour instead, alpha untouched.\n\n"
+        "Alpha test is still the default. A path tracer wants a cutout to be a cutout - a blended "
+        "surface has no single depth for a ray to hit - but now that the colour is right the two "
+        "are worth comparing by eye.");
+
+    int mode = gta2::GetAlphaMode() == gta2::AlphaMode::Blend ? 1 : 0;
+    if (ImGui::RadioButton("Alpha test", &mode, 0)) gta2::SetAlphaMode(gta2::AlphaMode::Test);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Alpha blend", &mode, 1)) gta2::SetAlphaMode(gta2::AlphaMode::Blend);
+
+    int ref = gta2::GetAlphaRef();
+    if (ImGui::SliderInt("Alpha test cutoff", &ref, 1, 254)) gta2::SetAlphaRef(ref);
+    ImGui::SetItemTooltip("Where the binary cutoff falls. Only used in alpha test mode; blending "
+                          "drops it to 1, which still discards the fully transparent texels so "
+                          "they do not write depth and hide what is behind them.");
 }
 
 void DrawSprites() {
+    DrawAlpha();
+    ImGui::Separator();
     float lift = SpriteLift();
 
     ImGui::TextWrapped(
