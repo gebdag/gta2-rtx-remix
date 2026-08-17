@@ -1,5 +1,7 @@
 #include "gta2_style.h"
 
+#include "alpha_bleed.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -129,6 +131,11 @@ void Style::DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
                     0xFF000000u | (static_cast<uint32_t>(c[2]) << 16) |
                     (static_cast<uint32_t>(c[1]) << 8) | c[0];
             }
+        }
+        // See alpha_bleed.h: transparent black is what makes a cutout's edge
+        // read as a hard black line once anything filters it.
+        if (tile.hasTransparency) {
+            BleedTransparentEdges(tile.pixels.data(), kTileSize, kTileSize);
         }
     }
 }

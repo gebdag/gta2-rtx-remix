@@ -1,5 +1,7 @@
 #include "texture_store.h"
 
+#include "../../src/alpha_bleed.h"
+
 #include <cstring>
 #include <map>
 #include <vector>
@@ -125,14 +127,24 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
         return nullptr;
     }
     const uint8_t* indices = static_cast<const uint8_t*>(record->pixels);
+    std::vector<uint32_t> image(static_cast<size_t>(record->width) * record->height);
     for (int y = 0; y < record->height; ++y) {
-        uint32_t* out =
-            reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(locked.pBits) + y * locked.Pitch);
         const uint8_t* row = indices + static_cast<size_t>(y) * kPageStride;
+        uint32_t* out = image.data() + static_cast<size_t>(y) * record->width;
         for (int x = 0; x < record->width; ++x) {
             const uint8_t index = row[x];
             out[x] = index ? (palette[index] | 0xFF000000u) : 0u;
         }
+    }
+    // Keyed texels are transparent *black*, and every filter that touches this
+    // texture - ours, and the mipmaps Remix builds for its own materials -
+    // averages that black into the neighbouring colour. That is the hard black
+    // rim around cutouts. Give the invisible texels a colour and it goes away.
+    gta2::BleedTransparentEdges(image.data(), record->width, record->height);
+    for (int y = 0; y < record->height; ++y) {
+        memcpy(static_cast<uint8_t*>(locked.pBits) + y * locked.Pitch,
+               image.data() + static_cast<size_t>(y) * record->width,
+               static_cast<size_t>(record->width) * 4);
     }
     cached.texture->UnlockRect(0);
 
@@ -176,6 +188,7 @@ bool ResolveTileImage(int tileNumber, uint32_t* out) {
             out[y * kTileSize + x] = index ? (colours[index] | 0xFF000000u) : 0u;
         }
     }
+    gta2::BleedTransparentEdges(out, kTileSize, kTileSize);
     return true;
 }
 
