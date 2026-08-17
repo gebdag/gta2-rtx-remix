@@ -133,6 +133,13 @@ void LoadConfig() {
     g_world.Configure(pitch / 10.0f, fov / 10.0f, gameTiles,
                       static_cast<gta2dx9::PresentWindow>(ownWindow));
 
+    // What we render at, which is nothing to do with what GTA2 thinks its screen
+    // is. Its own resolution only lays the HUD out, and the overlay pass scales
+    // that to whatever it is drawn into - so 640x480 in the game's options does
+    // not have to mean 640x480 of path traced image. 0 means the desktop.
+    g_world.SetRenderSize(GetPrivateProfileIntA("renderer", "render_width", 0, ini),
+                          GetPrivateProfileIntA("renderer", "render_height", 0, ini));
+
     // Thousandths of a block, for the same reason the camera angles are tenths
     // of a degree: the ini API only reads integers.
     const int lift = GetPrivateProfileIntA(

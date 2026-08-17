@@ -36,6 +36,18 @@ public:
     // DirectDraw has already claimed.
     void Configure(float pitchDegrees, float fovDegrees, bool useGameTiles, PresentWindow present);
 
+    // The size to actually render and present at, which is deliberately not the
+    // game's. GTA2's own resolution is whatever its options screen last wrote -
+    // 640x480 out of the box, and its manager will not offer much better because
+    // the list comes from DirectDraw mode enumeration. That number has no
+    // business deciding how big the path traced image is: it is the resolution
+    // the HUD is laid out in, and the overlay already scales that to whatever it
+    // is drawn into.
+    //
+    // 0 x 0 means the desktop resolution, which is what you want essentially
+    // always. Anything else is taken literally.
+    void SetRenderSize(int width, int height);
+
     bool Initialize(HWND window, int width, int height, std::string* error);
     void Shutdown();
     bool Ready() const { return ready_; }
@@ -100,6 +112,9 @@ private:
     PresentWindow present_ = PresentWindow::Child;
     int width_ = 0;
     int height_ = 0;
+    // 0 means "the desktop", resolved in Initialize.
+    int requestedWidth_ = 0;
+    int requestedHeight_ = 0;
     int deviceAttempts_ = 0;
 
     float smoothedHeight_ = 0.0f;

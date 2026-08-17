@@ -28,6 +28,43 @@ constexpr size_t kMatchBlocks = 4000;
 constexpr float kHeightFollowRate = 0.06f;
 constexpr float kDegreesToRadians = 3.14159265f / 180.0f;
 
+// The desktop in real pixels.
+//
+// Not GetSystemMetrics: this DLL is DPI-unaware, so SM_CXSCREEN reports the
+// scaled desktop - 1536x960 for a 3840x2400 screen at 250% - and rendering at
+// that would throw away more than half the resolution. EnumDisplaySettings
+// returns physical pixels whatever the process's DPI awareness.
+//
+// It also reports whatever mode is current, so if GTA2 has already taken the
+// display into an exclusive fullscreen 640x480 this reads 640x480. That is why
+// deploy forces start_mode=0: windowed, the game leaves the display alone.
+void DesktopSize(int* width, int* height) {
+    // ENUM_REGISTRY_SETTINGS, not ENUM_CURRENT_SETTINGS: GTA2's video device puts
+    // the display into its own mode during startup, before the renderer is even
+    // loaded, so "current" reads back 640x480 and there is no way to ask what the
+    // desktop was. The registry mode is the desktop's persistent one and survives
+    // that.
+    DEVMODEA mode = {};
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsA(nullptr, ENUM_REGISTRY_SETTINGS, &mode) && mode.dmPelsWidth >= 640) {
+        *width = static_cast<int>(mode.dmPelsWidth);
+        *height = static_cast<int>(mode.dmPelsHeight);
+        return;
+    }
+    mode = DEVMODEA{};
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth) {
+        *width = static_cast<int>(mode.dmPelsWidth);
+        *height = static_cast<int>(mode.dmPelsHeight);
+        return;
+    }
+    // GetSystemMetrics last: this DLL is DPI-unaware, so it reports the *scaled*
+    // desktop - 1536x960 for a 3840x2400 screen at 250% - and rendering at that
+    // throws away more than half the resolution.
+    *width = GetSystemMetrics(SM_CXSCREEN);
+    *height = GetSystemMetrics(SM_CYSCREEN);
+}
+
 std::string GameDirectory() {
     char path[MAX_PATH];
     GetModuleFileNameA(nullptr, path, MAX_PATH);
@@ -198,12 +235,29 @@ HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow m
     // the game's window even while the game is the activated one. A child cannot
     // help against a video device that presents past the window manager
     // altogether; this at least competes in the right band.
-    RECT where = {0, 0, width, height};
-    GetWindowRect(gameWindow, &where);
+    // Positioned over the game's window but sized to the render resolution, not
+    // to it: the game's window is whatever GTA2's options screen last wrote, and
+    // 640x480 of path traced image is not the goal. Centred on the desktop when
+    // the render size is larger than the game's window, so a 4K image over a
+    // 640x480 game window still lands somewhere sensible.
+    RECT gameRect = {0, 0, width, height};
+    GetWindowRect(gameWindow, &gameRect);
+    int left = gameRect.left;
+    int top = gameRect.top;
+    const int screenW = GetSystemMetrics(SM_CXSCREEN);
+    const int screenH = GetSystemMetrics(SM_CYSCREEN);
+    if (width >= screenW && height >= screenH) {
+        left = 0;
+        top = 0;
+    } else {
+        if (left + width > screenW) left = (screenW - width) / 2;
+        if (top + height > screenH) top = (screenH - height) / 2;
+        if (left < 0) left = 0;
+        if (top < 0) top = 0;
+    }
     HWND window = CreateWindowExA(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                                  "gta2dx9_present", "GTA2", WS_POPUP, where.left, where.top,
-                                  where.right - where.left, where.bottom - where.top, nullptr,
-                                  nullptr, instance, nullptr);
+                                  "gta2dx9_present", "GTA2", WS_POPUP, left, top, width, height,
+                                  nullptr, nullptr, instance, nullptr);
     if (!window) return nullptr;
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
@@ -223,12 +277,35 @@ void WorldView::Configure(float pitchDegrees, float fovDegrees, bool useGameTile
         useGameTiles ? "the game" : "the style file");
 }
 
+void WorldView::SetRenderSize(int width, int height) {
+    requestedWidth_ = width;
+    requestedHeight_ = height;
+}
+
 bool WorldView::Initialize(HWND window, int width, int height, std::string* error) {
     dataDir_ = GameDirectory();
     gameWindow_ = window;
     window_ = window;
-    width_ = width;
-    height_ = height;
+
+    // What the game thinks its screen is only sets out the HUD; the overlay pass
+    // scales that to whatever it is drawn into. So the render size is ours to
+    // choose, and defaults to the desktop rather than to GTA2's 640x480.
+    int desktopW = 0, desktopH = 0;
+    DesktopSize(&desktopW, &desktopH);
+    width_ = requestedWidth_ > 0 ? requestedWidth_ : desktopW;
+    height_ = requestedHeight_ > 0 ? requestedHeight_ : desktopH;
+    if (width_ < 320 || height_ < 240) {
+        width_ = width;
+        height_ = height;
+    }
+    Log("render size %dx%d (desktop %dx%d, game screen %dx%d, ini asked for %dx%d)", width_,
+        height_, desktopW, desktopH, width, height, requestedWidth_, requestedHeight_);
+    if (desktopW <= 800 && requestedWidth_ <= 0) {
+        Log("WARNING: even the registry display mode reads %dx%d. Set render_width and "
+            "render_height in gta2dx9.ini explicitly.", desktopW, desktopH);
+    }
+    width = width_;
+    height = height_;
     if (present_ != PresentWindow::GameWindow) {
         window_ = CreatePresentWindow(window, width, height, present_);
         Log("presenting into our own %s window %p over the game's %p",
