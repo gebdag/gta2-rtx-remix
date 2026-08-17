@@ -321,9 +321,15 @@ void DrawCategory(int category) {
                                       "%.2f");
 
         ImGui::SeparatorText("Per car model");
-        ImGui::TextWrapped("A GTA2 car model is a fixed sprite, so one cone width cannot suit a "
-                           "bike, a bus and a squad car. These override the three above for one "
-                           "model; 0 means use the value above. Light one to see which car it is.");
+        if (ImGui::Checkbox("Use per-model beams", &SyntheticLightsSettings().perModelBeams)) {
+            SyntheticLightsMarkDirty();
+        }
+        ImGui::TextWrapped(
+            "Off by default, and worth being blunt about why: nothing here reads the car's actual "
+            "width. The model id is available, so a value can be stored per model, but it is a "
+            "number you typed rather than anything measured - which is why one setting for every "
+            "car is the honest default until the width is really read from the game. Overrides "
+            "below apply only while this is on; 0 on a field means use the value above.");
         if (ImGui::BeginTable("beams", 6,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                   | ImGuiTableFlags_ScrollY,

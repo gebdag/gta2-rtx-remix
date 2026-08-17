@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "../../src/gta2_map.h"
+#include "../../src/renderer.h"
 #include "game_access.h"
 #include "log.h"
 #include "overlay.h"
@@ -233,12 +234,22 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
     // Sprites are flat quads and the odd block faces come in either winding, so
     // culling is off rather than guessed at.
     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    const bool blending = gta2::GetAlphaMode() == gta2::AlphaMode::Blend;
+    device->SetRenderState(D3DRS_ALPHABLENDENABLE, blending ? TRUE : FALSE);
     // An alpha test rather than blending: it keeps the geometry opaque to the
     // path tracer, which behaves far better than a blended surface under Remix.
+    // Sprites were hardcoded to alpha test, which is why the mode switch appeared
+    // to do nothing to them: it only ever reached the static world mesh. An
+    // explosion is exactly the case that wants blending - it is a soft glow, not
+    // a cutout like a fence or a tree.
     device->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);
     device->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
-    device->SetRenderState(D3DRS_ALPHAREF, 128);
+    // In blend mode the test drops to 1, which still discards the fully
+    // transparent texels so they do not write depth over what is behind them.
+    device->SetRenderState(D3DRS_ALPHAREF, blending ? 1u
+                                                    : static_cast<DWORD>(gta2::GetAlphaRef()));
+    device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
     device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
     device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);

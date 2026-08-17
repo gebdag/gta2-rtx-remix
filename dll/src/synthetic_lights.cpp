@@ -164,7 +164,15 @@ void EnsureBinding() {
     head.rgb[0] = 1.0f; head.rgb[1] = 0.93f; head.rgb[2] = 0.80f;
     head.intensity = 1.0f;
     head.radius = 7.0f;
-    head.heightOffset = 0.12f;
+    // Raised well clear of the road: at 0.12 the sphere sat inside the ground
+    // and the cone clipped through it.
+    head.heightOffset = 0.35f;
+    head.coneAngleDeg = 34.0f;
+    // Half the gap between the beams. A GTA2 car is roughly one tile wide, so
+    // anything near a quarter of a tile reads as two separate lamps rather than
+    // one pair of headlights.
+    head.sideOffset = 0.10f;
+    head.forwardOffset = 0.40f;
     head.maxLights = 40;
 }
 
@@ -391,7 +399,7 @@ void WalkVehicles() {
         // positions are: our +Z is north, which is the game's -y.
         const float rx = fy, ry = -fx;   // right-hand perpendicular
         // Per model where one has been set, category default otherwise.
-        const BeamOverride* beam = SyntheticFindBeam(model);
+        const BeamOverride* beam = g_settings.perModelBeams ? SyntheticFindBeam(model) : nullptr;
         const float cone = (beam && beam->coneAngleDeg > 0.0f) ? beam->coneAngleDeg
                                                                : c.coneAngleDeg;
         const float side = (beam && beam->sideOffset > 0.0f) ? beam->sideOffset : c.sideOffset;
@@ -876,6 +884,7 @@ void SyntheticLightsLoad(const char* path) {
 
         if (section == -2) {
             if (_stricmp(key, "Enabled") == 0) g_settings.enabled = atoi(value) != 0;
+            else if (_stricmp(key, "PerModelBeams") == 0) g_settings.perModelBeams = atoi(value) != 0;
             else if (_stricmp(key, "DrivenNeedsDriver") == 0) g_settings.drivenNeedsDriver = atoi(value) != 0;
             else if (_stricmp(key, "DrivenAllowsMovement") == 0) g_settings.drivenAllowsMovement = atoi(value) != 0;
             else if (_stricmp(key, "DrivenWindowMs") == 0) g_settings.drivenWindowMs = atoi(value);

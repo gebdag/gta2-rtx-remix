@@ -70,6 +70,14 @@ struct SyntheticSettings {
     // A vehicle counts as driven when someone is sitting in it. That is the
     // honest test and it needs no window: a car waiting at a red light with a
     // driver in it keeps its beams, and a parked one never gets them.
+    // Per-model beam geometry, off by default.
+    //
+    // It only earns its keep if the numbers come from the car, and right now they
+    // do not - nothing reads a vehicle's width, so a per-model entry is a number
+    // you typed rather than anything measured. Off, every car uses the one set of
+    // values below, which is the honest default until the width is actually read.
+    bool perModelBeams = false;
+
     bool drivenNeedsDriver = true;
     // Kept as an alternative rather than deleted: a car being pushed, or one
     // whose occupant field ever turns out to mean something else, still reads as

@@ -96,10 +96,24 @@ void Renderer::Shutdown() {
 }
 
 void Renderer::ReleaseResources() {
+    // An animated tile's slot points at a frame owned by tileFrames_, so those
+    // must not be released twice. Everything else in textures_ is owned here.
     for (IDirect3DTexture9* texture : textures_) {
-        if (texture) texture->Release();
+        if (!texture) continue;
+        bool ownedByFrames = false;
+        for (const auto& frame : tileFrames_) {
+            if (frame.second == texture) {
+                ownedByFrames = true;
+                break;
+            }
+        }
+        if (!ownedByFrames) texture->Release();
     }
     textures_.clear();
+    for (auto& frame : tileFrames_) {
+        if (frame.second) frame.second->Release();
+    }
+    tileFrames_.clear();
     if (vertexBuffer_) {
         vertexBuffer_->Release();
         vertexBuffer_ = nullptr;
@@ -233,13 +247,47 @@ bool Renderer::UploadWorld(const WorldMesh& mesh, const Style& style, std::strin
 
 void Renderer::UpdateTileTexture(int tile, const uint32_t* pixels) {
     if (!HasTileTexture(tile) || !pixels) return;
+
+    // GTA2 animates a tile - fans, screens, water, traffic lights - by changing
+    // the artwork behind a fixed tile number. Writing the new frame into the
+    // texture this tile already has, which is what this used to do, gives RTX
+    // Remix one texture whose content changes: a single entry in the picker,
+    // animating, with no way to replace an individual frame.
+    //
+    // So each distinct frame gets a texture of its own and the tile is pointed at
+    // it instead. A frame that comes round again resolves to the same object and
+    // therefore the same hash, so the cost is bounded by how much distinct
+    // artwork exists rather than by how long the game runs.
+    uint64_t key = 0xCBF29CE484222325ULL;
+    for (size_t i = 0; i < static_cast<size_t>(kTileSize) * kTileSize; ++i) {
+        key ^= pixels[i];
+        key *= 0x100000001B3ULL;
+    }
+
+    const auto existing = tileFrames_.find(key);
+    if (existing != tileFrames_.end()) {
+        textures_[tile] = existing->second;
+        return;
+    }
+
+    IDirect3DTexture9* frame = nullptr;
+    if (FAILED(device_->CreateTexture(kTileSize, kTileSize, 1, 0, D3DFMT_A8R8G8B8,
+                                      D3DPOOL_MANAGED, &frame, nullptr))) {
+        return;
+    }
     D3DLOCKED_RECT rect;
-    if (FAILED(textures_[tile]->LockRect(0, &rect, nullptr, 0))) return;
+    if (FAILED(frame->LockRect(0, &rect, nullptr, 0))) {
+        frame->Release();
+        return;
+    }
     for (int y = 0; y < kTileSize; ++y) {
         memcpy(static_cast<uint8_t*>(rect.pBits) + y * rect.Pitch,
                pixels + static_cast<size_t>(y) * kTileSize, kTileSize * 4);
     }
-    textures_[tile]->UnlockRect(0);
+    frame->UnlockRect(0);
+
+    tileFrames_[key] = frame;   // owns it from here
+    textures_[tile] = frame;
 }
 
 void Renderer::CycleCullMode() {

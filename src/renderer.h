@@ -8,6 +8,7 @@
 
 #include <d3d9.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,11 @@ private:
     IDirect3DVertexBuffer9* vertexBuffer_ = nullptr;
     IDirect3DIndexBuffer9* indexBuffer_ = nullptr;
     std::vector<IDirect3DTexture9*> textures_;  // indexed by tile id, may contain nulls
+    // Every distinct frame of tile artwork, keyed by content, and the owner of
+    // all of them. An animated tile swaps textures_[tile] to point at a
+    // different one of these rather than rewriting the pixels of the one it has,
+    // which is what gives each frame its own Remix hash. See UpdateTileTexture.
+    std::map<uint64_t, IDirect3DTexture9*> tileFrames_;
     std::vector<TileBatch> batches_;
 
     int width_ = 0;
