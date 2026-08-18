@@ -9,6 +9,7 @@
 #include "remix_lights.h"
 #include "settings.h"
 #include "synthetic_lights.h"
+#include "texture_store.h"
 #include "time_of_day.h"
 
 #include <cmath>
@@ -822,6 +823,110 @@ void DrawFrameRate() {
                              "just save the settings.");
 }
 
+// Fire, explosions and muzzle flashes: the sprites whose black rim is in the
+// artwork rather than behind the alpha. See texture_store.h.
+void DrawEffectSprites() {
+    EffectSpriteSettings& fx = EffectSprites();
+
+    ImGui::SeparatorText("Fire, explosions and flashes");
+    ImGui::TextWrapped(
+        "These sprites had a black border that no amount of alpha work would shift, and the "
+        "reason is that the black is not behind the alpha at all: the artwork fades to black on "
+        "its way out to the cutout edge, and those texels are fully opaque. An explosion frame "
+        "reads (8,0,0) at alpha 255 a texel in from the hole. Art drawn that way only makes sense "
+        "additively, where black adds nothing -- but GTA2's renderers never blended: d3ddll.dll "
+        "sets no blend state at all and the 3dfx one draws colour-keyed, so on a CRT the rim was "
+        "simply lived with. Under a path tracer an opaque black surface is as black as black "
+        "gets.\n\n"
+        "Which sprites those are is read off the artwork, not off a list: a black outline is a "
+        "thing no ordinary cutout sprite has.\n\n"
+        "It deliberately does not also require a bright core. It used to, and that was wrong: an "
+        "explosion's last frames are embers and smoke, dark all over, and the core test threw "
+        "exactly those out -- so the animation went from a glow to an opaque black blob on its "
+        "final frame, which is worse than never having fixed it. A dying fire is still a fire, "
+        "and additively it fades to nothing, which is what it should do.");
+
+    int mode = fx.mode == EffectSpriteMode::Additive ? 2
+                                                     : (fx.mode == EffectSpriteMode::Cutout ? 1 : 0);
+    const int was = mode;
+    ImGui::RadioButton("Leave them alone", &mode, 0);
+    ImGui::SetItemTooltip("The old behaviour, black rim included.");
+    ImGui::SameLine();
+    ImGui::RadioButton("Fade the fringe out", &mode, 1);
+    ImGui::SetItemTooltip("Turns the artwork's own brightness into alpha and keeps the alpha "
+                          "test, so the dark edge is discarded rather than painted. No glow, but "
+                          "the geometry stays opaque to the path tracer.");
+    ImGui::SameLine();
+    ImGui::RadioButton("Draw them additively", &mode, 2);
+    ImGui::SetItemTooltip("What the artwork was drawn for. Remix treats additive draws as "
+                          "emissive particles, so a fireball glows over the street instead of "
+                          "sitting on it as a flat decal.");
+    if (mode != was) {
+        fx.mode = mode == 2 ? EffectSpriteMode::Additive
+                            : (mode == 1 ? EffectSpriteMode::Cutout : EffectSpriteMode::Off);
+        RebuildDeviceTextures();
+        SettingsMarkDirty();
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("%d of %d built frames classified as effects", EffectSpriteFrames(),
+                ClassifiedFrames());
+    if (fx.mode != EffectSpriteMode::Off && EffectSpriteFrames() == 0) {
+        ImGui::TextColored(kDim, "Nothing yet -- blow something up, or loosen the thresholds "
+                                 "below.");
+    }
+
+    ImGui::Spacing();
+    bool changed = false;
+    changed |= ImGui::SliderFloat("Fringe darker than", &fx.edgeLuma, 0.0f, 64.0f, "%.0f");
+    ImGui::SetItemTooltip("Median luminance of the opaque texels touching the hole. Measured over "
+                          "a capture of the shipped districts, fire and explosion frames sit at "
+                          "about 5; the darkest thing that is not an effect -- a pedestrian in "
+                          "shadow -- sits at 23.");
+    changed |= ImGui::SliderFloat("...or all of it darker than", &fx.faintLuma, 0.0f, 128.0f,
+                                  "%.0f");
+    ImGui::SetItemTooltip("The second route in: the brightest texel anywhere in the sprite. An "
+                          "explosion's last frames are embers and smoke, dark all over and with "
+                          "no crisp outline left -- and an opaque near-black world sprite is "
+                          "wrong under a path tracer whatever it is. Nothing in the capture that "
+                          "is not an effect comes close; the darkest pedestrian peaks at 105. "
+                          "0 turns this route off.");
+    if (fx.mode == EffectSpriteMode::Cutout) {
+        changed |= ImGui::SliderFloat("Fade gain", &fx.cutoutGain, 0.5f, 8.0f, "%.2f");
+        ImGui::SetItemTooltip("alpha = luminance x this. Higher keeps more of the fireball's "
+                              "dimmer edge.");
+    }
+    if (changed) SettingsMarkDirty();
+
+    ImGui::Spacing();
+    if (ImGui::Button("Rebuild textures now")) RebuildDeviceTextures();
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "The classification happens when a texture is built, so a threshold "
+                             "change only reaches artwork that is rebuilt.");
+
+    ImGui::SeparatorText("Texture report");
+    ImGui::TextWrapped(
+        "A threshold is only as good as the cases it was set from, so every distinct frame this "
+        "session builds keeps the numbers it was judged on, and the sprite pass records which "
+        "frames it actually drew -- that is what separates a fireball from a road tile that "
+        "happens to have a hole in it. A sprite that still has a black rim is then a row to look "
+        "up rather than a guess.\n\n"
+        "Written on exit as gta2dx9_textures.csv beside the game, with the frames themselves as "
+        "TGAs alongside. Trigger the sprites, quit, and both are waiting.");
+
+    bool dumping = TextureDumping();
+    if (ImGui::Checkbox("Dump each frame as a TGA", &dumping)) SetTextureDumping(dumping);
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "%d written to %s", TextureFramesDumped(), TextureDumpDir());
+
+    if (ImGui::Button("Write the report now")) {
+        const int rows = WriteTextureReport();
+        Log("texture report: written from the menu, %d row(s)", rows);
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "It is also written automatically when the renderer shuts down.");
+}
+
 void DrawAlpha() {
     ImGui::SeparatorText("Cutout edges");
     ImGui::TextWrapped(
@@ -877,6 +982,8 @@ void DrawAlpha() {
 }
 
 void DrawSprites() {
+    DrawEffectSprites();
+    ImGui::Separator();
     DrawAlpha();
     ImGui::Separator();
     float lift = SpriteLift();

@@ -362,6 +362,9 @@ void WorldView::Shutdown() {
     // Device-owned textures have to go before the device does.
     overlay_.ReleaseResources();
     live_.ReleaseResources();
+    // Before the frames go: the report is the only record of what this session
+    // actually built and drew.
+    WriteTextureReport();
     ReleaseDeviceTextures();
     renderer_.Shutdown();
     if (ours) DestroyWindow(ours);

@@ -150,6 +150,12 @@ void LoadConfig() {
         static_cast<int>(gta2dx9::kDefaultSpriteLift * 1000.0f + 0.5f), ini);
     gta2dx9::SetSpriteLift(lift / 1000.0f);
 
+    // Dump every distinct frame of artwork as a TGA, and write the classification
+    // numbers beside it. On by default: the files are a few kilobytes each and a
+    // few hundred per session, and it is the only way to find a sprite whose
+    // black rim was missed.
+    gta2dx9::SetTextureDumping(GetPrivateProfileIntA("renderer", "dump_textures", 1, ini) != 0);
+
     // Our own frame cap, because GTA2's is a checkbox: its pacer waits on a
     // hardcoded 33 ms step and the two registry values only turn that waiting on
     // and off. 0 leaves the game free-running. Note that the game advances its

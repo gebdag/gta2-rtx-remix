@@ -273,6 +273,67 @@ is not an unprojection — the world-space-only rule holds.
 The one cost of capture is that a block has to be drawn once before it is kept, so those
 few hundred blocks appear as the camera first reaches them and then stay.
 
+## The black rim on explosions
+
+Fire and explosion sprites had a black border that no amount of alpha work would shift,
+and the reason is that the black was never behind the alpha. The artwork **fades to black
+on its way out to the cutout edge, and those texels are opaque** — a texel in from the
+hole, an explosion frame reads `(8,0,0)` at alpha 255. Bleeding transparent texels (see
+`alpha_bleed.h`) fixed the colour *behind* the alpha and could not touch this, which is
+exactly why every earlier attempt appeared to do nothing to these sprites while visibly
+working on the world.
+
+Art drawn that way only makes sense **additively**, where black adds nothing. GTA2's own
+renderers never blended at all — `d3ddll.dll!FUN_00e02cc0` sets no blend state (the two
+render states it does set, `0x11`/`0x12`, are `TEXTUREMAG`/`TEXTUREMIN`, nearest versus
+linear), and `3dfx.dll` draws colour-keyed — so on a 1999 CRT the rim was simply lived
+with. Under a path tracer an opaque black surface is as black as black gets.
+
+Which sprites those are is decided **from the artwork**, in `texture_store.cpp`: a black
+outline is a thing no ordinary cutout sprite has. The test is the median luminance of the
+opaque texels touching the hole. Run over an RTX Remix capture of the shipped districts —
+862 textures, 205 of them with a cutout — the separation is total:
+
+| | edge median | peak |
+| --- | --- | --- |
+| fire and explosion frames | ~5 | 185–240 |
+| darkest non-effect sprite (a pedestrian in shadow) | 23 | 105 |
+
+The default is edge median < 16, which falls in that gap.
+
+It deliberately does **not** also require a bright core. It used to, and that was wrong: an
+explosion's last frames are embers and smoke, dark all over, and the core test threw
+exactly those out — so the animation went from a glow to an opaque black blob on its final
+frame, which is worse than never having fixed it. A dying fire is still a fire, and
+additively it fades to nothing, which is what it should do. A second route catches the same
+case from the other side: a sprite whose *brightest* texel is under 40 is black by any
+measure, and an opaque near-black world sprite is wrong under a path tracer whatever it is.
+Nothing in the capture that is not an effect comes near it.
+
+Three modes on the Sprites tab: leave them alone, fade the fringe out into alpha (keeps the
+alpha test), or draw them additively, which is the default and what the artwork was drawn
+for. Only the world-space sprite pass switches blend mode; tiles and the HUD are untouched.
+
+### The texture report
+
+A threshold is only as good as the cases it was set from, so every distinct frame a session
+builds keeps the numbers it was judged on, and the sprite pass records which frames it
+actually drew — that is what separates a fireball from a road tile that happens to have a
+hole in it. On shutdown (and from a button on the Sprites tab) that goes to
+`gta2dx9_textures.csv` beside the game, one row per frame:
+
+    key,width,height,palette,sprite,effect,cutout,edge_median,edge_mean,
+    edge_dark_fraction,peak,fringe_texels,opaque_texels
+
+with the frames themselves written as 32-bit TGAs into `gta2dx9_textures\`. A sprite that
+still has a black rim is then a row to look up rather than a guess: `sprite=1, effect=0`
+with a low `edge_median` is a threshold to move, and the TGA next to it says what the
+artwork actually is. `dump_textures=0` under `[renderer]` turns the images off.
+
+`tools/triage_textures.py "<game folder>"` reads both: it prints the sprite frames sorted
+by how far each one fell short of qualifying, near-misses first, and builds a contact sheet
+captioned with the two numbers the decision is made on.
+
 ## Frame rate
 
 GTA2's own cap is a checkbox, not a number. Its pacer at `gta2.exe!FUN_00462A30` compares

@@ -5,6 +5,7 @@
 #include "log.h"
 #include "remix_lights.h"
 #include "synthetic_lights.h"
+#include "texture_store.h"
 #include "time_of_day.h"
 
 #include "../../src/renderer.h"
@@ -76,6 +77,11 @@ void Fields(FloatField** floats, int* floatCount, BoolField** bools, int* boolCo
     f[nf++] = {"timeofday", "RotationOffset", &tod.rotationOffsetDeg};
     f[nf++] = {"timeofday", "ElevationOffset", &tod.elevationOffsetDeg};
     f[nf++] = {"timeofday", "PushIntervalMs", &tod.pushIntervalMs};
+
+    EffectSpriteSettings& fx = EffectSprites();
+    f[nf++] = {"effectsprites", "EdgeLuma", &fx.edgeLuma};
+    f[nf++] = {"effectsprites", "FaintLuma", &fx.faintLuma};
+    f[nf++] = {"effectsprites", "CutoutGain", &fx.cutoutGain};
 
     *floats = f;
     *floatCount = nf;
@@ -154,6 +160,12 @@ void SettingsSaveAll() {
     fprintf(out, "AlphaMode=%s\n", gta2::GetAlphaMode() == gta2::AlphaMode::Blend ? "blend" : "test");
     fprintf(out, "AlphaRef=%d\n", gta2::GetAlphaRef());
     fprintf(out, "FpsCap=%.4f\n", FrameLimitFps());
+    fprintf(out, "DumpTextures=%d\n", TextureDumping() ? 1 : 0);
+    const EffectSpriteMode mode = EffectSprites().mode;
+    fprintf(out, "EffectSprites=%s\n",
+            mode == EffectSpriteMode::Additive
+                ? "additive"
+                : (mode == EffectSpriteMode::Cutout ? "cutout" : "off"));
     fclose(out);
 
     // One button, everything saved - the three files are an implementation
@@ -228,6 +240,13 @@ void SettingsLoadAll() {
             gta2::SetAlphaRef(atoi(value));
         } else if (!_stricmp(key, "FpsCap")) {
             FrameLimitSet(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "DumpTextures")) {
+            SetTextureDumping(atoi(value) != 0);
+        } else if (!_stricmp(key, "EffectSprites")) {
+            EffectSprites().mode = !_stricmp(value, "off")
+                                       ? EffectSpriteMode::Off
+                                       : (!_stricmp(value, "cutout") ? EffectSpriteMode::Cutout
+                                                                     : EffectSpriteMode::Additive);
         }
     }
     fclose(in);

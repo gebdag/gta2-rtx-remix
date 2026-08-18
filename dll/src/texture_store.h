@@ -67,11 +67,102 @@ int PaletteCount();
 // The buffer is shared and only valid until the next call.
 const uint32_t* PaletteColours(int index, bool* hasColour = nullptr);
 
+// --- Effect sprites -------------------------------------------------------
+//
+// Fire, explosions and muzzle flashes are drawn from artwork that fades to
+// *black* on its way out to the cutout edge, and those black texels are opaque:
+// alpha 255, colour (8,0,0). That is the black rim, and it is why bleeding the
+// transparent texels never touched these sprites - the black is in the visible
+// part of the picture, not behind the alpha.
+//
+// Art like that only makes sense drawn additively, where black adds nothing.
+// GTA2's own renderers never blended at all (d3ddll.dll sets no blend state; the
+// 3dfx one draws colour-keyed), so on a 1999 CRT the rim was simply accepted.
+// Under a path tracer an opaque black surface is as black as black gets and it
+// reads as a hole punched round the fireball.
+//
+// Which sprites those are is decided from the artwork rather than from a list:
+// a black outline is a thing no ordinary cutout sprite has. Measured over a
+// capture of the shipped districts, the fire and explosion frames come out at
+// edge median luminance ~5, while the darkest sprite that is not an effect - a
+// pedestrian in shadow - sits at 23. The default falls in that gap.
+//
+// This deliberately does *not* also require a bright core. It used to, and that
+// was wrong: an explosion's last frames are embers and smoke, dark all over, and
+// the core test threw exactly those out - so the animation went from a glow to
+// an opaque black blob on its final frame, which is worse than never having
+// fixed it. A dying fire is still a fire, and additively it fades to nothing,
+// which is what it should do.
+enum class EffectSpriteMode {
+    Off,       // treat them like everything else, black rim and all
+    Cutout,    // turn the dark fringe into alpha, keep the alpha test
+    Additive,  // draw them additively, which is what the artwork was drawn for
+};
+
+struct EffectSpriteSettings {
+    EffectSpriteMode mode = EffectSpriteMode::Additive;
+    // A texel on the cutout boundary must be darker than this, at the median,
+    // for the sprite to count as an effect.
+    float edgeLuma = 16.0f;
+    // ...or the whole sprite is darker than this, brightest texel and all, which
+    // is the tail of an animation whose outline has stopped being crisp. Nothing
+    // in the capture that is not an effect comes anywhere near: the darkest is a
+    // pedestrian peaking at 105. 0 disables this second route.
+    float faintLuma = 40.0f;
+    // Cutout mode only: alpha = luminance * gain, so the fringe fades out
+    // instead of being painted.
+    float cutoutGain = 3.0f;
+};
+
+EffectSpriteSettings& EffectSprites();
+
+// How many distinct frames of artwork have been classified as effects, and how
+// many have been built at all, so the menu can say whether the thresholds are
+// picking anything up.
+int EffectSpriteFrames();
+int ClassifiedFrames();
+
 // A D3D texture for one of the game's records, built on first use and rebuilt
 // when the record's palette or pixels change. Shared by the screen-space pass
 // and the world-space sprite pass, which draw from the same set of bitmaps.
-IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* record);
+//
+// `effect` reports whether this frame was classified as effect artwork, so the
+// sprite pass can draw it additively. It is answered from the cache too, not
+// only on the frame the texture is built.
+IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* record,
+                                    bool* effect = nullptr);
 void ForgetDeviceTexture(const void* record);
 void ReleaseDeviceTextures();
+
+// Drops every built texture so the next frame rebuilds them. The classification
+// and the pixel work both happen at build time, so a threshold change has no
+// effect on artwork that is already cached; this is what makes the sliders live.
+void RebuildDeviceTextures();
+
+// --- The texture report ---------------------------------------------------
+//
+// The classification is a threshold on a measurement, and a threshold is only as
+// good as the cases it was set from. So every distinct frame the session builds
+// keeps the numbers it was judged on, and the world-space sprite pass says which
+// frames it actually drew - that is what separates a fireball from a road tile
+// that happens to have a hole in it.
+//
+// Written beside the game as gta2dx9_textures.csv on shutdown, alongside a
+// folder of the frames themselves as 32-bit TGAs. A sprite that still has a
+// black rim is then a row to look up rather than a guess: its edge_median and
+// peak say exactly how far off the thresholds it fell.
+
+// Called by the sprite pass for each batch it draws, so the report can tell
+// sprites from tiles and from the HUD.
+void NoteSpriteTexture(const void* record);
+
+// Writes the CSV and returns how many rows it held. Called on shutdown and from
+// the menu button.
+int WriteTextureReport();
+
+void        SetTextureDumping(bool on);
+bool        TextureDumping();
+const char* TextureDumpDir();
+int         TextureFramesDumped();
 
 }  // namespace gta2dx9
