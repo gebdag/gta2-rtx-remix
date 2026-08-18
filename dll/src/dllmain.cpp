@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "frame_limiter.h"
 #include "game_access.h"
 #include "live_geometry.h"
 #include "log.h"
@@ -27,6 +28,7 @@
 #include "settings.h"
 #include "synthetic_lights.h"
 #include "texture_store.h"
+#include "time_of_day.h"
 #include "world_view.h"
 
 using gta2dx9::Log;
@@ -148,8 +150,34 @@ void LoadConfig() {
         static_cast<int>(gta2dx9::kDefaultSpriteLift * 1000.0f + 0.5f), ini);
     gta2dx9::SetSpriteLift(lift / 1000.0f);
 
-    Log("loaded as %s; mode=%s backend=%s sprite_lift=%.3f blocks", OwnModuleLeaf(),
-        g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName, gta2dx9::SpriteLift());
+    // Our own frame cap, because GTA2's is a checkbox: its pacer waits on a
+    // hardcoded 33 ms step and the two registry values only turn that waiting on
+    // and off. 0 leaves the game free-running. Note that the game advances its
+    // simulation one step per frame, so this sets the speed as well as the
+    // smoothness - see frame_limiter.h.
+    gta2dx9::FrameLimitSet(
+        static_cast<float>(GetPrivateProfileIntA("renderer", "fps_cap", 30, ini)));
+
+    // The day/night cycle. Hours and minutes rather than a float, because the ini
+    // API only reads integers; 0200 is 2 am.
+    gta2dx9::TimeOfDaySettings& tod = gta2dx9::TimeOfDay();
+    tod.enabled = GetPrivateProfileIntA("timeofday", "enabled", 1, ini) != 0;
+    const int start = GetPrivateProfileIntA("timeofday", "start_hhmm", 200, ini);
+    tod.startHour = static_cast<float>(start / 100) + static_cast<float>(start % 100) / 60.0f;
+    // Tenths, like the camera angles: the ini API only reads integers, and 10 is
+    // the default one real second to one game minute.
+    tod.minutesPerSecond =
+        GetPrivateProfileIntA("timeofday", "game_minutes_per_second_tenths", 10, ini) / 10.0f;
+    tod.latitudeDeg =
+        GetPrivateProfileIntA("timeofday", "latitude_tenths", 400, ini) / 10.0f;
+    tod.declinationDeg =
+        GetPrivateProfileIntA("timeofday", "declination_tenths", 0, ini) / 10.0f;
+    gta2dx9::TimeOfDayReset();
+
+    Log("loaded as %s; mode=%s backend=%s sprite_lift=%.3f blocks fps_cap=%.0f tod=%s@%05.2f",
+        OwnModuleLeaf(), g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName,
+        gta2dx9::SpriteLift(), gta2dx9::FrameLimitFps(), tod.enabled ? "on" : "off",
+        tod.startHour);
 }
 
 bool BindBackend() {
@@ -266,6 +294,7 @@ __declspec(dllexport) void __stdcall gbh_CloseScreen(void* param) {
 
 __declspec(dllexport) void __stdcall gbh_CloseDLL() {
     g_world.Shutdown();
+    gta2dx9::FrameLimitShutdown();
     if (Proxying() && g_p_gbh_CloseDLL) Backend<void(__stdcall*)()>(g_p_gbh_CloseDLL)();
 }
 
@@ -322,6 +351,9 @@ __declspec(dllexport) void __stdcall gbh_EndScene() {
 __declspec(dllexport) void __stdcall gbh_BeginLevel() {
     if (Proxying() && g_p_gbh_BeginLevel) { Backend<void(__stdcall*)()>(g_p_gbh_BeginLevel)(); return; }
     g_world.InvalidateWorld();
+    // Every run starts at the same time of day, which is the point of a start
+    // hour: 2 am, and dark.
+    gta2dx9::TimeOfDayReset();
 }
 
 __declspec(dllexport) void __stdcall gbh_EndLevel() {

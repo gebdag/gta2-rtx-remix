@@ -117,4 +117,9 @@ const remixapi_Interface* RemixApi() { return g_available ? &g_interface : nullp
 
 const char* RemixApiStatusText() { return g_status; }
 
+bool RemixSetConfig(const char* key, const char* value) {
+    if (!g_available || !g_interface.SetConfigVariable || !key || !value) return false;
+    return g_interface.SetConfigVariable(key, value) == REMIXAPI_ERROR_CODE_SUCCESS;
+}
+
 }  // namespace gta2dx9

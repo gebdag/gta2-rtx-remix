@@ -49,4 +49,13 @@ const remixapi_Interface* RemixApi();
 // Human-readable result of the last init attempt, for the menu and the log.
 const char* RemixApiStatusText();
 
+// Sets one of Remix's own config variables - the same names that appear in
+// rtx.conf and user.conf. False when Remix is absent or refuses it.
+//
+// Not every option is meaningful to change at runtime; the ones used here say so
+// in the runtime's own descriptions ("Game-drivable per-frame"). Where an option
+// is not, Remix's own menu remains the authority and this is a request rather
+// than a guarantee.
+bool RemixSetConfig(const char* key, const char* value);
+
 }  // namespace gta2dx9

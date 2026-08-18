@@ -273,6 +273,57 @@ is not an unprojection — the world-space-only rule holds.
 The one cost of capture is that a block has to be drawn once before it is kept, so those
 few hundred blocks appear as the camera first reaches them and then stay.
 
+## Frame rate
+
+GTA2's own cap is a checkbox, not a number. Its pacer at `gta2.exe!FUN_00462A30` compares
+`timeGetTime()` against a deadline it advances by whatever `FUN_0045A460` returns — a
+hardcoded **33 ms**, or 11 ms in a network game — and the two registry values the manager
+writes are read at `FUN_004CB1D0` as plain booleans into `0x00595010` (`max_frame_rate`)
+and `0x00673598` (`min_frame_rate`). There is no number in the registry to raise.
+
+So the cap is ours: `fps_cap` under `[renderer]` in `gta2dx9.ini`, live on the Status tab,
+implemented in `frame_limiter.cpp` as a sleep-then-spin at the end of the frame with the
+game's own cap left off.
+
+**It sets the game's speed as well as its smoothness.** GTA2 advances its simulation
+exactly one step per rendered frame and scales nothing by elapsed time — which is why
+uncapped runs fast rather than merely smooth. A cap of N runs at N/30.3 times the intended
+speed: 30 is 1.0x, 60 is 2.0x. There is no setting that gives 60 fps of *motion* at 1x;
+that needs the game's per-step constants halved, which a renderer cannot do.
+
+That the game draws once per step is not an assumption; it falls out of the pacer. Reading
+`FUN_00462A30`, `0x461930` is the logic tick and `0x461960` the draw, and the loop calls
+the draw exactly once per tick in every configuration of the two flags — uncapped it
+strictly alternates tick, draw, tick, draw; capped with `min_frame_rate` on it ticks on the
+33 ms deadline, draws once, and then idles until the next one.
+
+The default is therefore `fps_cap=30` — GTA2's proper speed; the menu also offers 30.30,
+which is its 33 ms step exactly. Raising the presented frame rate above the simulation rate
+is a renderer setting in RTX Remix, not one of ours.
+
+## Day and night
+
+Remix places its sun from two config variables, both in degrees and both documented in the
+runtime as "Game-drivable per-frame":
+
+    rtx.atmosphere.sunElevation     height above the horizon, -90 .. +90
+    rtx.atmosphere.sunRotation      compass bearing, 0 .. 360
+
+`time_of_day.cpp` pushes them through `remixapi_Interface::SetConfigVariable`, which is the
+supported route, rate-limited to one push every 50 ms because each one is a round trip
+across the 32-bit bridge.
+
+The angles come from the standard solar position equations for a latitude and a solar
+declination, so the sun rises in the east, is highest at local noon, sets in the west, and
+spends the night as far below the horizon as it really would — which is what makes 02:00
+dark rather than merely dim. At the defaults (40 degrees north, equinox) sunrise is 06:00
+due east, noon is 50 degrees due south, sunset is 18:00 due west, and 02:00 sits at -41.6
+degrees. Everything is on the **ToD** tab: clock, scrub, speed, latitude, season, and
+offsets for fitting the compass to a city whose streets do not run north-south.
+
+Defaults: start at 02:00, one real second to one game minute, so a full day takes 24 real
+minutes.
+
 ## Not yet implemented
 
 Mip chains, and the view-rotation states other than the default `0xFF`.

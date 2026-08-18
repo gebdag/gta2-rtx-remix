@@ -10,12 +10,14 @@
 #include "../../src/gta2_style.h"
 #include "../../src/world_mesh.h"
 #include "debug_overlay.h"
+#include "frame_limiter.h"
 #include "game_access.h"
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
 #include "synthetic_lights.h"
 #include "texture_store.h"
+#include "time_of_day.h"
 
 namespace gta2dx9 {
 namespace {
@@ -687,6 +689,10 @@ void WorldView::RenderFrame() {
     DebugMenuInit(gameWindow_, window_, renderer_.Device());
     DebugMenuPoll();
 
+    // The sky. Runs whether or not Remix answered - the clock is ours and the
+    // menu shows it either way - and pushes the sun when it can.
+    TimeOfDayUpdate();
+
     // Lights for the effects the game draws but never lights, read straight off
     // its particle and vehicle lists. Before the reconcile, so they are matched
     // and handled in the same pass as the game's own.
@@ -734,6 +740,11 @@ void WorldView::RenderFrame() {
         }
     }
     if ((frameCount_ & 0x3F) == 0) DumpCameraStruct();
+
+    // Last thing in the frame, after the flip: GTA2's own pacer is a checkbox
+    // between 30 fps and none at all, so the number lives here instead. See
+    // frame_limiter.h for what a cap above 30 does to the game's speed.
+    FrameLimitWait();
 }
 
 }  // namespace gta2dx9

@@ -1,5 +1,6 @@
 #include "debug_overlay.h"
 
+#include "frame_limiter.h"
 #include "game_access.h"
 #include "live_geometry.h"
 #include "../../src/renderer.h"
@@ -8,7 +9,9 @@
 #include "remix_lights.h"
 #include "settings.h"
 #include "synthetic_lights.h"
+#include "time_of_day.h"
 
+#include <cmath>
 #include <d3d9.h>
 
 #include <imgui.h>
@@ -576,6 +579,249 @@ void DrawEffectInspector() {
     }
 }
 
+void HourText(float hour, char* out, size_t size) {
+    int h = static_cast<int>(hour);
+    int m = static_cast<int>((hour - h) * 60.0f + 0.5f);
+    if (m >= 60) { m -= 60; ++h; }
+    if (h >= 24) h -= 24;
+    _snprintf(out, size - 1, "%02d:%02d", h, m);
+    out[size - 1] = '\0';
+}
+
+// What the sky is doing, and every knob that decides it.
+void DrawTimeOfDay() {
+    DrawSaveBar();
+    ImGui::Separator();
+
+    TimeOfDaySettings& tod = TimeOfDay();
+
+    ImGui::TextWrapped(
+        "Remix places its sun from two config variables, both in degrees and both documented in "
+        "the runtime as game-drivable per frame: rtx.atmosphere.sunElevation and "
+        "rtx.atmosphere.sunRotation. They are pushed through the Remix API's SetConfigVariable, "
+        "which is the supported way for a game to move the sky.\n\n"
+        "The angles are not invented -- they come from the standard solar position equations for "
+        "a latitude and a season, so the sun rises in the east, is highest at local noon, sets in "
+        "the west, and spends the night as far below the horizon as it really would. That last "
+        "part is what makes 2 am dark rather than merely dim.");
+
+    ImGui::Separator();
+    if (!RemixApiAvailable()) {
+        ImGui::TextColored(kBad, "Remix API not available: %s", RemixApiStatusText());
+        ImGui::TextColored(kDim, "The clock below still runs, and everything can be set up; "
+                                 "nothing reaches the sky until Remix answers.");
+    } else {
+        ImGui::TextColored(TimeOfDayPushed() ? kGood : kWarn, "%s", TimeOfDayStatus());
+        ImGui::SameLine();
+        ImGui::TextColored(kDim, "(%d push(es))", TimeOfDayPushCount());
+    }
+
+    if (ImGui::Checkbox("Run the day/night cycle", &tod.enabled)) SettingsMarkDirty();
+    ImGui::SetItemTooltip("Off leaves whatever sun rtx.conf last set, which is how it behaved "
+                          "before this existed.");
+
+    ImGui::SeparatorText("Clock");
+
+    char clock[16];
+    HourText(TimeOfDayHour(), clock, sizeof(clock));
+    float elevation = 0.0f, rotation = 0.0f;
+    TimeOfDayAngles(&elevation, &rotation);
+
+    const bool daylight = elevation > 0.0f;
+    ImGui::TextColored(daylight ? kWarn : kDim, "%s", clock);
+    ImGui::SameLine();
+    ImGui::Text("   sun elevation %+.2f deg, rotation %.2f deg", elevation, rotation);
+    ImGui::SameLine();
+    // The civil/nautical/astronomical twilight boundaries, which is the honest
+    // way to say how dark it is rather than "night".
+    const char* phase = elevation > 0.0f      ? "day"
+                        : elevation > -6.0f   ? "civil twilight"
+                        : elevation > -12.0f  ? "nautical twilight"
+                        : elevation > -18.0f  ? "astronomical twilight"
+                                              : "night";
+    ImGui::TextColored(kDim, "  %s", phase);
+
+    float hour = TimeOfDayHour();
+    if (ImGui::SliderFloat("Time", &hour, 0.0f, 24.0f, clock)) TimeOfDaySetHour(hour);
+    ImGui::SetItemTooltip("Drag to scrub the day. The clock carries on from wherever it is let "
+                          "go, unless it is paused.");
+
+    if (ImGui::Checkbox("Pause the clock", &tod.paused)) SettingsMarkDirty();
+    ImGui::SameLine();
+    if (ImGui::Button("Back to the start hour")) TimeOfDayReset();
+    ImGui::SameLine();
+    if (ImGui::Button("Noon")) TimeOfDaySetHour(12.0f);
+    ImGui::SameLine();
+    if (ImGui::Button("Midnight")) TimeOfDaySetHour(0.0f);
+
+    ImGui::Spacing();
+    float startHour = tod.startHour;
+    char startText[16];
+    HourText(startHour, startText, sizeof(startText));
+    if (ImGui::SliderFloat("Start of a level", &startHour, 0.0f, 24.0f, startText)) {
+        tod.startHour = startHour;
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("Where the clock is set when a level begins. 02:00 is the default and "
+                          "is deep night at every latitude and season below.");
+
+    if (ImGui::SliderFloat("Game minutes per real second", &tod.minutesPerSecond, 0.1f, 60.0f,
+                           "%.2f", ImGuiSliderFlags_Logarithmic)) {
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("1.00 is one real second to one game minute, which is a full day in 24 "
+                          "real minutes. That is the default.");
+    ImGui::TextColored(kDim, "A full day takes %.1f real minutes at this rate.",
+                       tod.minutesPerSecond > 0.0f ? 1440.0f / tod.minutesPerSecond / 60.0f
+                                                   : 0.0f);
+
+    ImGui::SeparatorText("Where and when on Earth");
+    ImGui::TextWrapped(
+        "Anywhere City is nowhere in particular, so this is a choice rather than a fact. Latitude "
+        "sets how high the sun climbs and how steeply it rises and sets; declination sets the "
+        "season -- +23.4 at the June solstice, 0 at either equinox, -23.4 in December. The "
+        "defaults are a temperate northern latitude at the equinox: twelve hours of daylight, a "
+        "sun that reaches 50 degrees at noon, long slanted shadows morning and evening.");
+
+    bool changed = false;
+    changed |= ImGui::SliderFloat("Latitude (deg)", &tod.latitudeDeg, -66.0f, 66.0f, "%.1f");
+    ImGui::SetItemTooltip("Positive is north. Past about 66 the sun stops rising or setting at "
+                          "the solstices, which is a fine thing to look at and a poor thing to "
+                          "play in.");
+    changed |= ImGui::SliderFloat("Declination (deg)", &tod.declinationDeg, -23.44f, 23.44f,
+                                  "%.2f");
+    ImGui::SetItemTooltip("The season. +23.44 = midsummer in the north, 0 = equinox, "
+                          "-23.44 = midwinter.");
+
+    struct Season { float declination; const char* label; };
+    static const Season seasons[] = {
+        {23.44f, "June solstice"},
+        {0.0f, "Equinox"},
+        {-23.44f, "December solstice"},
+    };
+    for (const Season& s : seasons) {
+        ImGui::PushID(&s);
+        if (ImGui::SmallButton(s.label)) {
+            tod.declinationDeg = s.declination;
+            changed = true;
+        }
+        ImGui::PopID();
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+
+    ImGui::SeparatorText("Fitting it to the city");
+    ImGui::TextWrapped(
+        "Remix's own reference for sunRotation is not documented, and GTA2's streets do not have "
+        "to run north-south anyway, so the compass bearing can be turned and, if it comes out "
+        "mirrored, flipped. The elevation offset is a thumb on the scale for pulling the night up "
+        "out of pitch black.");
+    changed |= ImGui::SliderFloat("Rotation offset (deg)", &tod.rotationOffsetDeg, -180.0f, 180.0f,
+                                  "%.1f");
+    changed |= ImGui::Checkbox("Sun travels clockwise seen from above", &tod.rotationClockwise);
+    ImGui::SetItemTooltip("Which it does in the northern hemisphere. Uncheck if the sun ends up "
+                          "rising where it should set.");
+    changed |= ImGui::SliderFloat("Elevation offset (deg)", &tod.elevationOffsetDeg, -30.0f, 30.0f,
+                                  "%.1f");
+    changed |= ImGui::SliderFloat("Push interval (ms)", &tod.pushIntervalMs, 0.0f, 500.0f, "%.0f");
+    ImGui::SetItemTooltip("Each push is a round trip across the 32-bit Remix bridge and the sun "
+                          "moves by a fraction of a degree per frame, so there is nothing to gain "
+                          "from doing it every frame. 50 ms is twenty a second.");
+    if (changed) SettingsMarkDirty();
+
+    ImGui::SeparatorText("The day, hour by hour");
+    if (ImGui::BeginTable("tod", 4,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("time");
+        ImGui::TableSetupColumn("elevation");
+        ImGui::TableSetupColumn("rotation");
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+        for (int h = 0; h < 24; h += 2) {
+            float e = 0.0f, r = 0.0f;
+            TimeOfDaySunAt(static_cast<float>(h), tod, &e, &r);
+            ImGui::PushID(h);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            char label[16];
+            _snprintf(label, sizeof(label) - 1, "%02d:00", h);
+            label[sizeof(label) - 1] = '\0';
+            if (ImGui::SmallButton(label)) TimeOfDaySetHour(static_cast<float>(h));
+            ImGui::TableNextColumn();
+            ImGui::TextColored(e > 0.0f ? kWarn : kDim, "%+7.2f", e);
+            ImGui::TableNextColumn();
+            ImGui::Text("%6.2f", r);
+            ImGui::TableNextColumn();
+            // A bar, so the shape of the day is visible without a plot.
+            const int filled = static_cast<int>((e + 90.0f) / 180.0f * 40.0f + 0.5f);
+            char bar[48];
+            for (int i = 0; i < 40; ++i) bar[i] = i < filled ? '#' : '.';
+            bar[40] = '\0';
+            ImGui::TextColored(e > 0.0f ? kWarn : kDim, "%s", bar);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(kDim, "The middle of the bar is the horizon. Times are the current "
+                             "latitude and season, not the current clock.");
+}
+
+void DrawFrameRate() {
+    ImGui::SeparatorText("Frame rate");
+    ImGui::TextWrapped(
+        "GTA2's own cap is a checkbox, not a number. Its pacer waits on a hardcoded 33 ms step "
+        "(gta2.exe!0x0045A460 returns 33) and the two registry values the manager writes, "
+        "max_frame_rate and min_frame_rate, are read as plain booleans -- capped means 30 fps, "
+        "uncapped means it stops waiting altogether. So the number is ours: the game's cap is "
+        "left off and the frame is held here instead.\n\n"
+        "What it costs, plainly: GTA2 advances its simulation exactly one step per rendered "
+        "frame and scales nothing by elapsed time, which is why uncapped runs fast rather than "
+        "merely smooth. A cap of N runs the game at N/30.3 times its intended speed. There is no "
+        "setting that gives 60 fps of motion at 1x speed -- that would need the game's per-step "
+        "constants halved, which a renderer cannot do.");
+
+    float fps = FrameLimitFps();
+    if (ImGui::SliderFloat("Frame cap", &fps, 0.0f, 240.0f, fps <= 0.0f ? "off" : "%.0f fps")) {
+        FrameLimitSet(fps);
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("0 turns the cap off and lets the game free-run, which is as fast as "
+                          "the machine allows and correspondingly frantic.");
+
+    struct Preset { float fps; const char* label; const char* note; };
+    static const Preset presets[] = {
+        {0.0f,      "off",   "free-running; as fast as the machine goes"},
+        {30.3030f,  "30.30", "1.00x -- exactly GTA2's own 33 ms step. The default."},
+        {45.0f,     "45",    "1.49x"},
+        {60.0f,     "60",    "1.98x -- smooth, and visibly brisk"},
+        {90.0f,     "90",    "2.97x"},
+    };
+    for (const Preset& p : presets) {
+        ImGui::PushID(&p);
+        if (ImGui::SmallButton(p.label)) {
+            FrameLimitSet(p.fps);
+            SettingsMarkDirty();
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(kDim, "%s", p.note);
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("measured %.1f fps", FrameLimitMeasuredFps());
+    ImGui::SameLine();
+    const float idle = FrameLimitIdleFraction();
+    if (FrameLimitFps() > 0.0f && idle < 0.02f) {
+        ImGui::TextColored(kWarn, "  (0%% of the frame spent waiting -- the machine, not the cap, "
+                                  "is what is limiting this)");
+    } else {
+        ImGui::TextColored(kDim, "  %.0f%% of each frame spent waiting on the cap", idle * 100.0f);
+    }
+    ImGui::TextColored(kDim, "Persist a value with fps_cap under [renderer] in gta2dx9.ini, or "
+                             "just save the settings.");
+}
+
 void DrawAlpha() {
     ImGui::SeparatorText("Cutout edges");
     ImGui::TextWrapped(
@@ -1032,7 +1278,13 @@ void DebugMenuRender() {
             if (ImGui::BeginTabItem("Status")) {
                 DrawStatus();
                 ImGui::Separator();
+                DrawFrameRate();
+                ImGui::Separator();
                 DrawTuning();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("ToD")) {
+                DrawTimeOfDay();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Invented")) {

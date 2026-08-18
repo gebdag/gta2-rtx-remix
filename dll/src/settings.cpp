@@ -1,9 +1,11 @@
 #include "settings.h"
 
+#include "frame_limiter.h"
 #include "live_geometry.h"
 #include "log.h"
 #include "remix_lights.h"
 #include "synthetic_lights.h"
+#include "time_of_day.h"
 
 #include "../../src/renderer.h"
 
@@ -62,6 +64,18 @@ void Fields(FloatField** floats, int* floatCount, BoolField** bools, int* boolCo
     f[nf++] = {"lights", "MinIntensity", &ls.minIntensity};
     f[nf++] = {"lights", "AmbientFillScale", &ls.ambientFillScale};
     f[nf++] = {"lights", "ConeSoftness", &ls.coneSoftness};
+
+    TimeOfDaySettings& tod = TimeOfDay();
+    b[nb++] = {"timeofday", "Enabled", &tod.enabled};
+    b[nb++] = {"timeofday", "Paused", &tod.paused};
+    b[nb++] = {"timeofday", "RotationClockwise", &tod.rotationClockwise};
+    f[nf++] = {"timeofday", "StartHour", &tod.startHour};
+    f[nf++] = {"timeofday", "MinutesPerSecond", &tod.minutesPerSecond};
+    f[nf++] = {"timeofday", "Latitude", &tod.latitudeDeg};
+    f[nf++] = {"timeofday", "Declination", &tod.declinationDeg};
+    f[nf++] = {"timeofday", "RotationOffset", &tod.rotationOffsetDeg};
+    f[nf++] = {"timeofday", "ElevationOffset", &tod.elevationOffsetDeg};
+    f[nf++] = {"timeofday", "PushIntervalMs", &tod.pushIntervalMs};
 
     *floats = f;
     *floatCount = nf;
@@ -135,8 +149,11 @@ void SettingsSaveAll() {
     // Things that live outside a settings struct.
     fprintf(out, "\n[render]\n");
     fprintf(out, "SpriteLift=%.4f\n", SpriteLift());
+    fprintf(out, "SpriteStackStep=%.4f\n", SpriteStackStep());
+    fprintf(out, "SpriteFeather=%.4f\n", SpriteFeather());
     fprintf(out, "AlphaMode=%s\n", gta2::GetAlphaMode() == gta2::AlphaMode::Blend ? "blend" : "test");
     fprintf(out, "AlphaRef=%d\n", gta2::GetAlphaRef());
+    fprintf(out, "FpsCap=%.4f\n", FrameLimitFps());
     fclose(out);
 
     // One button, everything saved - the three files are an implementation
@@ -209,6 +226,8 @@ void SettingsLoadAll() {
                                                          : gta2::AlphaMode::Test);
         } else if (!_stricmp(key, "AlphaRef")) {
             gta2::SetAlphaRef(atoi(value));
+        } else if (!_stricmp(key, "FpsCap")) {
+            FrameLimitSet(static_cast<float>(atof(value)));
         }
     }
     fclose(in);
