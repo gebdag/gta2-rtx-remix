@@ -117,10 +117,14 @@ void SetSpriteStackStep(float blocks) {
 
 float SpriteStackStep() { return g_spriteStackStep; }
 
+int g_effectBatches = 0;
+int EffectBatchesDrawn() { return g_effectBatches; }
+
 void LiveGeometry::BeginFrame() {
     sprites_.clear();
     stacks_.clear();
     spriteQuads_ = 0;
+    effectQuads_ = 0;
 }
 
 // Which layer of a stack this sprite belongs to.
@@ -194,17 +198,133 @@ bool LiveGeometry::ReadCorners(const float* vertices, int corners, const void* t
     return true;
 }
 
-void LiveGeometry::Emit(std::map<const void*, Batch>& into, const void* texture,
-                        const Vertex* corners, int count) {
-    Batch& batch = into[texture];
-    batch.texture = texture;
-    // The original draws these as a triangle fan; a list is the same geometry
-    // and lets everything sharing a texture live in one draw call.
-    for (int i = 1; i + 1 < count; ++i) {
-        batch.vertices.push_back(corners[0]);
-        batch.vertices.push_back(corners[i]);
-        batch.vertices.push_back(corners[i + 1]);
+namespace {
+
+// The quad a sprite has always had, rather than the one this frame worked out.
+//
+// Quantising the measured quad is not quite enough. The corners arrive from the
+// game's fixed point through a normalise, so the last mantissa bits move about
+// even for a parked car, and a value that happens to sit on a rounding boundary
+// dithers between two quantised results - which is precisely the vertex-hash
+// churn this whole exercise exists to remove.
+//
+// So the first quad seen for a sprite is quantised and kept, and every later one
+// that is the same shape to within a coarse tolerance is answered with the
+// stored copy, bit for bit. A sprite genuinely drawn at a second size gets a
+// second entry; the cap is there so that something continuously scaled cannot
+// grow this without bound.
+struct Shape {
+    LiveGeometry::Vertex local[4];
+};
+std::map<const void*, std::vector<Shape>> g_shapes;
+constexpr size_t kMaxShapesPerTexture = 8;
+
+void CanonicalShape(const void* texture, const LiveGeometry::Vertex* measured, int corners,
+                    LiveGeometry::Vertex* out) {
+    // A 256th of a tile, about 8 mm at GTA2's scale: far above the float noise
+    // and far below any real difference in sprite size.
+    const float kTolerance = 1.0f / 256.0f;
+
+    std::vector<Shape>& known = g_shapes[texture];
+    for (const Shape& shape : known) {
+        bool same = true;
+        for (int i = 0; i < corners && same; ++i) {
+            same = std::fabs(shape.local[i].x - measured[i].x) < kTolerance &&
+                   std::fabs(shape.local[i].y - measured[i].y) < kTolerance &&
+                   std::fabs(shape.local[i].z - measured[i].z) < kTolerance &&
+                   std::fabs(shape.local[i].u - measured[i].u) < kTolerance &&
+                   std::fabs(shape.local[i].v - measured[i].v) < kTolerance;
+        }
+        if (same) {
+            memcpy(out, shape.local, sizeof(Shape::local[0]) * corners);
+            return;
+        }
     }
+
+    Shape shape{};
+    auto quantise = [](float value) { return std::floor(value * 4096.0f + 0.5f) / 4096.0f; };
+    for (int i = 0; i < corners; ++i) {
+        shape.local[i] = measured[i];
+        shape.local[i].x = quantise(measured[i].x);
+        shape.local[i].y = quantise(measured[i].y);
+        shape.local[i].z = quantise(measured[i].z);
+    }
+    memcpy(out, shape.local, sizeof(Shape::local[0]) * corners);
+    if (known.size() < kMaxShapesPerTexture) known.push_back(shape);
+}
+
+}  // namespace
+
+void SpriteShapeCounts(int* shapes, int* textures) {
+    int total = 0;
+    for (const auto& entry : g_shapes) total += static_cast<int>(entry.second.size());
+    if (shapes) *shapes = total;
+    if (textures) *textures = static_cast<int>(g_shapes.size());
+}
+
+// Take the quad apart into a shape and a placement.
+//
+// The shape is the quad measured in its own frame: origin at its centre, one
+// axis along its first edge, one along its normal. A GTA2 sprite is rigid, so
+// for a given sprite that measurement is the same numbers wherever it stands and
+// however it is turned - which is exactly the property Remix needs to recognise
+// it again next frame. The placement is that frame's position in the world, and
+// it is what Remix differentiates to get the motion vector.
+//
+// The measured shape goes through CanonicalShape above, which is what makes it
+// bit-identical rather than merely close.
+bool LiveGeometry::Place(const Vertex* world, int corners, Sprite* out) const {
+    const Vec centre{
+        (world[0].x + world[1].x + world[2].x + world[3].x) * 0.25f,
+        (world[0].y + world[1].y + world[2].y + world[3].y) * 0.25f,
+        (world[0].z + world[1].z + world[2].z + world[3].z) * 0.25f,
+    };
+
+    // The quad's own frame: right along its first edge, up along its normal,
+    // forward completing the set. Orthonormal by construction, so the matrix is a
+    // rotation and a translation and nothing else - normals survive it unchanged
+    // and Remix's inverse of it is exact.
+    const Vec edge{world[1].x - world[0].x, world[1].y - world[0].y, world[1].z - world[0].z};
+    const Vec up{world[0].nx, world[0].ny, world[0].nz};   // ReadCorners already normalised this
+
+    const float edgeLength = std::sqrt(edge.x * edge.x + edge.y * edge.y + edge.z * edge.z);
+    if (edgeLength < 1e-6f) {
+        ++drops_.degenerate;
+        return false;
+    }
+    const Vec right{edge.x / edgeLength, edge.y / edgeLength, edge.z / edgeLength};
+    // Cross(right, up) rather than Cross(up, right): the three axes have to come
+    // out right handed or the matrix is a reflection, which flips the winding and
+    // has Remix guessing at which way the face points.
+    const Vec forward = Cross(right, up);
+
+    Vertex local[4];
+    for (int i = 0; i < corners; ++i) {
+        const Vec offset{world[i].x - centre.x, world[i].y - centre.y, world[i].z - centre.z};
+        local[i].x = offset.x * right.x + offset.y * right.y + offset.z * right.z;
+        local[i].y = offset.x * up.x + offset.y * up.y + offset.z * up.z;
+        local[i].z = offset.x * forward.x + offset.y * forward.y + offset.z * forward.z;
+        // The normal is the frame's own up, so in object space it is exactly that
+        // for every sprite - one more thing that cannot drift.
+        local[i].nx = 0.0f;
+        local[i].ny = 1.0f;
+        local[i].nz = 0.0f;
+        local[i].u = world[i].u;
+        local[i].v = world[i].v;
+    }
+    CanonicalShape(out->texture, local, corners, out->local);
+    out->corners = corners;
+
+    // D3D9 multiplies row vectors on the left, so the basis goes in the rows and
+    // the translation in the last one.
+    gta2::Mat4& m = out->objectToWorld;
+    m = gta2::Mat4{};
+    m.m[0][0] = right.x;   m.m[0][1] = right.y;   m.m[0][2] = right.z;
+    m.m[1][0] = up.x;      m.m[1][1] = up.y;      m.m[1][2] = up.z;
+    m.m[2][0] = forward.x; m.m[2][1] = forward.y; m.m[2][2] = forward.z;
+    m.m[3][0] = centre.x;  m.m[3][1] = centre.y;  m.m[3][2] = centre.z;
+    m.m[3][3] = 1.0f;
+    return true;
 }
 
 void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* vertices,
@@ -245,7 +365,17 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
                               ? StackLayerFor(cx, cz) * g_spriteStackStep
                               : 0.0f;
     for (int i = 0; i < corners; ++i) out[i].y += g_spriteLift + stacked;
-    Emit(sprites_, texture, out, corners);
+
+    // Only quads come through here - gbh_DrawQuad and gbh_DrawQuadClipped are the
+    // only callers - and Place measures the frame from four corners.
+    if (corners != 4) {
+        ++drops_.degenerate;
+        return;
+    }
+    Sprite placed;
+    placed.texture = texture;
+    if (!Place(out, corners, &placed)) return;
+    sprites_.push_back(placed);
     ++spriteQuads_;
     ++drops_.accepted;
 
@@ -273,9 +403,8 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
     if (sprites_.empty()) return;
 
     D3DMATRIX matrix;
-    const gta2::Mat4 world = gta2::Identity();
-    memcpy(&matrix, world.m, sizeof(matrix));
-    device->SetTransform(D3DTS_WORLD, &matrix);
+    // No world matrix here: each sprite sets its own, which is the whole point.
+    // See the note in live_geometry.h.
     const gta2::Mat4 view = camera.ViewMatrix();
     memcpy(&matrix, view.m, sizeof(matrix));
     device->SetTransform(D3DTS_VIEW, &matrix);
@@ -319,32 +448,97 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
 
     device->SetFVF(kWorldFvf);
 
-    for (const auto& entry : sprites_) {
-        {
-            const Batch& batch = entry.second;
-            if (batch.vertices.empty()) continue;
-            IDirect3DTexture9* texture = DeviceTextureFor(device, batch.texture);
-            if (!texture) {
-                // The sprite was accepted and then had no artwork to draw with:
-                // this is a sprite that vanishes for exactly one frame.
-                ++drops_.noTexture;
-                continue;
-            }
-            device->SetTexture(0, texture);
-            device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,
-                                    static_cast<UINT>(batch.vertices.size() / 3),
-                                    batch.vertices.data(), sizeof(Vertex));
-            drops_.drawn += static_cast<int>(batch.vertices.size() / 6);  // two tris per quad
+    // Effect artwork - fire, explosions, muzzle flashes - is drawn in a second
+    // pass, so the texture has to be resolved before the pass is chosen. See
+    // texture_store.h for what makes a sprite an effect and why it matters.
+    struct Drawable {
+        const Sprite* sprite;
+        IDirect3DTexture9* texture;
+    };
+    std::vector<Drawable> plain, effects;
+    plain.reserve(sprites_.size());
+    for (const Sprite& sprite : sprites_) {
+        bool effect = false;
+        IDirect3DTexture9* texture = DeviceTextureFor(device, sprite.texture, &effect);
+        if (!texture) {
+            // The sprite was accepted and then had no artwork to draw with:
+            // this is a sprite that vanishes for exactly one frame.
+            ++drops_.noTexture;
+            continue;
         }
+        // Recorded so the texture report can tell a fireball from a road tile
+        // that happens to have a hole in it. See texture_store.h.
+        NoteSpriteTexture(sprite.texture);
+        (effect ? effects : plain).push_back({&sprite, texture});
     }
+
+    // Two triangles from four corners, the same two every time. Indexed rather
+    // than a six-vertex list so the index buffer is part of the topological hash
+    // Remix buckets on, and so the quad really is four vertices rather than four
+    // with two duplicated.
+    static const uint16_t kQuadIndices[6] = {0, 1, 2, 0, 2, 3};
+
+    // The device is a state machine and the texture rarely changes between
+    // neighbouring sprites, so the redundant SetTexture calls are skipped. The
+    // world matrix genuinely changes every time and cannot be.
+    IDirect3DTexture9* bound = nullptr;
+    auto issue = [&](const std::vector<Drawable>& list) {
+        for (const Drawable& d : list) {
+            D3DMATRIX world;
+            memcpy(&world, d.sprite->objectToWorld.m, sizeof(world));
+            device->SetTransform(D3DTS_WORLD, &world);
+            if (d.texture != bound) {
+                device->SetTexture(0, d.texture);
+                bound = d.texture;
+            }
+            device->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, 4, 2, kQuadIndices,
+                                           D3DFMT_INDEX16, d.sprite->local, sizeof(Vertex));
+            ++drops_.drawn;
+        }
+    };
+
+    issue(plain);
+
+    if (!effects.empty()) {
+        // Additive, which is what this artwork was drawn for: it fades to black
+        // on its way out, and black adds nothing. The rim disappears because it
+        // stops being painted at all rather than because anything was cut out of
+        // it, and the fireball ends up a glow over the scene the way it should.
+        //
+        // Remix treats additively blended draws as emissive particles, so this is
+        // also the classification that gets a fireball to light the street rather
+        // than sit on it as a flat decal.
+        device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+        device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+        device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+        device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+        // Still depth *tested*, so a fire behind a wall stays behind it, but not
+        // depth written: a glow must not stop what is drawn after it.
+        device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        issue(effects);
+        device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+        device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+        device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    }
+    effectQuads_ = static_cast<int>(effects.size());
+    g_effectBatches = effectQuads_;
 
     device->SetTexture(0, nullptr);
     device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    // Left as we found it, so the next pass that assumes a world matrix - and the
+    // static mesh does - is not drawing at the last sprite's position.
+    const gta2::Mat4 identity = gta2::Identity();
+    memcpy(&matrix, identity.m, sizeof(matrix));
+    device->SetTransform(D3DTS_WORLD, &matrix);
 }
 
 void LiveGeometry::ReleaseResources() {
     sprites_.clear();
     spriteQuads_ = 0;
+    effectQuads_ = 0;
+    // The shapes are keyed by texture record, and a new level hands out new ones.
+    g_shapes.clear();
 }
 
 }  // namespace gta2dx9

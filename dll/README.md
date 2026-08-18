@@ -385,6 +385,49 @@ offsets for fitting the compass to a city whose streets do not run north-south.
 Defaults: start at 02:00, one real second to one game minute, so a full day takes 24 real
 minutes.
 
+## Sprites, motion vectors and frame generation
+
+Sprites used to be handed to Remix as one draw call per texture: a bag of **world-space**
+vertices for every sprite sharing that texture, drawn with an identity world matrix. It
+looked right and path traced fine, and it made frame generation unusable — flickering copies
+of sprites and parts of sprites all over the screen. Reading `dxvk-remix`, that submission
+is close to the worst thing to give it:
+
+- `DrawCallCache` buckets geometry by its **topological hash**, and `hashGeometryDescriptor`
+  (`rtx_hashing.cpp`) mixes in the **vertex count**. A batch grows and shrinks as cars and
+  pedestrians come into view, so its bucket key changed constantly and every such frame
+  allocated a fresh `BlasEntry` with no history at all.
+- Previous-frame vertex positions only exist when the *same* `BlasEntry` is matched again —
+  `SceneManager::processGeometryInfo` keeps them in `historyBuffer` on `kUpdateBVH`. Inside
+  a batch, vertex *i* belongs to whichever sprite the game happened to submit *i*'th that
+  frame, so two cars swapping draw order silently repointed every vertex at a different
+  object. The previous positions Remix did have described the **wrong sprite** — a motion
+  vector pointing from one car to another.
+- With an identity world matrix `InstanceManager::updateInstance` sees
+  `hasTransformChanged == false`; with no usable history `hasPreviousPositions` is false
+  too, and it then sets `surface.isStatic`, which skips motion vector calculation entirely
+  for a surface that is visibly moving.
+
+So the geometry has to be the thing that stays still and the transform the thing that moves,
+which is what every other game gives Remix. Each sprite is now **one draw call** of a fixed
+quad in its own object space — origin at the quad's centre, axes along its first edge and
+its normal — with the placement in `D3DTS_WORLD`. Remix matches it by topological hash plus
+proximity (`DrawCallTracker`'s spatial map, `rtx.uniqueObjectDistance`) and takes the motion
+straight from `objectToWorld` against `prevObjectToWorld`.
+
+Object space alone is not quite enough: the corners come from the game's fixed point through
+a normalise, so the last mantissa bits wander even for a parked car and a value sitting on a
+rounding boundary dithers between two quantised results — the same vertex-hash churn again.
+So the first quad seen for a sprite is quantised and **kept**, and every later one that
+matches to within 1/256 of a tile is answered with the stored copy, bit for bit. The Sprites
+tab shows how many distinct object-space quads the session has had to keep: it should climb
+for a few seconds after a level load and then sit still.
+
+One Remix-side note: `rtx.uniqueObjectDistance` defaults to 300 game units, and a GTA2 tile
+is one unit — the whole map is 256 across. The nearest-neighbour instance match still picks
+correctly because sprites move a fraction of a tile per frame, but there is no margin in the
+default for this scale.
+
 ## Not yet implemented
 
 Mip chains, and the view-rotation states other than the default `0xFF`.

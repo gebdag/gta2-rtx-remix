@@ -869,8 +869,8 @@ void DrawEffectSprites() {
     }
 
     ImGui::Spacing();
-    ImGui::Text("%d of %d built frames classified as effects", EffectSpriteFrames(),
-                ClassifiedFrames());
+    ImGui::Text("%d of %d built frames classified as effects; %d sprite(s) drawn additively last "
+                "frame", EffectSpriteFrames(), ClassifiedFrames(), EffectBatchesDrawn());
     if (fx.mode != EffectSpriteMode::Off && EffectSpriteFrames() == 0) {
         ImGui::TextColored(kDim, "Nothing yet -- blow something up, or loosen the thresholds "
                                  "below.");
@@ -903,6 +903,22 @@ void DrawEffectSprites() {
     ImGui::SameLine();
     ImGui::TextColored(kDim, "The classification happens when a texture is built, so a threshold "
                              "change only reaches artwork that is rebuilt.");
+
+    ImGui::SeparatorText("Sprite geometry");
+    ImGui::TextWrapped(
+        "Each sprite is one draw call of a fixed quad in its own object space, with the placement "
+        "in the world matrix. That is what lets RTX Remix recognise a sprite as the same one it "
+        "saw last frame and work out a motion vector for it; batching them into shared "
+        "world-space vertex buffers gave it geometry whose vertex count and vertex order changed "
+        "every frame, so it either treated a moving sprite as static or paired one sprite's "
+        "vertices with another's. See the note at the top of live_geometry.h.\n\n"
+        "The count below is the health check: it should climb for a few seconds after a level "
+        "loads and then sit still. If it keeps climbing, some sprite's object-space quad is "
+        "dithering and its motion vectors will be no better than before.");
+    int shapes = 0, shapeTextures = 0;
+    SpriteShapeCounts(&shapes, &shapeTextures);
+    ImGui::Text("%d distinct object-space quad(s) across %d sprite texture(s)", shapes,
+                shapeTextures);
 
     ImGui::SeparatorText("Texture report");
     ImGui::TextWrapped(
