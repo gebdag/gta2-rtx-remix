@@ -428,6 +428,60 @@ is one unit — the whole map is 256 across. The nearest-neighbour instance matc
 correctly because sprites move a fraction of a tile per frame, but there is no margin in the
 default for this scale.
 
+## Lights that belong to the night
+
+GTA2 has no day, so nothing in it knows to go out at dawn. Every one of the 12 083 map lights
+burns at noon, and so does every headlight. That was invisible while the sky never changed
+and is the first thing you see once it does.
+
+So a light can be told to follow the sun. The gate is expressed as the two **sun elevations**
+that bracket the switch-on rather than as clock times, because that is what actually decides
+it: the same lamp comes on later in June than in December, and at a different hour at a
+different latitude, and reading it off the sun gets all of that for free. Defaults are the
+real ones — out by the time the sun reaches the horizon, fully on by the end of civil
+twilight six degrees down — eased with a smoothstep so nothing pops.
+
+Every category has the control. The defaults say which way each was called:
+
+| | follows the sun | why |
+| --- | --- | --- |
+| headlights (invented, and the game's vehicle lamps) | **yes** | a car with its beams on at noon is the one thing that looks plainly wrong |
+| cigarette | yes | invisible in daylight, and a bridge round trip per smoker to prove it |
+| muzzle flash, bullet, sparks, fire | no | real emitters; they go off whatever the sky is doing |
+| street, neon, white map lights | yes | this is what a day/night cycle means |
+| traffic signals | **no** | a red light has to be legible at noon — information, not illumination |
+
+### Are the map lights categorisable?
+
+Yes, workably — though not from any field, because there is not one. The `LGHT` chunk is
+sixteen bytes of colour, position, radius, intensity and blink timing, and byte 13, which the
+published format docs call a "shape" field, is really the blink jitter (see
+`docs/lighting-analysis.md`).
+
+They are still separable, because what GTA2 puts in those fields is not arbitrary:
+
+- **Vehicle lamps** move. `FUN_00424700` hangs up to four on every car at spawn, and the
+  tracker already knows which lights have been seen in two places.
+- **Traffic signals** never came from the map at all: `FUN_004C3C70` builds them at runtime at
+  a hard-coded intensity of **200**, with a colour the phase machine cycles through red, amber
+  and green. A map light lands on 200/255 only by accident, and essentially never in one of
+  those three colours as well.
+- **The rest split by hue.** Across the shipped maps 12 083 lights carry 765 distinct colours,
+  and the common ones are unmistakable: `#FF8000`/`#FF8040`/`#FF9224` sodium, `#62CC8C`,
+  `#00FFFF`, `#80FFFF` neon, `#FFFFFF`/`#FFDB5E` white and warm white. Saturation separates
+  white from the rest; `R ≥ G ≥ B` separates sodium from neon.
+
+`ClassifyGameLight` in `remix_lights.cpp` is that, and it is named a heuristic because it is
+one — but it is drawn from what is actually in the maps rather than guessed. The Lights tab
+shows the live count per kind and how many of each are burning, which is how a misfiling gets
+noticed.
+
+Redefining a light is a round trip across the 32-bit bridge, so the fade is applied in steps
+of a hundredth rather than continuously: fifty steps across the whole dusk, far smoother than
+the eye and a fiftieth of the traffic. A light the sun has put out is dropped rather than
+dimmed to nothing — an invisible light is still a handle on the far side of the bridge and
+still something the path tracer samples.
+
 ## Not yet implemented
 
 Mip chains, and the view-rotation states other than the default `0xFF`.

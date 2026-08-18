@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+#include "time_of_day.h"
+
 namespace gta2dx9 {
 
 // Where a light came from. The game's own lights all arrive through
@@ -44,6 +46,41 @@ enum LightSource : uint8_t {
 };
 
 const char* LightSourceName(uint8_t source);
+
+// --- What kind of light the game just handed us ----------------------------
+//
+// GTA2's own lights arrive with no type on them. The LGHT chunk of the .gmp is
+// sixteen bytes of colour, position, radius, intensity and blink timing and
+// nothing else - and byte 13, which the published format docs call a "shape"
+// field, is really the blink jitter (see docs/lighting-analysis.md). So there is
+// no field to read.
+//
+// They are still separable, because what GTA2 puts in those fields is not
+// arbitrary. Across the shipped maps, 12083 lights carry 765 distinct colours
+// and the top ten account for a third of them: #FF8000 and #FF8040 are sodium
+// street lamps, #62CC8C and #00FFFF and #80FFFF are neon, #FFFFFF and #FFDB5E
+// are plain and warm white. And two whole populations do not come from the map
+// at all - traffic lights are built at runtime by FUN_004C3C70 at intensity 200
+// with a colour that cycles red, amber and green, and vehicle lamps are attached
+// to every car by FUN_00424700, also at intensity 200, and move with it.
+//
+// So: movement separates the cars, an exact intensity of 200/255 with a signal
+// colour separates the junctions, and hue separates the rest. It is a heuristic
+// and it is named one, but it is drawn from what is actually in the maps rather
+// than from guesswork, and it is enough to say which lights belong to the night.
+enum GameLightClass : uint8_t {
+    kGameLightStreet = 0,   // sodium and amber, the lamps over the road
+    kGameLightNeon,         // saturated colour: signage, bar fronts
+    kGameLightWhite,        // white and warm white: windows, interiors
+    kGameLightTraffic,      // junction signals, built at runtime
+    kGameLightVehicle,      // headlamps and tail lights, moving with a car
+    kGameLightClassCount
+};
+
+const char* GameLightClassName(uint8_t klass);
+
+struct RemixLightDesc;
+uint8_t ClassifyGameLight(const RemixLightDesc& d, bool moving);
 
 // One light, already converted into renderer world space and 0..1 colour.
 struct RemixLightDesc {
@@ -89,6 +126,7 @@ struct RemixTrackedLight {
     RemixLightDesc def;
     void* handle = nullptr;      // remixapi_LightHandle, opaque here
     bool moving = false;         // has been seen at more than one position
+    uint8_t gameClass = kGameLightStreet;  // meaningless unless source is kLightSourceGame
     bool drawn = false;          // reached Remix last frame
     bool dirty = true;           // needs redefining before the next draw
     bool applyFailed = false;    // CreateLight refused it; stop retrying
@@ -97,11 +135,34 @@ struct RemixTrackedLight {
     uint32_t firstFrame = 0;
 };
 
+// What to do with one kind of the game's own lights.
+struct GameLightClassSettings {
+    bool enabled = true;
+    DaylightGate gate;
+};
+
 // Global tuning, all of it exposed in the F4 menu.
 struct RemixLightSettings {
+    RemixLightSettings() {
+        // Everything the city lights itself with follows the sun. The junction
+        // signals do not: a red light has to be legible at noon, and unlike the
+        // lamps it is information rather than illumination.
+        for (int i = 0; i < kGameLightClassCount; ++i) {
+            gameClass[i].gate.enabled = i != kGameLightTraffic;
+        }
+    }
+
     bool  enabled = true;
     bool  injectStatic = true;
     bool  injectMoving = true;   // vehicle headlights, muzzle flashes, train lamps
+
+    // Per kind, on top of those two. GTA2 has no day, so every street lamp and
+    // neon sign in it burns at noon - which nobody noticed while the sky never
+    // changed, and which is the first thing you see once it does. Defaults have
+    // everything but the traffic signals following the sun; a junction signal is
+    // meant to be legible in daylight and stays on. See GameLightClass above and
+    // DaylightGate in time_of_day.h.
+    GameLightClassSettings gameClass[kGameLightClassCount];
 
     // Radiance = colour * intensity * radianceScale * (radius/reference)^exponent.
     //
@@ -223,6 +284,8 @@ struct RemixLightStats {
     int suppressedByClass = 0;
     int suppressedByIntensity = 0;
     int bySource[kLightSourceCount] = {};   // tracked lights, by where they came from
+    int byClass[kGameLightClassCount] = {}; // the game's own lights, by what kind they are
+    int litByClass[kGameLightClassCount] = {};  // ...and how many of those are actually burning
     unsigned created = 0;
     unsigned destroyed = 0;
     unsigned updated = 0;

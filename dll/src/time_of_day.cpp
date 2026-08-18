@@ -177,6 +177,26 @@ void TimeOfDayUpdate() {
     }
 }
 
+float DaylightGateFactorAt(const DaylightGate& gate, float sunElevationDeg) {
+    if (!gate.enabled) return 1.0f;
+    // A gate the wrong way round would divide by zero and is more likely a
+    // mistyped slider than an intention, so it is read as a hard switch.
+    if (gate.offAboveDeg <= gate.onBelowDeg) {
+        return sunElevationDeg >= gate.offAboveDeg ? 0.0f : 1.0f;
+    }
+    if (sunElevationDeg >= gate.offAboveDeg) return 0.0f;
+    if (sunElevationDeg <= gate.onBelowDeg) return 1.0f;
+    const float t = (gate.offAboveDeg - sunElevationDeg) / (gate.offAboveDeg - gate.onBelowDeg);
+    // Smoothstep rather than a straight ramp: the ends are what the eye notices,
+    // and a linear fade visibly starts and stops.
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float DaylightGateFactor(const DaylightGate& gate) {
+    if (!gate.enabled || !g_settings.enabled) return 1.0f;
+    return DaylightGateFactorAt(gate, g_elevation);
+}
+
 void TimeOfDayAngles(float* elevationDeg, float* rotationDeg) {
     if (elevationDeg) *elevationDeg = g_elevation;
     if (rotationDeg) *rotationDeg = g_rotation;

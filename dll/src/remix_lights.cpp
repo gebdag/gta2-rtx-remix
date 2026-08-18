@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "remix_api.h"
+#include "time_of_day.h"
 
 #include "../../src/gta2_map.h"
 
@@ -138,6 +139,10 @@ void ClearAll() {
 // matching entry, so redefining a light means describing it again under the same
 // hash. There is no update call, and destroying first would remove the very
 // light being redefined - the light would blink out for a frame.
+// Defined further down, next to the per-frame cache it reads; declared here
+// because Apply is the first thing that wants it.
+float GameClassDaylight(uint8_t klass);
+
 void Apply(RemixTrackedLight& t) {
     const remixapi_Interface* api = RemixApi();
     if (!api) return;
@@ -163,6 +168,9 @@ void Apply(RemixTrackedLight& t) {
     }
     if (t.moving) scale *= g_settings.movingScale;
     if (ov) scale *= ov->intensity;
+    // Dusk and dawn. Only the game's own lights are gated here; ours are scaled
+    // where they are submitted, in synthetic_lights.cpp.
+    if (t.def.source == kLightSourceGame) scale *= GameClassDaylight(t.gameClass);
 
     // Pull towards luminance rather than towards grey: mixing in white would
     // brighten as it desaturates, and every light would drift lighter as the
@@ -271,7 +279,8 @@ bool SameSettings(const RemixLightSettings& a, const RemixLightSettings& b) {
         && a.radiusExponent == b.radiusExponent && a.emitterRadius == b.emitterRadius
         && a.minIntensity == b.minIntensity && a.saturation == b.saturation
         && a.ambientFill == b.ambientFill && a.ambientFillScale == b.ambientFillScale
-        && a.coneSoftness == b.coneSoftness;
+        && a.coneSoftness == b.coneSoftness
+        && memcmp(a.gameClass, b.gameClass, sizeof(a.gameClass)) == 0;
 }
 
 char* TrimInPlace(char* s) {
@@ -365,6 +374,53 @@ void LightsBeginExtra() { g_extra.clear(); }
 
 void LightsSubmitExtra(const RemixLightDesc& desc) { g_extra.push_back(desc); }
 
+const char* GameLightClassName(uint8_t klass) {
+    switch (klass) {
+        case kGameLightStreet: return "Street";
+        case kGameLightNeon: return "Neon";
+        case kGameLightWhite: return "White";
+        case kGameLightTraffic: return "Traffic";
+        case kGameLightVehicle: return "Vehicle";
+        default: return "?";
+    }
+}
+
+// See the note in remix_lights.h for where each of these tests comes from.
+uint8_t ClassifyGameLight(const RemixLightDesc& d, bool moving) {
+    // A light that has been seen in two places is attached to something that
+    // drives. FUN_00424700 hangs up to four on every vehicle at spawn.
+    if (moving) return kGameLightVehicle;
+
+    const float r = d.rgb[0], g = d.rgb[1], b = d.rgb[2];
+    const float top = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const float bottom = r < g ? (r < b ? r : b) : (g < b ? g : b);
+
+    // Traffic signals are built at runtime rather than read from the map, at a
+    // hard-coded intensity of 200 and one of exactly three colours the phase
+    // machine cycles through. A map light lands on 200/255 only by accident, and
+    // essentially never in one of those three colours as well.
+    if (std::fabs(d.intensity - 200.0f / 255.0f) < 0.002f) {
+        const bool red = r > 0.9f && g < 0.05f && b < 0.05f;
+        const bool amber = r > 0.9f && g > 0.4f && g < 0.6f && b < 0.05f;
+        const bool green = g > 0.9f && r < 0.05f && b < 0.05f;
+        if (red || amber || green) return kGameLightTraffic;
+    }
+
+    // Near-neutral is a window or an interior. The threshold is deliberately
+    // generous: #FFDB5E, the warm white 500 map lights use, has to land here
+    // rather than with the sodium lamps.
+    const float saturation = top > 0.0f ? (top - bottom) / top : 0.0f;
+    if (saturation < 0.45f) return kGameLightWhite;
+
+    // Sodium and amber: red leads, green follows, blue trails. That is #FF8000,
+    // #FF8040, #FF9224 and #FFFF00 - a fifth of every light in the game.
+    if (r >= g && g >= b && r > 0.75f) return kGameLightStreet;
+
+    // Everything else saturated is signage: the greens, cyans, blues and
+    // magentas GTA2 uses for neon and nothing else uses at all.
+    return kGameLightNeon;
+}
+
 const char* LightSourceName(uint8_t source) {
     switch (source) {
         case kLightSourceGame: return "game";
@@ -392,8 +448,45 @@ void LightsSetScene(const char* name) {
 float LightsAmbient() { return g_ambient; }
 const char* LightsScene() { return g_sceneName; }
 
+namespace {
+
+// The daylight factor per class, worked out once a frame rather than per light.
+//
+// Redefining a light is a round trip across the 32-bit bridge, so a factor that
+// slides continuously would redefine every lamp in the district every frame for
+// the half-minute dusk takes. It is only acted on in steps: at a hundredth of
+// full brightness there are fifty steps across the whole fade, which is far
+// smoother than the eye and a fiftieth of the traffic.
+constexpr float kGateStep = 0.02f;
+// Below this a light is not worth a handle at all - it is a hundredth of its
+// brightness and the sun is up.
+constexpr float kGateFloor = 0.01f;
+
+float g_classDaylight[kGameLightClassCount];
+float g_classApplied[kGameLightClassCount];
+bool  g_classMoved[kGameLightClassCount];
+bool  g_classDaylightReady = false;
+
+float GameClassDaylight(uint8_t klass) {
+    if (klass >= kGameLightClassCount) return 1.0f;
+    return g_classDaylight[klass];
+}
+
+void RefreshClassDaylight() {
+    for (int i = 0; i < kGameLightClassCount; ++i) {
+        const float now = DaylightGateFactor(g_settings.gameClass[i].gate);
+        g_classDaylight[i] = now;
+        g_classMoved[i] = !g_classDaylightReady || std::fabs(now - g_classApplied[i]) >= kGateStep;
+        if (g_classMoved[i]) g_classApplied[i] = now;
+    }
+    g_classDaylightReady = true;
+}
+
+}  // namespace
+
 void LightsReconcile() {
     ++g_frame;
+    RefreshClassDaylight();
 
     if (!g_settings.enabled) {
         if (!g_tracked.empty() || g_ambientHandle) ClearAll();
@@ -509,6 +602,10 @@ void LightsReconcile() {
                     t.key = 0;
                 }
                 t.def = g_working[p];
+                // A traffic light changing phase changes colour, and a light
+                // that has just been seen to move has become a vehicle lamp, so
+                // this is re-read rather than settled once at creation.
+                t.gameClass = ClassifyGameLight(t.def, t.moving);
                 t.dirty = true;
             }
             t.lastSeenFrame = g_frame;
@@ -522,6 +619,7 @@ void LightsReconcile() {
         // to; the per-category controls are what tunes those.
         t.key = t.def.source == kLightSourceGame && !t.def.explicitId ? StableKey(t.def) : 0;
         t.moving = t.def.explicitId != 0;
+        t.gameClass = ClassifyGameLight(t.def, t.moving);
         t.lastSeenFrame = g_frame;
         t.firstFrame = g_frame;
         g_tracked.push_back(t);
@@ -558,9 +656,22 @@ void LightsReconcile() {
     g_stats.suppressedByOverride = 0;
     g_stats.moving = 0;
     for (int i = 0; i < kLightSourceCount; ++i) g_stats.bySource[i] = 0;
+    for (int i = 0; i < kGameLightClassCount; ++i) {
+        g_stats.byClass[i] = 0;
+        g_stats.litByClass[i] = 0;
+    }
     for (RemixTrackedLight& t : g_tracked) {
         if (t.moving) ++g_stats.moving;
         if (t.def.source < kLightSourceCount) ++g_stats.bySource[t.def.source];
+        if (t.def.source == kLightSourceGame && t.gameClass < kGameLightClassCount) {
+            ++g_stats.byClass[t.gameClass];
+            if (g_classDaylight[t.gameClass] > kGateFloor
+                && g_settings.gameClass[t.gameClass].enabled) {
+                ++g_stats.litByClass[t.gameClass];
+            }
+        }
+        // The sun has moved this kind of light far enough to be worth resending.
+        if (t.def.source == kLightSourceGame && g_classMoved[t.gameClass]) t.dirty = true;
 
         const RemixLightOverride* ov = LightsFindOverride(t.key);
         const bool identified = t.key != 0 && t.key == g_identify;
@@ -570,9 +681,14 @@ void LightsReconcile() {
             ++g_stats.suppressedByOverride;
             suppressed = true;
         } else if (t.def.source == kLightSourceGame
-                   && !(t.moving ? g_settings.injectMoving : g_settings.injectStatic)) {
+                   && (!(t.moving ? g_settings.injectMoving : g_settings.injectStatic)
+                       || !g_settings.gameClass[t.gameClass].enabled
+                       || GameClassDaylight(t.gameClass) <= kGateFloor)) {
             // Only the game's own lights are filtered this way. Ours are gated by
             // their category, upstream, and never reach here when switched off.
+            // A light the sun has put out is dropped rather than dimmed to
+            // nothing: an invisible light is still a handle on the far side of
+            // the bridge and still a light the path tracer samples.
             ++g_stats.suppressedByClass;
             suppressed = true;
         } else if (t.def.intensity < g_settings.minIntensity && !identified) {

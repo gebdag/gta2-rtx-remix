@@ -66,6 +66,19 @@ void Fields(FloatField** floats, int* floatCount, BoolField** bools, int* boolCo
     f[nf++] = {"lights", "AmbientFillScale", &ls.ambientFillScale};
     f[nf++] = {"lights", "ConeSoftness", &ls.coneSoftness};
 
+    for (int c = 0; c < kGameLightClassCount; ++c) {
+        // The section name is the class name, so the file reads as
+        // [maplights.Street] Enabled / DaylightGate / GateOffAbove / GateOnBelow.
+        static char sections[kGameLightClassCount][32];
+        _snprintf(sections[c], sizeof(sections[c]) - 1, "maplights.%s", GameLightClassName(c));
+        sections[c][sizeof(sections[c]) - 1] = '\0';
+        GameLightClassSettings& gc = ls.gameClass[c];
+        b[nb++] = {sections[c], "Enabled", &gc.enabled};
+        b[nb++] = {sections[c], "DaylightGate", &gc.gate.enabled};
+        f[nf++] = {sections[c], "GateOffAbove", &gc.gate.offAboveDeg};
+        f[nf++] = {sections[c], "GateOnBelow", &gc.gate.onBelowDeg};
+    }
+
     TimeOfDaySettings& tod = TimeOfDay();
     b[nb++] = {"timeofday", "Enabled", &tod.enabled};
     b[nb++] = {"timeofday", "Paused", &tod.paused};

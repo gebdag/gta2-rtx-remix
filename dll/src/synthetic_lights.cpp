@@ -151,7 +151,12 @@ void EnsureBinding() {
     spark.intensity = 0.6f;
     spark.radius = 1.25f;
 
+    // A cigarette ember is invisible in daylight and costs a bridge round trip
+    // per smoker to prove it, so it follows the sun. Muzzle flashes, bullets,
+    // sparks and fires do not: they are real emitters and they go off whatever
+    // the sky is doing.
     SyntheticCategorySettings& cig = g_settings.category[kSynthCigarette];
+    cig.gate.enabled = true;
     cig.rgb[0] = 1.0f; cig.rgb[1] = 0.22f; cig.rgb[2] = 0.06f;
     cig.intensity = 0.12f;
     cig.radius = 0.6f;
@@ -166,7 +171,9 @@ void EnsureBinding() {
     // this ceiling matters more here than anywhere else.
     fire.maxLights = 16;
 
+    // The one nobody would argue about: headlights are for the dark.
     SyntheticCategorySettings& head = g_settings.category[kSynthHeadlight];
+    head.gate.enabled = true;
     head.rgb[0] = 1.0f; head.rgb[1] = 0.93f; head.rgb[2] = 0.80f;
     head.intensity = 1.0f;
     head.radius = 7.0f;
@@ -199,6 +206,10 @@ ParticleTypeInfo& TypeSlot(int type) {
     return g_types[g_typeIndex[type]];
 }
 
+// Below this a light is not worth a handle on the far side of the bridge: it is
+// a hundredth of its full brightness and the sun is still up.
+constexpr float kGateFloor = 0.01f;
+
 bool Room(int category) {
     if (g_stats.emitted[category] < g_settings.category[category].maxLights) return true;
     ++g_stats.capped[category];
@@ -208,6 +219,8 @@ bool Room(int category) {
 void SubmitPoint(int category, const float* world, float extraIntensity) {
     if (!Room(category)) return;
     const SyntheticCategorySettings& c = g_settings.category[category];
+    const float daylight = DaylightGateFactor(c.gate);
+    if (daylight <= kGateFloor) return;
     RemixLightDesc d;
     d.pos[0] = world[0];
     d.pos[1] = world[1] + c.heightOffset;
@@ -215,7 +228,7 @@ void SubmitPoint(int category, const float* world, float extraIntensity) {
     d.rgb[0] = c.rgb[0];
     d.rgb[1] = c.rgb[1];
     d.rgb[2] = c.rgb[2];
-    d.intensity = c.intensity * extraIntensity;
+    d.intensity = c.intensity * extraIntensity * daylight;
     d.radius = c.radius;
     d.source = static_cast<uint8_t>(kLightSourceMuzzle + category);
     LightsSubmitExtra(d);
@@ -392,6 +405,13 @@ void WalkVehicles() {
             entry = next;
             continue;
         }
+        // Beams off in daylight. The car is still walked and still counted, so
+        // the model list on the Effects tab does not empty out at noon.
+        const float daylight = DaylightGateFactor(c.gate);
+        if (daylight <= kGateFloor) {
+            entry = next;
+            continue;
+        }
 
         float fx, fy;
         if (!game::ReadFacing(entry, game::kVehiclePlacementPtr, &fx, &fy)) {
@@ -431,7 +451,7 @@ void WalkVehicles() {
             d.rgb[0] = lit ? 1.0f : c.rgb[0];
             d.rgb[1] = lit ? 0.0f : c.rgb[1];
             d.rgb[2] = lit ? 1.0f : c.rgb[2];
-            d.intensity = lit ? 4.0f : c.intensity;
+            d.intensity = lit ? 4.0f : c.intensity * daylight;
             d.radius = c.radius;
             d.spot = true;
             d.dir[0] = fx * horizontal;
@@ -738,6 +758,12 @@ SyntheticSettings& SyntheticLightsSettings() {
     return g_settings;
 }
 
+float SyntheticCategoryDaylight(int category) {
+    if (category < 0 || category >= kSynthCategoryCount) return 1.0f;
+    EnsureBinding();
+    return DaylightGateFactor(g_settings.category[category].gate);
+}
+
 int SyntheticTypeBinding(int particleType) {
     EnsureBinding();
     return static_cast<unsigned>(particleType) < kMaxParticleType ? g_binding[particleType] : -1;
@@ -931,6 +957,12 @@ void SyntheticLightsLoad(const char* path) {
         else if (_stricmp(key, "Forward") == 0) c.forwardOffset = static_cast<float>(atof(value));
         else if (_stricmp(key, "Side") == 0) c.sideOffset = static_cast<float>(atof(value));
         else if (_stricmp(key, "Pitch") == 0) c.pitchDegrees = static_cast<float>(atof(value));
+        else if (_stricmp(key, "Daylight") == 0) {
+            // Daylight=<on> <sun elevation it is out by> <elevation it is fully on by>
+            int on = 0;
+            sscanf(value, "%d %f %f", &on, &c.gate.offAboveDeg, &c.gate.onBelowDeg);
+            c.gate.enabled = on != 0;
+        }
     }
     fclose(f);
     g_dirty = false;
@@ -973,6 +1005,8 @@ void SyntheticLightsSave() {
         fprintf(f, "Intensity=%.3f\n", c.intensity);
         fprintf(f, "Radius=%.3f\n", c.radius);
         fprintf(f, "Height=%.3f\n", c.heightOffset);
+        fprintf(f, "Daylight=%d %.2f %.2f\n", c.gate.enabled ? 1 : 0, c.gate.offAboveDeg,
+                c.gate.onBelowDeg);
         if (i == kSynthHeadlight) {
             fprintf(f, "ConeAngle=%.2f\n", c.coneAngleDeg);
             fprintf(f, "Forward=%.3f\n", c.forwardOffset);

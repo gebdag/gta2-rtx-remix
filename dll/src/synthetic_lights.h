@@ -25,6 +25,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "time_of_day.h"
+
 namespace gta2dx9 {
 
 // One effect category. Indexes match LightSource minus one.
@@ -55,6 +57,15 @@ struct SyntheticCategorySettings {
     // some particle types come in bursts of dozens. Binding one of those without
     // a ceiling turns a frame into hundreds of round trips.
     int maxLights = 24;
+
+    // Does this effect belong to the night?
+    //
+    // Headlights obviously do - a car with its beams on at noon is the one thing
+    // in this that looks plainly wrong. A muzzle flash does not: it is a real
+    // emitter and it fires whatever the sky is doing. The rest sit in between
+    // and are a matter of taste, so every category has the control and the
+    // defaults say which way each was called. See DaylightGate in time_of_day.h.
+    DaylightGate gate;
 
     // Headlights only.
     float coneAngleDeg = 32.0f;
@@ -88,6 +99,10 @@ struct SyntheticSettings {
 };
 
 SyntheticSettings& SyntheticLightsSettings();
+
+// How much of a category is burning right now, 0..1, after its daylight gate.
+// 1 when the gate is off, which is every category the defaults leave alone.
+float SyntheticCategoryDaylight(int category);
 
 // A GTA2 car model is a fixed sprite, and one cone width cannot suit a bike, a
 // bus and a squad car. The model id sits at vehicle+0x84, so the beam geometry

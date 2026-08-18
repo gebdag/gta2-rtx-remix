@@ -84,4 +84,32 @@ const char* TimeOfDayStatus();
 void TimeOfDaySunAt(float hour, const TimeOfDaySettings& settings, float* elevationDeg,
                     float* rotationDeg);
 
+// --- Lights that only exist after dark ------------------------------------
+//
+// GTA2 has no day, so every street lamp, neon sign and headlight in it burns at
+// noon. That was invisible while the sky never changed and is glaring once it
+// does, so a light can be told to follow the sun.
+//
+// Expressed as the two elevations that bracket the switch-on rather than as a
+// clock time, because that is what actually decides it: the same lamp comes on
+// later in June than in December, and at a different hour at a different
+// latitude, and reading it off the sun gets all of that for free. The defaults
+// are the real ones - street lighting and headlights go on around sunset and are
+// fully on by the end of civil twilight, six degrees down.
+struct DaylightGate {
+    bool  enabled = false;
+    float offAboveDeg = 0.0f;    // out by the time the sun is this high
+    float onBelowDeg = -6.0f;    // fully lit once the sun is this far down
+};
+
+// How much of this light should be burning right now, 0..1, eased rather than
+// switched so nothing pops. Always 1 when the gate is off or the cycle is not
+// running: a light nobody asked to follow the sun keeps burning, which is the
+// behaviour this had before gates existed.
+float DaylightGateFactor(const DaylightGate& gate);
+
+// The same curve for an arbitrary sun elevation, so the menu can show what a
+// gate will do across the whole day without waiting for it.
+float DaylightGateFactorAt(const DaylightGate& gate, float sunElevationDeg);
+
 }  // namespace gta2dx9

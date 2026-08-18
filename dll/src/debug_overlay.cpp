@@ -291,6 +291,38 @@ void DrawTuning() {
                        LightsOverridesDirty() ? "  (unsaved)" : "");
 }
 
+// The one control both light systems share: does this light belong to the night?
+//
+// Drawn as the two sun elevations rather than as clock times, because that is
+// what actually decides it - the same lamp comes on later in June than in
+// December and at a different hour at a different latitude, and reading it off
+// the sun gets all of that for free.
+bool DrawGate(DaylightGate& gate, const char* what) {
+    bool changed = ImGui::Checkbox("Off during the day", &gate.enabled);
+    ImGui::SetItemTooltip("GTA2 has no day of its own, so this is left to every light "
+                          "individually rather than assumed.");
+    if (gate.enabled) {
+        ImGui::SameLine();
+        const float now = DaylightGateFactor(gate);
+        ImGui::TextColored(now > 0.99f ? kGood : (now < 0.01f ? kDim : kWarn), "  %s: %.0f%%",
+                           what, now * 100.0f);
+
+        ImGui::SetNextItemWidth(200.0f);
+        changed |= ImGui::SliderFloat("Out by (sun elevation)", &gate.offAboveDeg, -20.0f, 20.0f,
+                                      "%.1f deg");
+        ImGui::SetItemTooltip("Fully off once the sun is this high. 0 is the horizon.");
+        ImGui::SetNextItemWidth(200.0f);
+        changed |= ImGui::SliderFloat("Full on by", &gate.onBelowDeg, -30.0f, 10.0f, "%.1f deg");
+        ImGui::SetItemTooltip("Fully on once the sun is this far down. -6 is the end of civil "
+                              "twilight, which is when real street lighting is at full.");
+        if (gate.offAboveDeg <= gate.onBelowDeg) {
+            ImGui::TextColored(kWarn, "  These are the wrong way round, so it switches hard "
+                                      "instead of fading.");
+        }
+    }
+    return changed;
+}
+
 void DrawCategory(int category) {
     SyntheticCategorySettings& c = SyntheticLightsSettings().category[category];
     ImGui::PushID(category);
@@ -312,6 +344,9 @@ void DrawCategory(int category) {
     ImGui::SetItemTooltip("Every light is a CreateLight across the 32-bit Remix bridge, and some "
                           "particle types arrive in bursts of dozens. This is the ceiling per "
                           "frame for this category.");
+
+    ImGui::SeparatorText("Time of day");
+    changed |= DrawGate(c.gate, "burning");
 
     if (category == kSynthHeadlight) {
         ImGui::SeparatorText("Beam");
@@ -730,6 +765,46 @@ void DrawTimeOfDay() {
                           "from doing it every frame. 50 ms is twenty a second.");
     if (changed) SettingsMarkDirty();
 
+    ImGui::SeparatorText("What the clock is switching");
+    ImGui::TextWrapped(
+        "GTA2 has no day of its own, so nothing in it knows to go out at dawn. Each kind of light "
+        "decides for itself, from the sun's elevation rather than from the clock -- the full "
+        "controls are on the Lights tab for the game's own lights and the Invented tab for ours.");
+    if (ImGui::BeginTable("gates", 3,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                              | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("light");
+        ImGui::TableSetupColumn("follows the sun");
+        ImGui::TableSetupColumn("burning now");
+        ImGui::TableHeadersRow();
+        auto row = [](const char* name, bool gated, float factor) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(name);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(gated ? kGood : kDim, "%s", gated ? "yes" : "always on");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(factor > 0.99f ? kGood : (factor < 0.01f ? kDim : kWarn), "%.0f%%",
+                               factor * 100.0f);
+        };
+        const RemixLightSettings& ls = LightsSettings();
+        for (int i = 0; i < kGameLightClassCount; ++i) {
+            char label[48];
+            _snprintf(label, sizeof(label) - 1, "%s (game)", GameLightClassName(i));
+            label[sizeof(label) - 1] = 0;
+            row(label, ls.gameClass[i].gate.enabled,
+                DaylightGateFactor(ls.gameClass[i].gate));
+        }
+        for (int i = 0; i < kSynthCategoryCount; ++i) {
+            char label[48];
+            _snprintf(label, sizeof(label) - 1, "%s (invented)", SyntheticCategoryName(i));
+            label[sizeof(label) - 1] = 0;
+            row(label, SyntheticLightsSettings().category[i].gate.enabled,
+                SyntheticCategoryDaylight(i));
+        }
+        ImGui::EndTable();
+    }
+
     ImGui::SeparatorText("The day, hour by hour");
     if (ImGui::BeginTable("tod", 4,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -1094,6 +1169,56 @@ bool PassesFilter(const RemixTrackedLight& t) {
     return true;
 }
 
+// The game's own lights, sorted into kinds, so the clock can put the ones that
+// belong to the night out during the day.
+void DrawMapLightClasses() {
+    RemixLightSettings& s = LightsSettings();
+    const RemixLightStats& st = LightsStats();
+
+    ImGui::SeparatorText("The game's own lights, by kind");
+    ImGui::TextWrapped(
+        "GTA2's lights arrive with no type on them: the LGHT chunk is sixteen bytes of colour, "
+        "position, radius, intensity and blink timing, and byte 13 -- which the published format "
+        "docs call a shape field -- is really the blink jitter. So there is nothing to read.\n\n"
+        "They are still separable, because what GTA2 puts in those fields is not arbitrary. Two "
+        "populations do not come from the map at all: traffic signals are built at runtime at a "
+        "hard-coded intensity of 200 with a colour that cycles red, amber and green, and vehicle "
+        "lamps are hung on every car at spawn and move with it. The rest split by hue -- across "
+        "the shipped maps 12083 lights carry 765 colours, and the common ones are unmistakable: "
+        "#FF8000 and #FF8040 sodium, #62CC8C and #00FFFF neon, #FFFFFF and #FFDB5E white. It is a "
+        "heuristic, and it is drawn from what is actually in the maps rather than guessed.\n\n"
+        "GTA2 has no day, so every one of these burns at noon. The defaults have everything but "
+        "the junction signals following the sun; a red light has to be legible in daylight.");
+
+    if (ImGui::BeginTable("mapclasses", 4,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                              | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("kind");
+        ImGui::TableSetupColumn("in view");
+        ImGui::TableSetupColumn("lit now");
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < kGameLightClassCount; ++i) {
+            GameLightClassSettings& gc = s.gameClass[i];
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (ImGui::Checkbox(GameLightClassName(i), &gc.enabled)) SettingsMarkDirty();
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", st.byClass[i]);
+            ImGui::TableNextColumn();
+            const int lit = st.litByClass[i];
+            ImGui::TextColored(lit ? kGood : kDim, "%d", lit);
+            ImGui::TableNextColumn();
+            if (DrawGate(gc.gate, "lit")) SettingsMarkDirty();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(kDim, "\"in view\" is what the game submitted this frame, before any of "
+                             "this; \"lit now\" is what survived it.");
+}
+
 void DrawLightTable() {
     ImGui::SetNextItemWidth(220.0f);
     ImGui::InputText("filter by key", g_filter, sizeof(g_filter));
@@ -1423,6 +1548,8 @@ void DebugMenuRender() {
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Lights")) {
+                DrawMapLightClasses();
+                ImGui::Separator();
                 DrawLightTable();
                 ImGui::Separator();
                 DrawSelectedEditor();
