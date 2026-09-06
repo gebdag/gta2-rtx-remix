@@ -198,8 +198,30 @@ public:
         const Vec3 cross{edge1.y * edge2.z - edge1.z * edge2.y,
                          edge1.z * edge2.x - edge1.x * edge2.z,
                          edge1.x * edge2.y - edge1.y * edge2.x};
-        const bool reversed =
-            cross.x * normal.x + cross.y * normal.y + cross.z * normal.z < 0.0f;
+        const float facing = cross.x * normal.x + cross.y * normal.y + cross.z * normal.z;
+        const bool reversed = facing < 0.0f;
+
+        // The normal the vertices carry is the surface's own, measured, rather
+        // than the one the caller named.
+        //
+        // Callers pass the direction the face *points* - which for a wall is
+        // exact, and for a lid is {0,1,0} whether or not that lid is a ramp. A
+        // ramp's four corner heights differ by construction, so its quad is a
+        // sloped plane being described as level. Nothing in the D3D9 pass
+        // noticed, because D3DRS_LIGHTING is off and fixed function never reads
+        // a normal; RTX Remix does read them, so every ramp in the city was
+        // being path traced with the shading of flat ground.
+        //
+        // The cross product above is already the true surface direction, up to
+        // sign, and the caller's normal is exactly the thing that says which
+        // sign is outward. So take the measurement and let the caller orient it.
+        // Walls are unaffected: their cross is parallel to what they pass.
+        Vec3 surface = normal;
+        const float length = std::sqrt(cross.x * cross.x + cross.y * cross.y + cross.z * cross.z);
+        if (length > 1e-6f) {
+            const float sign = reversed ? -1.0f : 1.0f;
+            surface = {cross.x * sign / length, cross.y * sign / length, cross.z * sign / length};
+        }
 
         std::vector<Vertex>& out = perTile_[tile];
         static const int kForward[4] = {0, 1, 2, 3};
@@ -207,10 +229,10 @@ public:
         const int* order = reversed ? kReverse : kForward;
         for (int i = 0; i < 4; ++i) {
             const int slot = order[i];
-            out.push_back(Vertex{corners[slot].x + normal.x * push,
-                                 corners[slot].y + normal.y * push,
-                                 corners[slot].z + normal.z * push,
-                                 normal.x, normal.y, normal.z,
+            out.push_back(Vertex{corners[slot].x + surface.x * push,
+                                 corners[slot].y + surface.y * push,
+                                 corners[slot].z + surface.z * push,
+                                 surface.x, surface.y, surface.z,
                                  uv[slot].u, uv[slot].v});
         }
     }
