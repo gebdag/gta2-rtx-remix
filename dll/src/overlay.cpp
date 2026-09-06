@@ -31,10 +31,25 @@ uint32_t GreyFromShade(uint8_t shade) {
 }  // namespace
 
 void Overlay::SetGameScreenSize(int width, int height) {
-    if (width > 0 && height > 0) {
-        gameWidth_ = width;
-        gameHeight_ = height;
-    }
+    if (width <= 0 || height <= 0) return;
+    if (width == gameWidth_ && height == gameHeight_) return;
+    gameWidth_ = width;
+    gameHeight_ = height;
+    Log("overlay: game screen is %dx%d (from the camera struct)", gameWidth_, gameHeight_);
+}
+
+// The whole menu is scaled by targetSize/gameSize at flush time, so a wrong
+// gameSize puts the front end in a corner and a gameSize that *changes* makes it
+// jitter - most visibly at the right and bottom edges, where the scale error
+// accumulates. Both were the camera struct being read after the level that owned
+// it had gone.
+void Overlay::RevertToWindowSize() {
+    if (windowWidth_ <= 0 || windowHeight_ <= 0) return;
+    if (windowWidth_ == gameWidth_ && windowHeight_ == gameHeight_) return;
+    Log("overlay: back to %dx%d from gbh_SetWindow (was %dx%d)", windowWidth_, windowHeight_,
+        gameWidth_, gameHeight_);
+    gameWidth_ = windowWidth_;
+    gameHeight_ = windowHeight_;
 }
 
 // gbh_SetWindow hands over the clip rectangle the game draws inside, which is
@@ -45,14 +60,18 @@ void Overlay::SetGameScreenSize(int width, int height) {
 // left/right/top/bottom rather than the usual order, so rather than depend on
 // which it is, take the two largest - for any real screen rectangle those are
 // the right and bottom edges under either convention.
-void Overlay::NoteWindow(int a, int b, int c, int d) {
-    int values[4] = {a, b, c, d};
+void Overlay::NoteWindow(float a, float b, float c, float d) {
+    int values[4] = {static_cast<int>(a), static_cast<int>(b), static_cast<int>(c),
+                     static_cast<int>(d)};
     std::sort(values, values + 4);
     const int right = values[3];
     const int bottom = values[2];
     if (right <= 1 || bottom <= 1 || right > 4096 || bottom > 4096) return;
     const int width = right + 1;
     const int height = bottom + 1;
+    // Recorded whether or not it is applied, so RevertToWindowSize has an answer.
+    windowWidth_ = width;
+    windowHeight_ = height;
     if (sizeFromWindow_ && width == gameWidth_ && height == gameHeight_) return;
     sizeFromWindow_ = true;
     gameWidth_ = width;
@@ -144,6 +163,21 @@ void Overlay::Triangle(unsigned flags, const void* texture, const float* v, uint
     PushTriangleFan(corners, 3, texture, -1, (flags & quad_flags::kOpaque) == 0);
 }
 
+// The colour is whatever gbh_ConvertColour handed the game, and that returns
+// 5:6:5 - which is what a renderer the game asked for 16-bit colour is supposed
+// to return. It comes straight back here, so it has to be *expanded* rather than
+// reinterpreted: taken as ARGB8888, red lands in the byte 5:6:5 never fills and
+// every filled panel in the UI comes out the wrong colour.
+uint32_t Overlay::PanelColour(uint32_t colour) {
+    // Anything in the high half is already a full colour and is left alone.
+    if (colour & 0xFFFF0000u) return colour | 0xFF000000u;
+    const uint32_t r = (colour >> 11) & 0x1F;
+    const uint32_t g = (colour >> 5) & 0x3F;
+    const uint32_t b = colour & 0x1F;
+    return 0xFF000000u | (((r * 255 + 15) / 31) << 16) | (((g * 255 + 31) / 63) << 8) |
+           ((b * 255 + 15) / 31);
+}
+
 void Overlay::FlatRect(const float* v, uint32_t colour) {
     if (!v) return;
     Vertex corners[4] = {};
@@ -151,7 +185,7 @@ void Overlay::FlatRect(const float* v, uint32_t colour) {
         const float* src = v + i * kGameVertexFloats;
         corners[i].x = src[0];
         corners[i].y = src[1];
-        corners[i].colour = colour | 0xFF000000u;
+        corners[i].colour = PanelColour(colour);
     }
     PushTriangleFan(corners, 4, nullptr, -1, false);
 }

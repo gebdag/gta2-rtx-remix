@@ -385,6 +385,24 @@ void WorldView::SetVisibleTileBounds(float minX, float minY, float maxX, float m
 bool WorldView::EnsureWorldLoaded() {
     const uint8_t* mapObject = game::MapObject();
     if (!mapObject) {
+        // Back at the menu. The game has freed its map, so the level's geometry
+        // has to go with it - otherwise the last frame of the city stays in the
+        // scene, drawn behind the menu and still path traced by Remix, and the
+        // menu never appears to come back.
+        if (worldUploaded_) {
+            Log("level ended: releasing the world mesh");
+            renderer_.ReleaseWorld();
+            worldUploaded_ = false;
+            // The sprite pass must not conform to a map that is no longer there,
+            // and the next level's camera should not ease down from this one's
+            // rooftops.
+            ground_.Clear();
+            tileSources_.clear();
+            heightSettled_ = false;
+            // Back to the menu's own scale immediately, rather than keeping the
+            // level's until the game next calls gbh_SetWindow.
+            overlay_.RevertToWindowSize();
+        }
         loadedMapObject_ = nullptr;
         return false;
     }
@@ -506,6 +524,7 @@ bool WorldView::EnsureWorldLoaded() {
     Log("world loaded: %s, %zu blocks, %zu triangles, %zu batches", stylePath.c_str(),
         map_.BlockCount(), mesh.indices.size() / 3, mesh.batches.size());
     loadedMapObject_ = mapObject;
+    worldUploaded_ = true;
     return true;
 }
 
@@ -693,9 +712,21 @@ void WorldView::RenderFrame() {
     // and it is not our back buffer size. Prefer the camera struct, which holds
     // it as plain pixel integers; gbh_SetWindow covers the menus, where no
     // camera exists yet.
-    if (const uint8_t* camera = game::CameraStruct()) {
-        overlay_.SetGameScreenSize(*reinterpret_cast<const int32_t*>(camera + game::kScreenWidthOffset),
-                                   *reinterpret_cast<const int32_t*>(camera + game::kScreenHeightOffset));
+    // Only while a world is loaded. The camera struct pointer outlives the level
+    // it described, so at the menu this reads a freed allocation - which laid the
+    // front end out to the wrong scale, and made it jitter as the allocator
+    // handed that memory to something else. gbh_SetWindow is the authority there,
+    // which is what its own comment in overlay.cpp has always said.
+    if (worldUploaded_) {
+        if (const uint8_t* camera = game::CameraStruct()) {
+            const int32_t screenW =
+                *reinterpret_cast<const int32_t*>(camera + game::kScreenWidthOffset);
+            const int32_t screenH =
+                *reinterpret_cast<const int32_t*>(camera + game::kScreenHeightOffset);
+            if (screenW >= 320 && screenW <= 8192 && screenH >= 200 && screenH <= 8192) {
+                overlay_.SetGameScreenSize(screenW, screenH);
+            }
+        }
     }
 
     // The bridge server is a separate process that is still starting while the

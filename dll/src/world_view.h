@@ -101,6 +101,10 @@ private:
     // reads map_ directly, so the two can never describe different ground.
     GroundSampler ground_;
     const void* loadedMapObject_ = nullptr;
+    // Whether a level's geometry is currently uploaded. Distinct from
+    // loadedMapObject_, which gbh_EndLevel clears to force a rebuild while the
+    // old mesh is still sitting in the vertex buffer.
+    bool worldUploaded_ = false;
     std::string dataDir_;
 
     float minX_ = 0.0f, minY_ = 0.0f, maxX_ = 0.0f, maxY_ = 0.0f;

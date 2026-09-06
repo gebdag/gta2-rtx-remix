@@ -36,8 +36,15 @@ class Overlay {
 public:
     // Screen coordinates arrive in the game's own resolution, which is not the
     // size of our back buffer; everything is scaled on the way out.
+    // The size the game lays its HUD out in, taken from the camera struct.
+    // Only valid while a world is loaded - see RevertToWindowSize.
     void SetGameScreenSize(int width, int height);
-    void NoteWindow(int a, int b, int c, int d);
+
+    // Go back to the size gbh_SetWindow last stated. The camera struct outlives
+    // the level it described, so once the game is back at the menu it is not a
+    // source of truth about anything.
+    void RevertToWindowSize();
+    void NoteWindow(float a, float b, float c, float d);
 
     void BeginFrame();
     void Quad(unsigned flags, const void* texture, const float* vertices, uint8_t shade);
@@ -81,6 +88,8 @@ private:
     void PushTriangleFan(const Vertex* corners, int count, const void* texture, int image,
                          bool alphaTest);
     IDirect3DTexture9* ResolveImage(IDirect3DDevice9* device, int image);
+    // gbh_ConvertColour returns 5:6:5; this expands it. See FlatRect.
+    static uint32_t PanelColour(uint32_t colour);
 
     std::vector<Vertex> vertices_;
     std::vector<Draw> draws_;
@@ -88,6 +97,10 @@ private:
 
     int gameWidth_ = 640;
     int gameHeight_ = 480;
+    // The last thing gbh_SetWindow said, kept even while the camera struct is
+    // driving the size, so there is something to fall back to at the menu.
+    int windowWidth_ = 0;
+    int windowHeight_ = 0;
     bool sizeFromWindow_ = false;
 };
 

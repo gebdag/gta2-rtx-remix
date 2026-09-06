@@ -124,6 +124,29 @@ void Renderer::ReleaseResources() {
     }
 }
 
+// Drop the level's geometry, and nothing else.
+//
+// GTA2 frees its map when it returns to the menu, and the renderer used to keep
+// drawing the last level regardless: DrawWorld's only guard is that a vertex
+// buffer exists, and one did. So quitting to the menu left a frozen cityscape on
+// screen with the menu drawn over it - and under Remix that geometry was still
+// in the scene, still being path traced, still lit.
+//
+// Deliberately not ReleaseResources: the device, the window and the tile
+// textures all outlive a level, and tearing them down here would mean rebuilding
+// the device every time someone backs out to the menu.
+void Renderer::ReleaseWorld() {
+    batches_.clear();
+    if (vertexBuffer_) {
+        vertexBuffer_->Release();
+        vertexBuffer_ = nullptr;
+    }
+    if (indexBuffer_) {
+        indexBuffer_->Release();
+        indexBuffer_ = nullptr;
+    }
+}
+
 bool Renderer::Initialize(HWND window, int width, int height, std::string* error) {
     width_ = width;
     height_ = height;

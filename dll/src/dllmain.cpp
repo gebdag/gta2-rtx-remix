@@ -597,9 +597,15 @@ __declspec(dllexport) void __stdcall gbh_SetAmbient(float ambient) {
     gta2dx9::LightsSetAmbient(ambient);
 }
 
-__declspec(dllexport) void __stdcall gbh_SetWindow(int a, int b, int c, int d) {
+// Floats, not ints. The game's only call site builds them with fild/fstp at
+// gta2.exe!0x004CAF1F and passes gbh_SetWindow(0.0f, 0.0f, width-1, height-1).
+// Declared as ints, 639.0f arrives as 1142312960, which NoteWindow rejected as
+// out of range - so this call had never once told the overlay anything, and the
+// menu was laid out to a default that happened to be right until a level had
+// been played.
+__declspec(dllexport) void __stdcall gbh_SetWindow(float a, float b, float c, float d) {
     if (Proxying() && g_p_gbh_SetWindow) {
-        Backend<void(__stdcall*)(int, int, int, int)>(g_p_gbh_SetWindow)(a, b, c, d);
+        Backend<void(__stdcall*)(float, float, float, float)>(g_p_gbh_SetWindow)(a, b, c, d);
         return;
     }
     g_world.GetOverlay().NoteWindow(a, b, c, d);

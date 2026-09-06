@@ -61,6 +61,13 @@ public:
     int TileTextureCount() const { return static_cast<int>(textures_.size()); }
 
     bool HasWorld() const { return vertexBuffer_ != nullptr; }
+
+    // Drop the level's geometry without touching the device, the window or the
+    // tile textures. The game frees its map when it returns to the menu, and
+    // without this the last level goes on being drawn - and path traced - behind
+    // the menu.
+    void ReleaseWorld();
+
     int Width() const { return width_; }
     int Height() const { return height_; }
 
