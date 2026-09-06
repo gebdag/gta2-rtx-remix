@@ -344,27 +344,39 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
 
     // Never reused: each frame owns its texture for the life of the process, so
     // that its Remix hash stays put.
-    cached.texture = nullptr;
+    //
+    // Built into a local and only published to the cache once it is complete.
+    // This used to clear cached.texture up front and return null from any of the
+    // three failures below, which threw away the artwork that was on screen a
+    // frame ago *before* its replacement existed. GTA2 rewrites a record every
+    // time the menu text changes, and if the palette had not been filled in yet
+    // the caller got nothing - so a glyph blinked out for that frame, which is
+    // the flicker when moving through the options. Keeping the last good texture
+    // turns a failed rebuild into one stale frame, which nobody can see, rather
+    // than one missing frame, which everybody can.
+    //
+    // It also stops the leak: the old path abandoned a created texture on every
+    // failing frame without releasing it.
+    IDirect3DTexture9* fresh = nullptr;
     if (FAILED(device->CreateTexture(record->width, record->height, 1, 0, D3DFMT_A8R8G8B8,
-                                     D3DPOOL_MANAGED, &cached.texture, nullptr))) {
-        cached.texture = nullptr;
-        return nullptr;
+                                     D3DPOOL_MANAGED, &fresh, nullptr))) {
+        return cached.texture;
     }
 
     bool paletteHasColour = false;
     const uint32_t* palette = PaletteColours(record->palette, &paletteHasColour);
     if (!palette) {
-        // Nothing to build from, so the caller draws nothing this frame: one
-        // frame of a missing sprite.
         ++g_trouble.paletteMissing;
-        return nullptr;
+        fresh->Release();
+        return cached.texture;
     }
     if (record->flags & 1) ++g_trouble.builtWhileLocked;  // game is mid-rewrite
 
     D3DLOCKED_RECT locked;
-    if (FAILED(cached.texture->LockRect(0, &locked, nullptr, 0))) {
+    if (FAILED(fresh->LockRect(0, &locked, nullptr, 0))) {
         ++g_trouble.lockFailed;
-        return nullptr;
+        fresh->Release();
+        return cached.texture;
     }
     const uint8_t* indices = static_cast<const uint8_t*>(record->pixels);
     std::vector<uint32_t> image(static_cast<size_t>(record->width) * record->height);
@@ -437,8 +449,9 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
                image.data() + static_cast<size_t>(y) * record->width,
                static_cast<size_t>(record->width) * 4);
     }
-    cached.texture->UnlockRect(0);
+    fresh->UnlockRect(0);
 
+    cached.texture = fresh;
     cached.width = record->width;
     cached.height = record->height;
     cached.palette = record->palette;

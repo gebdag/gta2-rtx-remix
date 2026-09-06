@@ -137,6 +137,19 @@ void Renderer::ReleaseResources() {
 // the device every time someone backs out to the menu.
 void Renderer::ReleaseWorld() {
     batches_.clear();
+    if (savedTarget_) {
+        savedTarget_->Release();
+        savedTarget_ = nullptr;
+    }
+    if (uiSurface_) {
+        uiSurface_->Release();
+        uiSurface_ = nullptr;
+    }
+    if (uiTexture_) {
+        uiTexture_->Release();
+        uiTexture_ = nullptr;
+    }
+    uiClearPending_ = true;
     if (vertexBuffer_) {
         vertexBuffer_->Release();
         vertexBuffer_ = nullptr;
@@ -340,10 +353,101 @@ void Renderer::ApplyFixedFunctionState() {
     device_->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
 }
 
+// The 2D layer the game believes it is painting into. See the note in the
+// header for why it is kept rather than cleared.
+bool Renderer::BeginUiLayer(bool clearNow) {
+    if (!device_) return false;
+    if (!uiTexture_) {
+        if (FAILED(device_->CreateTexture(width_, height_, 1, D3DUSAGE_RENDERTARGET,
+                                          D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &uiTexture_,
+                                          nullptr))) {
+            uiTexture_ = nullptr;
+            return false;
+        }
+        if (FAILED(uiTexture_->GetSurfaceLevel(0, &uiSurface_))) {
+            uiTexture_->Release();
+            uiTexture_ = nullptr;
+            uiSurface_ = nullptr;
+            return false;
+        }
+        uiClearPending_ = true;
+    }
+    if (FAILED(device_->GetRenderTarget(0, &savedTarget_))) {
+        savedTarget_ = nullptr;
+        return false;
+    }
+    if (FAILED(device_->SetRenderTarget(0, uiSurface_))) {
+        savedTarget_->Release();
+        savedTarget_ = nullptr;
+        return false;
+    }
+    // Transparent, not black: the world is drawn underneath this, so everywhere
+    // the game has not painted has to let it through. The game's own clear is
+    // opaque black because in its model there is nothing underneath.
+    if (clearNow || uiClearPending_) {
+        device_->Clear(0, nullptr, D3DCLEAR_TARGET, 0x00000000, 1.0f, 0);
+        uiClearPending_ = false;
+    }
+    return true;
+}
+
+void Renderer::EndUiLayer() {
+    if (!device_ || !savedTarget_) return;
+    device_->SetRenderTarget(0, savedTarget_);
+    savedTarget_->Release();
+    savedTarget_ = nullptr;
+    if (!uiTexture_) return;
+
+    struct Composite {
+        float x, y, z, rhw;
+        float u, v;
+    };
+    const float w = static_cast<float>(width_);
+    const float h = static_cast<float>(height_);
+    const Composite quad[4] = {{-0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f},
+                               {w - 0.5f, -0.5f, 0.0f, 1.0f, 1.0f, 0.0f},
+                               {w - 0.5f, h - 0.5f, 0.0f, 1.0f, 1.0f, 1.0f},
+                               {-0.5f, h - 0.5f, 0.0f, 1.0f, 0.0f, 1.0f}};
+
+    device_->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+    device_->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    device_->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    device_->SetRenderState(D3DRS_LIGHTING, FALSE);
+    device_->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
+    device_->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    device_->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    device_->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    device_->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    device_->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    device_->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    device_->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+    device_->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+    device_->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    device_->SetTexture(0, uiTexture_);
+    device_->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    device_->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    device_->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    device_->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+    device_->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    device_->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+    device_->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, quad, sizeof(Composite));
+
+    device_->SetTexture(0, nullptr);
+    device_->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    device_->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+    device_->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+}
+
 bool Renderer::BeginFrame() {
     stats_ = RenderStats{};
     if (!device_) return false;
-    device_->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(24, 28, 38), 1.0f,
+    // Black, because that is what the game asks for. GTA2's menu paints only the
+    // left third of the screen plus its text - traced from the 2D stream, the
+    // whole front end is one blit at (0,0)-(278,480) and a row of glyph quads -
+    // and everything else is meant to be the colour the screen was cleared to.
+    // Vid_ClearScreen(ctx, 0,0,0,0,0, 640,480) is the game saying so; the video
+    // proxy no longer forwards it, so this is the only clear left.
+    device_->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f,
                    0);
     return SUCCEEDED(device_->BeginScene());
 }

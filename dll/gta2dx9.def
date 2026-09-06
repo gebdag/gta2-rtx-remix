@@ -42,3 +42,6 @@ EXPORTS
     gbh_DrawFlatRect
     gbh_CloseScreen
     gbh_Convert16BitGraphic
+    ; Not part of GTA2's interface: our video device proxy calls this when the
+    ; game clears its screen. See gta2dx9_NoteScreenClear in dllmain.cpp.
+    gta2dx9_NoteScreenClear

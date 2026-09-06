@@ -603,6 +603,16 @@ __declspec(dllexport) void __stdcall gbh_SetAmbient(float ambient) {
 // out of range - so this call had never once told the overlay anything, and the
 // menu was laid out to a default that happened to be right until a level had
 // been played.
+// Called by our video device proxy when GTA2 clears its screen.
+//
+// The menu paints incrementally and clears only when it wants a repaint, so this
+// is the only moment the 2D layer may be discarded. The proxy is a separate DLL
+// - it wears the game's videoname - so the two are joined by this one export
+// rather than by sharing state.
+extern "C" __declspec(dllexport) void __stdcall gta2dx9_NoteScreenClear() {
+    g_world.NoteScreenClear();
+}
+
 __declspec(dllexport) void __stdcall gbh_SetWindow(float a, float b, float c, float d) {
     if (Proxying() && g_p_gbh_SetWindow) {
         Backend<void(__stdcall*)(float, float, float, float)>(g_p_gbh_SetWindow)(a, b, c, d);

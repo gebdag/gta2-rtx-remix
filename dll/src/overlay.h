@@ -44,6 +44,12 @@ public:
     // the level it described, so once the game is back at the menu it is not a
     // source of truth about anything.
     void RevertToWindowSize();
+
+    // Log the next `frames` frames of the 2D draw list: what the game asked for,
+    // in the order it asked, with the artwork and the colour of each. The menu
+    // is entirely this stream, so when it comes out wrong this says whether the
+    // game did not send the draw or we did not honour it.
+    void TraceNextFrames(int frames);
     void NoteWindow(float a, float b, float c, float d);
 
     void BeginFrame();
@@ -101,6 +107,15 @@ private:
     // driving the size, so there is something to fall back to at the menu.
     int windowWidth_ = 0;
     int windowHeight_ = 0;
+    // Draws dropped this frame because the artwork they asked for was not there.
+    int missingArtwork_ = 0;
+    int missingLogged_ = 0;
+    int traceFrames_ = 0;
+    size_t lastSignature_ = 0;
+    int changeLogged_ = 0;
+    int diffLogged_ = 0;
+
+    std::vector<const void*> lastKeys_;
     bool sizeFromWindow_ = false;
 };
 

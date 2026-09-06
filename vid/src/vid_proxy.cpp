@@ -118,6 +118,7 @@
 #include <windows.h>
 
 #include <cstdarg>
+#include <intrin.h>
 #include <cstdio>
 
 namespace {
@@ -235,6 +236,18 @@ bool OwnSurface() {
         }
     }
     cached = GetPrivateProfileIntA("video", "own_surface", 1, ini) ? 1 : 0;
+    // The two are not independent, and pretending they were cost a boot.
+    //
+    // own_screen=1 means Vid_SetMode never ran, so the original video device has
+    // no screen and no surfaces. Forwarding the per-frame calls into it then
+    // hands it a screen it does not have, and the game goes down on startup.
+    // Testing that path means turning both off together.
+    if (!cached && OwnScreen()) {
+        Log("own_surface=0 ignored: own_screen=1 means no screen was ever created, so there is "
+            "nothing for the per-frame surface calls to forward into. Set own_screen=0 too if "
+            "that is really what you want to test.");
+        cached = 1;
+    }
     Log("own_surface=%d  (%s)", cached,
         cached ? "the per-frame surface calls do nothing"
                : "the per-frame surface calls forward to the original");
@@ -246,6 +259,29 @@ bool OwnSurface() {
 // matched; +0x48/+0x4C are what the game reads back as the screen size.
 int* CtxField(void* context, int offset) {
     return reinterpret_cast<int*>(static_cast<char*>(context) + offset);
+}
+
+// The renderer is loaded under GTA2's own Direct3D name, with its own as a
+// fallback for an install that has not claimed that slot.
+void NoteScreenClear() {
+    using Notify = void(__stdcall*)();
+    static Notify notify = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        static const char* const kNames[2] = {"d3ddll.dll", "gta2dx9.dll"};
+        for (int i = 0; i < 2; ++i) {
+            const HMODULE module = GetModuleHandleA(kNames[i]);
+            if (!module) continue;
+            notify = reinterpret_cast<Notify>(GetProcAddress(module, "gta2dx9_NoteScreenClear"));
+            if (notify) {
+                Log("screen clears will be reported to %s", kNames[i]);
+                break;
+            }
+        }
+        if (!notify) Log("no renderer to report screen clears to; the 2D layer will not be cleared");
+    }
+    if (notify) notify();
 }
 
 void* Entry(const char* name) {
@@ -360,8 +396,38 @@ extern "C" __declspec(dllexport) int __stdcall Vid_ClearScreen(void* a, int b, i
                                                                int f, int g, int h) {
     using Fn = int(__stdcall*)(void*, int, int, int, int, int, int, int);
     static Fn fn = reinterpret_cast<Fn>(Entry("Vid_ClearScreen"));
+    // Not every clear means "throw the screen away".
+    //
+    // GTA2 has five call sites and they do not mean the same thing. Two of its
+    // loops clear unconditionally as the last step of their own draw-flip-clear
+    // cycle - 0x0045863B in the pass that blits the artwork, and 0x00481E88 -
+    // and those passes redraw their own content next time round. Only
+    // 0x004619BC is a decision: gta2.exe!0x00461977 tests five repaint flags
+    // after flipping and clears just when one is set, otherwise returning with
+    // the screen left alone.
+    //
+    // That distinction is the whole thing. The menu is composed by more than one
+    // pass over one persistent surface - the artwork pass draws only images, the
+    // menu pass only text and flat rects - so treating either pass's own
+    // end-of-cycle clear as "discard everything" wipes out what the other one
+    // put there. Only the considered clear, and the two at startup, reset the
+    // layer.
+    {
+        const uintptr_t from = reinterpret_cast<uintptr_t>(_ReturnAddress());
+        const bool repaint = from == 0x004619C2u ||   // the menu's conditional clear
+                             from == 0x004CC7A0u ||   // screen set-up
+                             from == 0x004CC7CBu;
+        if (repaint) NoteScreenClear();
+        static int said = 0;
+        if (said < 6) {
+            ++said;
+            Log("Vid_ClearScreen from %08X -> %s", static_cast<unsigned>(from),
+                repaint ? "repaint, layer reset" : "end of a draw pass, layer kept");
+        }
+    }
     if (OwnSurface()) {
-        if (++g_clears <= 2) Log("Vid_ClearScreen(%p, ...) -> nothing to clear  [then counted]", a);
+        if (++g_clears <= 2) Log("Vid_ClearScreen(%p, ...) -> forwarded as a repaint signal only",
+                                 a);
         return 0;
     }
     if (!fn) return 0;

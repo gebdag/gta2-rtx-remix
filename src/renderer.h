@@ -68,6 +68,24 @@ public:
     // the menu.
     void ReleaseWorld();
 
+    // --- The 2D layer ------------------------------------------------------
+    //
+    // GTA2's menu is an incremental painter. gta2.exe!0x00461960 draws the
+    // menu, flips, and then clears the screen *only* if one of five repaint
+    // flags is set (0x5EAD9C, 0x5EAD8C, 0x5EAD5F, 0x5EAD67, 0x5EAD59) - and
+    // otherwise returns without clearing. So the front end sends its background
+    // once, its animated panel now and then, and its text every frame, on the
+    // understanding that whatever it drew before is still on screen.
+    //
+    // A pass that rebuilds from an empty list every frame therefore shows each
+    // of those for exactly the frame it arrives on. These give the 2D stream the
+    // surface it thinks it has: an offscreen target that is kept between frames
+    // and cleared only when the game says to.
+    bool BeginUiLayer(bool clearNow);
+    void EndUiLayer();
+    void NoteScreenClear() { uiClearPending_ = true; }
+    bool HasUiLayer() const { return uiTexture_ != nullptr; }
+
     int Width() const { return width_; }
     int Height() const { return height_; }
 
@@ -86,6 +104,11 @@ private:
 
     IDirect3D9* d3d_ = nullptr;
     IDirect3DDevice9* device_ = nullptr;
+    IDirect3DTexture9* uiTexture_ = nullptr;
+    IDirect3DSurface9* uiSurface_ = nullptr;
+    IDirect3DSurface9* savedTarget_ = nullptr;
+    bool uiClearPending_ = true;
+
     IDirect3DVertexBuffer9* vertexBuffer_ = nullptr;
     IDirect3DIndexBuffer9* indexBuffer_ = nullptr;
     std::vector<IDirect3DTexture9*> textures_;  // indexed by tile id, may contain nulls

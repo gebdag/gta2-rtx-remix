@@ -60,6 +60,11 @@ public:
     // Called when the game starts a level, so the next frame rebuilds.
     void InvalidateWorld() { loadedMapObject_ = nullptr; }
 
+    // The game cleared its screen. gta2.exe!0x004619BC does this only when one
+    // of its repaint flags is set, so it is the one statement that the 2D layer
+    // may be thrown away.
+    void NoteScreenClear() { renderer_.NoteScreenClear(); }
+
     void BeginFrame() {
         overlay_.BeginFrame();
         live_.BeginFrame();

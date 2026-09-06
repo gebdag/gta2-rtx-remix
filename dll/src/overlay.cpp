@@ -79,9 +79,14 @@ void Overlay::NoteWindow(float a, float b, float c, float d) {
     Log("overlay: game screen is %dx%d (from gbh_SetWindow)", gameWidth_, gameHeight_);
 }
 
+void Overlay::TraceNextFrames(int frames) {
+    if (frames > 0) traceFrames_ = frames;
+}
+
 void Overlay::BeginFrame() {
     vertices_.clear();
     draws_.clear();
+    missingArtwork_ = 0;
 }
 
 void Overlay::PushTriangleFan(const Vertex* corners, int count, const void* texture, int image,
@@ -355,7 +360,10 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
         IDirect3DTexture9* texture = nullptr;
         float invU = 1.0f;
         float invV = 1.0f;
-        if (draw.image >= 0) {
+        // Whether this draw asked for artwork at all. FlatRect and Line do not;
+        // everything the game blits does.
+        const bool wantsArtwork = draw.image >= 0 || draw.texture != nullptr;
+        if (draw.image >= 0 && static_cast<size_t>(draw.image) < images_.size()) {
             texture = ResolveImage(device, draw.image);
             const Image& image = images_[draw.image];
             invU = image.width ? 1.0f / image.width : 1.0f;
@@ -365,6 +373,41 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
             const TextureRecord* record = static_cast<const TextureRecord*>(draw.texture);
             invU = record->width ? 1.0f / record->width : 1.0f;
             invV = record->height ? 1.0f / record->height : 1.0f;
+        }
+
+        // A draw that wanted artwork and did not get it is dropped, not painted.
+        //
+        // Falling through to the untextured path below fills the quad with its
+        // vertex colour instead, and for anything the game blits that colour is
+        // the shade byte splatted to grey - so a menu image that failed to
+        // resolve came out as a solid grey panel covering exactly the area the
+        // artwork should have filled, blinking as the resolve succeeded and
+        // failed from one frame to the next.
+        //
+        // It fails for ordinary reasons: InitImageTable frees the whole table
+        // before the game reloads it, so every blit in between has nothing
+        // behind it, and a sprite texture is empty until the game has registered
+        // its palette. Missing artwork for a frame is a gap. Painting grey over
+        // the frame is a wall.
+        if (wantsArtwork && !texture) {
+            ++missingArtwork_;
+            // Everything needed to say *why*, once per dropped draw. The counters
+            // in texture_store say how a build failed but not which draw it cost,
+            // and the flicker is one glyph for one frame - so the record itself
+            // has to be printed at the moment it could not be resolved.
+            if (missingLogged_ < 120) {
+                ++missingLogged_;
+                if (draw.image >= 0) {
+                    Log("overlay drop: blit image=%d, table holds %zu", draw.image, images_.size());
+                } else {
+                    const TextureRecord* r = static_cast<const TextureRecord*>(draw.texture);
+                    Log("overlay drop: tex=%p %dx%d palette=%u rev=%u flags=%02X pixels=%p",
+                        draw.texture, static_cast<int>(r->width), static_cast<int>(r->height),
+                        static_cast<unsigned>(r->palette), static_cast<unsigned>(r->revision),
+                        static_cast<unsigned>(r->flags), r->pixels);
+                }
+            }
+            continue;
         }
 
         if (texture) {
@@ -397,6 +440,93 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
             vertex.v *= invV;
         }
         device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, draw.count / 3, batch.data(), sizeof(Vertex));
+    }
+
+    // One line per frame whose draw list is not identical to the last, which is
+    // exactly the frames the menu changes on - and therefore the frames the
+    // flicker happens on.
+    size_t signature = draws_.size() * 1000003u;
+    for (const Draw& draw : draws_) {
+        signature = signature * 31u + reinterpret_cast<uintptr_t>(draw.texture) +
+                    static_cast<size_t>(draw.image) * 7u + draw.count;
+    }
+    if (signature != lastSignature_) {
+        lastSignature_ = signature;
+        if (changeLogged_ < 60) {
+            ++changeLogged_;
+            Log("overlay: draw list changed - %zu draw(s), %d dropped", draws_.size(),
+                missingArtwork_);
+        }
+    }
+
+    // Which draw came or went, by name. The count alternating by one says a
+    // single draw is blinking; this says which, and where it is, so the game
+    // side can be found rather than guessed at.
+    {
+        std::vector<const void*> keys;
+        keys.reserve(draws_.size());
+        for (const Draw& draw : draws_) {
+            keys.push_back(draw.image >= 0
+                               ? reinterpret_cast<const void*>(0x10000u + draw.image)
+                               : draw.texture);
+        }
+        if (diffLogged_ < 40 && keys != lastKeys_) {
+            int said = 0;
+            for (size_t i = 0; i < keys.size() && said < 6; ++i) {
+                if (std::find(lastKeys_.begin(), lastKeys_.end(), keys[i]) != lastKeys_.end()) {
+                    continue;
+                }
+                float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+                for (uint32_t v = 0; v < draws_[i].count; ++v) {
+                    const Vertex& vertex = vertices_[draws_[i].first + v];
+                    x0 = (std::min)(x0, vertex.x);
+                    y0 = (std::min)(y0, vertex.y);
+                    x1 = (std::max)(x1, vertex.x);
+                    y1 = (std::max)(y1, vertex.y);
+                }
+                Log("  + %p at (%.0f,%.0f)-(%.0f,%.0f)", keys[i], x0, y0, x1, y1);
+                ++said;
+            }
+            for (size_t i = 0; i < lastKeys_.size() && said < 12; ++i) {
+                if (std::find(keys.begin(), keys.end(), lastKeys_[i]) != keys.end()) continue;
+                Log("  - %p gone", lastKeys_[i]);
+                ++said;
+            }
+            if (said) ++diffLogged_;
+        }
+        lastKeys_.swap(keys);
+    }
+
+    if (traceFrames_ > 0) {
+        --traceFrames_;
+        Log("overlay trace: %zu draw(s), game screen %dx%d, target %dx%d", draws_.size(),
+            gameWidth_, gameHeight_, targetWidth, targetHeight);
+        int shown = 0;
+        for (const Draw& draw : draws_) {
+            if (++shown > 40) {
+                Log("  ... %zu more", draws_.size() - 40);
+                break;
+            }
+            // The quad's extent in the game's own coordinates, which is what
+            // says whether a draw covers the region that comes out grey.
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (uint32_t i = 0; i < draw.count; ++i) {
+                const Vertex& vertex = vertices_[draw.first + i];
+                x0 = (std::min)(x0, vertex.x);
+                y0 = (std::min)(y0, vertex.y);
+                x1 = (std::max)(x1, vertex.x);
+                y1 = (std::max)(y1, vertex.y);
+            }
+            const char* kind = draw.image >= 0 ? "blit" : (draw.texture ? "quad" : "flatrect");
+            Log("  %-8s image=%-4d tex=%p colour=%08X  (%.0f,%.0f)-(%.0f,%.0f)", kind, draw.image,
+                draw.texture, vertices_[draw.first].colour, x0, y0, x1, y1);
+        }
+    }
+
+    if (missingArtwork_ > 0 && missingLogged_ < 8) {
+        ++missingLogged_;
+        Log("overlay: %d draw(s) dropped, artwork not ready (logged %d/8)", missingArtwork_,
+            missingLogged_);
     }
 
     device->SetTexture(0, nullptr);

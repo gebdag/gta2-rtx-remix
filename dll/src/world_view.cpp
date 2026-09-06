@@ -289,6 +289,10 @@ bool WorldView::Initialize(HWND window, int width, int height, std::string* erro
     // Both live here, so the pointer is good for the process. The sampler stays
     // empty until a map is loaded, and the sprite pass falls back until it is.
     live_.SetGround(&ground_);
+    // The first frames the game draws are the front end, which is the same 2D
+    // stream the menus use later. Traced once so a broken menu can be compared
+    // against a working one.
+    overlay_.TraceNextFrames(3);
     gameWindow_ = window;
     window_ = window;
 
@@ -402,6 +406,8 @@ bool WorldView::EnsureWorldLoaded() {
             // Back to the menu's own scale immediately, rather than keeping the
             // level's until the game next calls gbh_SetWindow.
             overlay_.RevertToWindowSize();
+            // Back at the menu is exactly where the 2D stream wants looking at.
+            overlay_.TraceNextFrames(3);
         }
         loadedMapObject_ = nullptr;
         return false;
@@ -757,7 +763,17 @@ void WorldView::RenderFrame() {
         // Sprites and the captured block shapes are real world geometry, so they
         // are depth tested against the static mesh rather than painted over it.
         live_.Draw(renderer_.Device(), camera_, renderer_.Width(), renderer_.Height());
-        overlay_.Flush(renderer_.Device(), renderer_.Width(), renderer_.Height());
+        // The 2D stream goes into a layer that is kept between frames, because
+        // GTA2's menu only redraws what changed and clears the screen just when
+        // it wants a repaint. In a level that reasoning does not apply - the HUD
+        // is redrawn every frame and the world under it moves - so the layer is
+        // cleared every frame there, which is what it always did.
+        if (renderer_.BeginUiLayer(worldUploaded_)) {
+            overlay_.Flush(renderer_.Device(), renderer_.Width(), renderer_.Height());
+            renderer_.EndUiLayer();
+        } else {
+            overlay_.Flush(renderer_.Device(), renderer_.Width(), renderer_.Height());
+        }
         // ImGui issues ordinary D3D9 draws, so it belongs inside the scene.
         DebugMenuRender();
         // Remix clears its per-frame light list every frame, so a light is in the
