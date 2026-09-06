@@ -1,0 +1,28 @@
+; Ordinals match the original Dmavideo.dll exactly. GTA2 binds these by name
+; (gta2.exe pushes each string at 0x004D2F54 onward and stores the result in the
+; table at 0x59501C), so the ordinals are not strictly load-bearing - but the
+; GTA2 manager and anything else that pokes the file gets what it expects.
+LIBRARY Dmavideo
+EXPORTS
+    Vid_CheckMode       @1
+    Vid_ClearScreen     @2
+    Vid_CloseScreen     @3
+    Vid_DisableWrites   @4
+    Vid_EnableWrites    @5
+    Vid_FindDevice      @6
+    Vid_FindFirstMode   @7
+    Vid_FindMode        @8
+    Vid_FindNextMode    @9
+    Vid_FlipBuffers     @10
+    Vid_FreeSurface     @11
+    Vid_GetSurface      @12
+    Vid_GetVersion      @13
+    Vid_GrabSurface     @14
+    Vid_InitDLL         @15
+    Vid_Init_SYS        @16
+    Vid_ReleaseSurface  @17
+    Vid_SetDevice       @18
+    Vid_SetGamma        @19
+    Vid_SetMode         @20
+    Vid_ShutDown_SYS    @21
+    Vid_WindowProc      @22

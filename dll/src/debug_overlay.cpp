@@ -1077,25 +1077,176 @@ void DrawSprites() {
     ImGui::Separator();
     DrawAlpha();
     ImGui::Separator();
-    float lift = SpriteLift();
 
     ImGui::TextWrapped(
         "GTA2 puts all four corners of a sprite's quad at the single level of the object "
         "underneath, and its own renderers never depth tested, so a flat quad lying exactly in "
-        "the floor was fine. As real 3D geometry it is not: on a ramp the quad cuts straight "
-        "through the lid and the uphill half of the sprite vanishes into it. This lifts the whole "
-        "quad along its normal. It takes effect on the next frame -- sprites are rebuilt from the "
-        "game's stream every frame.");
+        "the floor was fine. As real 3D geometry it is not: the depth test and the path tracer "
+        "both have to pick a winner between two coplanar surfaces, and on a ramp a horizontal "
+        "quad cuts straight through the lid so the uphill half of the sprite vanishes into it.");
+
+    ImGui::SeparatorText("Standing sprites on the ground");
+    ImGui::TextWrapped(
+        "The lid under the sprite's four corners is sampled from the map, a plane is fitted to "
+        "it, and that plane becomes the sprite's transform -- so the quad ends up parallel to "
+        "what it is standing on and a quarter of a ground texel clears it, on any gradient. The "
+        "quad itself is not touched: baking corner heights into the vertices would tilt the "
+        "sprite too, but the object-space shape would then change as a car climbed a ramp, and "
+        "that shape is exactly what Remix recognises a sprite by from one frame to the next.\n\n"
+        "A sprite is never moved down, so a jumping car, a helicopter or a bullet stays where "
+        "the game put it, and the tilt fades out over the same gap rather than snapping off.");
+
+    bool conform = SpriteConform();
+    if (ImGui::Checkbox("Conform sprites to the ground", &conform)) SetSpriteConform(conform);
+    ImGui::SetItemTooltip("Off falls back to the fixed lift below for every sprite, which is what "
+                          "this did before. Persist it with sprite_conform under [renderer] in "
+                          "gta2dx9.ini.");
+
+    const LiveGeometry::Conform& c = SpriteConformCounts();
+    ImGui::Spacing();
+    if (ImGui::BeginTable("conform", 2,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                              | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("last frame");
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+
+        struct Row { const char* name; int value; const char* note; };
+        const Row rows[] = {
+            {"on the ground", c.grounded, "stood and rotated onto a fitted plane"},
+            {"in the air", c.airborne, "above its floor, left where the game put it"},
+            {"no floor found", c.noGround, "off the map or over a hole; fixed lift used"},
+            {"tilt capped", c.capped, "ground steeper than 30 degrees"},
+            {"needs clearance", c.straddled, "over a step, or held level by the tilt cap"},
+        };
+        for (const Row& r : rows) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.name);
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", r.value);
+            ImGui::SameLine();
+            ImGui::TextColored(kDim, "  %s", r.note);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(kDim, "Worst gap to the floor %.3f blocks, worst step across a footprint "
+                             "%.3f.", c.maxGap, c.maxResidual);
+    ImGui::SetItemTooltip("The gap is the check on the whole scheme. On a street with nothing in "
+                          "the air it should sit near zero: that is the game and the map agreeing "
+                          "about which floor a sprite is on. A gap the size of a ramp step, "
+                          "persistently, would mean GTA2 gives an object the top of its block "
+                          "rather than the height of the ramp under it -- and the tilt would then "
+                          "be fading itself out on every slope in the city.");
+
+    ImGui::SeparatorText("Ride height");
+    ImGui::TextWrapped(
+        "How high the object a sprite stands in for sits above the road, which is a different "
+        "question from how far the quad is held off it for the depth test. Clearance decides "
+        "which surface a ray hits; this decides whether a car reads as an object or as a picture "
+        "of one painted on the tarmac.\n\n"
+        "A flat quad lying on the ground casts no shadow a path tracer can show: the shadow lands "
+        "exactly where the quad already is, and there is no gap for contact darkening either. "
+        "Both appear only once the sprite has real height, and the shadow it throws is then "
+        "offset by h / tan(sun elevation).\n\n"
+        "GTA2's block is about 2 m, measured off its own artwork -- a car quad comes back 2 "
+        "blocks long and a car is 4 m. The default 0.3 is 60 cm, the mid-height of a car body and "
+        "near enough that of a pedestrian: the two are far closer to each other than their "
+        "footprints are, which is why this is one number rather than a function of sprite size.");
 
     ImGui::Spacing();
-    if (ImGui::SliderFloat("Sprite lift (blocks)", &lift, 0.0f, 0.5f, "%.3f")) {
+    float height = SpriteHeight();
+    if (ImGui::SliderFloat("Ride height (blocks)", &height, 0.0f, 1.0f, "%.3f")) {
+        SetSpriteHeight(height);
+    }
+    ImGui::SetItemTooltip("One block is one map tile, roughly 2 m at GTA2's scale. Takes effect "
+                          "on the next frame.");
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "= %.0f cm", SpriteHeight() * 200.0f);
+
+    ImGui::Spacing();
+    if (ImGui::BeginTable("heights", 4,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                              | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("height");
+        ImGui::TableSetupColumn("real");
+        ImGui::TableSetupColumn("shadow at 30 deg sun");
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+
+        struct Row { float value; const char* real; const char* shadow; const char* note; };
+        static const Row rows[] = {
+            {0.00f, "0 cm",    "none",   "flat on the road; no shadow, no contact"},
+            {0.03f, "6 cm",    "10 cm",  "default -- sits on the road"},
+            {0.08f, "16 cm",   "28 cm",  "as high as looks right on the flat"},
+            {0.15f, "30 cm",   "52 cm",  "starting to read as hovering"},
+            {0.30f, "60 cm",   "104 cm", "mid-height of a car body; plainly floating"},
+        };
+        for (const Row& r : rows) {
+            ImGui::PushID(&r);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            char label[24];
+            _snprintf(label, sizeof(label) - 1, "%.2f", r.value);
+            label[sizeof(label) - 1] = '\0';
+            if (ImGui::SmallButton(label)) SetSpriteHeight(r.value);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.real);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.shadow);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(kDim, "%s", r.note);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(kDim, "The cost is parallax: at this camera a sprite at the edge of the screen "
+                             "sits about h/3 from where the game put it. That is what having "
+                             "height looks like, and past about 0.1 it stops reading as depth "
+                             "and starts reading as hovering -- which is why the default is "
+                             "small and the clipping is handled by clearance instead.");
+
+    ImGui::SeparatorText("Sideways tilt");
+    ImGui::TextWrapped(
+        "Fitting a plane to the ground and using all of it is right for a rigid body and wrong "
+        "for a car. A car crossing a ramp at an angle stands on a plane tilted along both of its "
+        "own axes, so the body rolls as well as pitches and a corner lifts -- which is not a "
+        "thing a car on wheels does. Pitching along the direction of travel is the part that "
+        "reads correctly, and that part is always kept whole; this scales only the roll.\n\n"
+        "The long side of the quad is taken as the direction of travel, which for a car is the "
+        "side measuring about two blocks against the other's one. Whatever the damping gives up "
+        "comes back as clearance, so a level-er sprite is not a clipping one.");
+    float roll = SpriteRoll();
+    if (ImGui::SliderFloat("Roll kept", &roll, 0.0f, 1.0f, "%.2f")) SetSpriteRoll(roll);
+    ImGui::SetItemTooltip("0 keeps sprites level side to side, 1 is the full fitted plane. "
+                          "Persist with sprite_roll_thousandths under [renderer].");
+
+    ImGui::Spacing();
+    if (ImGui::Button("Reset height to default")) SetSpriteHeight(kDefaultSpriteHeight);
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "Persist with sprite_height_thousandths under [renderer] in "
+                             "gta2dx9.ini (%d = the current setting).",
+                       static_cast<int>(SpriteHeight() * 1000.0f + 0.5f));
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Fallback lift");
+    ImGui::TextWrapped(
+        "Clearance used where there is no floor to measure -- off the map, or over a hole. With "
+        "conforming off it is the whole of the clearance and it goes on every sprite, which is "
+        "what this panel used to be about. Where there *is* a floor, the clearance owed is "
+        "worked out from the ground itself and this number has nothing to do with it.");
+
+    ImGui::Spacing();
+    float lift = SpriteLift();
+    if (ImGui::SliderFloat("Fallback lift (blocks)", &lift, 0.0f, 0.5f, "%.3f")) {
         SetSpriteLift(lift);
     }
     ImGui::SetItemTooltip("One block is one map tile, roughly 2 m at GTA2's scale.");
 
     ImGui::Spacing();
-    ImGui::TextColored(kDim, "Measured over the shipped districts, on surfaces a sprite can "
-                             "actually stand on (road or pavement):");
+    ImGui::TextColored(kDim, "What a fixed lift has to cover, measured over the shipped districts "
+                             "on surfaces a sprite can actually stand on (road or pavement). A "
+                             "horizontal quad of length L on gradient g needs g*L/2:");
     if (ImGui::BeginTable("lifts", 4,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                               | ImGuiTableFlags_SizingFixedFit)) {
@@ -1107,10 +1258,10 @@ void DrawSprites() {
 
         struct Row { float value; const char* ped; const char* car; const char* note; };
         static const Row rows[] = {
-            {1.0f / 256.0f, "0%",     "0%",   "breaks coplanarity only; flat ground"},
-            {0.0625f,       "78%",    "0%",   "half the default"},
-            {0.125f,        "99.5%",  "78%",  "default -- every 7 degree ramp"},
-            {0.25f,         "100%",   "78%",  "buys nothing more for cars"},
+            {1.0f / 256.0f, "0%",     "0%",   "what conforming needs: coplanarity only"},
+            {0.0625f,       "78%",    "0%",   "under the fallback default"},
+            {0.075f,        "78%",    "0%",   "the fallback default"},
+            {0.125f,        "99.5%",  "78%",  "every 7 degree ramp"},
             {0.5f,          "100%",   "99.5%","covers 26 degree ramps, floats everything"},
         };
         for (const Row& r : rows) {
@@ -1132,7 +1283,8 @@ void DrawSprites() {
         ImGui::EndTable();
     }
     ImGui::TextColored(kDim, "72%% of those surfaces are flat, 21.9%% are 7 degree ramps, 5.9%% "
-                             "are 26 degree, 0.14%% are 45 degree.");
+                             "are 26 degree, 0.14%% are 45 degree. No single number does both "
+                             "jobs, which is why this one is now only the fallback.");
 
     ImGui::Spacing();
     if (ImGui::Button("Reset to default")) SetSpriteLift(kDefaultSpriteLift);
@@ -1140,11 +1292,6 @@ void DrawSprites() {
     ImGui::TextColored(kDim, "Persist a value with sprite_lift_thousandths under [renderer] in "
                              "gta2dx9.ini (%d = the current setting).",
                        static_cast<int>(SpriteLift() * 1000.0f + 0.5f));
-
-    ImGui::Spacing();
-    ImGui::TextWrapped("A single lift is a compromise, not a fix: the quad stays horizontal while "
-                       "the ground under it is not. Tilting each sprite to the lid beneath it "
-                       "would remove the trade entirely, and needs the ground plane per corner.");
 }
 
 const RemixTrackedLight* FindTracked(uint64_t key) {

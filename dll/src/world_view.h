@@ -13,6 +13,7 @@
 
 #include "../../src/camera.h"
 #include "../../src/renderer.h"
+#include "ground.h"
 #include "live_geometry.h"
 #include "overlay.h"
 
@@ -96,6 +97,9 @@ private:
     LiveGeometry live_;
     gta2::Camera camera_;
     gta2::Map map_;
+    // The floor the sprite pass stands sprites on, rebuilt with the world. It
+    // reads map_ directly, so the two can never describe different ground.
+    GroundSampler ground_;
     const void* loadedMapObject_ = nullptr;
     std::string dataDir_;
 

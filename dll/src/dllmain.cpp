@@ -150,6 +150,28 @@ void LoadConfig() {
         static_cast<int>(gta2dx9::kDefaultSpriteLift * 1000.0f + 0.5f), ini);
     gta2dx9::SetSpriteLift(lift / 1000.0f);
 
+    // Stand sprites on the ground plane under them instead of at a fixed height
+    // above their own level. 0 restores the fixed lift exactly, which is the way
+    // back if the map read ever misdescribes a district's floor.
+    gta2dx9::SetSpriteConform(GetPrivateProfileIntA("renderer", "sprite_conform", 1, ini) != 0);
+
+    // How high the object a sprite stands in for sits above the road, in
+    // thousandths of a block. Not the same thing as the lift above: that is a
+    // depth-buffer clearance, this is what gives a car a shadow.
+    const int height = GetPrivateProfileIntA(
+        "renderer", "sprite_height_thousandths",
+        static_cast<int>(gta2dx9::kDefaultSpriteHeight * 1000.0f + 0.5f), ini);
+    gta2dx9::SetSpriteHeight(height / 1000.0f);
+
+    // How much of a sideways tilt a sprite keeps, in thousandths. A car crossing
+    // a ramp at an angle stands on a plane tilted both ways, so following it
+    // whole rolls the body and lifts a corner - which a car on wheels does not
+    // do. 0 keeps sprites level side to side, 1000 is the full fitted plane.
+    gta2dx9::SetSpriteRoll(
+        GetPrivateProfileIntA("renderer", "sprite_roll_thousandths",
+                              static_cast<int>(gta2dx9::kDefaultSpriteRoll * 1000.0f + 0.5f), ini)
+        / 1000.0f);
+
     // Dump every distinct frame of artwork as a TGA, and write the classification
     // numbers beside it. On by default: the files are a few kilobytes each and a
     // few hundred per session, and it is the only way to find a sprite whose
@@ -180,10 +202,16 @@ void LoadConfig() {
         GetPrivateProfileIntA("timeofday", "declination_tenths", 0, ini) / 10.0f;
     gta2dx9::TimeOfDayReset();
 
-    Log("loaded as %s; mode=%s backend=%s sprite_lift=%.3f blocks fps_cap=%.0f tod=%s@%05.2f",
-        OwnModuleLeaf(), g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName,
-        gta2dx9::SpriteLift(), gta2dx9::FrameLimitFps(), tod.enabled ? "on" : "off",
-        tod.startHour);
+    // The effective sprite numbers, not the compiled-in ones. gta2dx9.ini's
+    // template used to carry a stale copy of the ride height and quietly override
+    // the code with it for several builds; printing what actually took effect is
+    // what would have caught that on the first run.
+    Log("loaded as %s; mode=%s backend=%s fps_cap=%.0f tod=%s@%05.2f", OwnModuleLeaf(),
+        g_mode == Mode::Takeover ? "takeover" : "proxy", g_backendName,
+        gta2dx9::FrameLimitFps(), tod.enabled ? "on" : "off", tod.startHour);
+    Log("sprites: conform=%s height=%.3f roll=%.2f fallback_lift=%.3f stack_step=%.3f blocks",
+        gta2dx9::SpriteConform() ? "on" : "off", gta2dx9::SpriteHeight(), gta2dx9::SpriteRoll(),
+        gta2dx9::SpriteLift(), gta2dx9::SpriteStackStep());
 }
 
 bool BindBackend() {

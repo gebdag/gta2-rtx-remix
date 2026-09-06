@@ -66,12 +66,86 @@ constexpr int kUvV = 7;
 // for cars, and it takes a full 1/2 block to cover them on 26 degree ramps,
 // which floats every sprite in the city half a block to fix 6% of surfaces.
 //
-// 1/8 of a block is roughly 25 cm at GTA2's scale, and the camera looks almost
-// straight down, so the float it costs is far less visible than the clipping it
-// removes. It is a compromise, not a fix: the real answer is to tilt the quad
-// to the lid underneath it, which needs the ground plane per corner and is not
-// what this is.
+// No single number does both jobs, which is why this is now the fallback rather
+// than the mechanism. It is used where there is no floor to measure - off the
+// map, over a hole, or with conforming switched off - and as the ceiling on the
+// extra clearance a footprint straddling a kerb is given.
 float g_spriteLift = kDefaultSpriteLift;
+
+// --- Conforming -----------------------------------------------------------
+//
+// The real answer, and what runs by default: sample the lid under the sprite's
+// four corners, fit a plane to it, and make that plane the sprite's transform.
+// The quad is then parallel to what it is standing on, so the whole slope term
+// above disappears and the clearance collapses to kConformClearance - a quarter
+// of a ground texel, enough to break coplanarity and nothing more.
+//
+// The part that matters for Remix: **the object-space quad does not change.**
+// Baking per-corner heights into the vertices is the obvious way to tilt a
+// sprite and it is the wrong one - local[] would become ground-dependent, so it
+// would change continuously as a car climbed a ramp, CanonicalShape's eight-shape
+// cache would fill and then dither, and the topological hash would churn exactly
+// the way the note above Place explains it must not. So the shape is still
+// measured from the flat corners the game gave, bit for bit, and every bit of
+// the ground adaptation lives in objectToWorld, which stays a pure rotation and
+// translation. That is the one form of this that Remix is happy with, and it
+// pays twice over: the normal handed to the path tracer becomes the ground
+// normal, so a car on a ramp is lit as one, and a replacement mesh placed by
+// this matrix inherits the bank for free.
+//
+// Two rules keep it out of trouble without having to recognise anything:
+//
+//   * A sprite is never moved *down*. Where the game's own level is above the
+//     floor the map reports, the game's wins - which leaves a jumping car, a
+//     helicopter and a bullet exactly where they were put, with no notion of
+//     what any of them are.
+//   * The tilt fades out over the same gap, so something leaving the ground
+//     rotates level again smoothly instead of snapping when it crosses a
+//     threshold.
+bool g_spriteConform = true;
+
+// How high the object sits above the road, as opposed to how far the quad is
+// held off it for the depth test. See kDefaultSpriteHeight: this is the one that
+// decides whether a car casts a shadow, and it was the thing the old fixed lift
+// was accidentally providing a little of while trying to do something else.
+float g_spriteHeight = kDefaultSpriteHeight;
+
+float Smoothstep(float edge0, float edge1, float x) {
+    if (x <= edge0) return 0.0f;
+    if (x >= edge1) return 1.0f;
+    const float t = (x - edge0) / (edge1 - edge0);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Where the tilt starts to fade and where it is gone. The near edge is well
+// above any step a sprite stands on and well below a real jump; the far edge is
+// a block, at which point the game has plainly taken the object off the floor.
+constexpr float kTiltFadeNear = 0.25f;
+constexpr float kTiltFadeFar = 1.0f;
+
+// The tilt cap as the sine of the angle, which is what the normal is clamped
+// against: the horizontal part of a unit normal is exactly sin of the slope.
+const float kMaxTiltTan = std::tan(kMaxTiltDegrees * 3.14159265358979f / 180.0f);
+
+// How much a sprite keeps of a sideways tilt. See kDefaultSpriteRoll.
+float g_spriteRoll = kDefaultSpriteRoll;
+
+// How far a footprint may depart from the plane fitted through it before the
+// tilt stops being believed. Below the first figure the ground really is one
+// plane and the fit is worth following whole; past the second it is a step or a
+// block edge, where a confident tilt is worse than none.
+constexpr float kFitGood = 0.05f;
+constexpr float kFitPoor = 0.30f;
+
+// How much of the way to this frame's answer a sprite moves. The game is paced
+// at 30 fps, so a quarter converges in about a third of a second: fast enough to
+// follow a car up a ramp, slow enough that a footprint crossing a kerb eases
+// rather than steps.
+constexpr float kSmoothing = 0.25f;
+
+// Wider than anything can travel between two frames - a car at GTA2's top speed
+// covers about a third of this - and narrower than the gap to the next sprite.
+constexpr float kTrackRadius = 0.75f;
 
 // Anything outside this is stale data left in the shadow slots by an earlier
 // draw rather than a position the game just computed.
@@ -98,6 +172,24 @@ void SetSpriteLift(float blocks) {
 
 float SpriteLift() { return g_spriteLift; }
 
+void SetSpriteConform(bool on) { g_spriteConform = on; }
+bool SpriteConform() { return g_spriteConform; }
+
+void SetSpriteRoll(float amount) {
+    g_spriteRoll = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+}
+
+float SpriteRoll() { return g_spriteRoll; }
+
+void SetSpriteHeight(float blocks) {
+    // Negative would bury the sprite, which is the bug all of this exists to
+    // avoid. The ceiling is a whole block: past that a sprite is standing at the
+    // height of the storey above the one the game put it on.
+    g_spriteHeight = blocks < 0.0f ? 0.0f : (blocks > 1.0f ? 1.0f : blocks);
+}
+
+float SpriteHeight() { return g_spriteHeight; }
+
 float g_spriteFeather = 0.0f;
 
 void SetSpriteFeather(float strength) {
@@ -120,11 +212,39 @@ float SpriteStackStep() { return g_spriteStackStep; }
 int g_effectBatches = 0;
 int EffectBatchesDrawn() { return g_effectBatches; }
 
+// The last complete frame's conform counts. The menu has no handle on the
+// LiveGeometry instance - the same reason EffectBatchesDrawn is a free function.
+LiveGeometry::Conform g_lastConform;
+const LiveGeometry::Conform& SpriteConformCounts() { return g_lastConform; }
+
 void LiveGeometry::BeginFrame() {
     sprites_.clear();
     stacks_.clear();
     spriteQuads_ = 0;
     effectQuads_ = 0;
+    g_lastConform = conform_;
+    conform_ = Conform{};
+    // This frame's placements become next frame's history.
+    tracks_.swap(tracksNext_);
+    tracksNext_.clear();
+}
+
+const LiveGeometry::Track* LiveGeometry::FindTrack(const void* texture, float x, float z) const {
+    const Track* best = nullptr;
+    float bestDistance = kTrackRadius * kTrackRadius;
+    for (const Track& track : tracks_) {
+        // The texture has to match: two sprites can share a spot - a car and its
+        // own headlight quad - and easing one toward the other's answer is the
+        // pop this is meant to remove, not a smaller one.
+        if (track.texture != texture) continue;
+        const float dx = track.x - x, dz = track.z - z;
+        const float distance = dx * dx + dz * dz;
+        if (distance <= bestDistance) {
+            bestDistance = distance;
+            best = &track;
+        }
+    }
+    return best;
 }
 
 // Which layer of a stack this sprite belongs to.
@@ -273,8 +393,13 @@ void SpriteShapeCounts(int* shapes, int* textures) {
 //
 // The measured shape goes through CanonicalShape above, which is what makes it
 // bit-identical rather than merely close.
-bool LiveGeometry::Place(const Vertex* world, int corners, Sprite* out) const {
-    const Vec centre{
+bool LiveGeometry::Place(const Vertex* world, int corners, const Vec3& centre,
+                         const Vec3* groundUp, Sprite* out) const {
+    // The corners' own centroid, which is what the shape is measured about. It is
+    // deliberately not `centre`: the shape has to come out the same numbers
+    // wherever the sprite stands, so the placement can never be allowed to leak
+    // into it.
+    const Vec measured{
         (world[0].x + world[1].x + world[2].x + world[3].x) * 0.25f,
         (world[0].y + world[1].y + world[2].y + world[3].y) * 0.25f,
         (world[0].z + world[1].z + world[2].z + world[3].z) * 0.25f,
@@ -300,7 +425,7 @@ bool LiveGeometry::Place(const Vertex* world, int corners, Sprite* out) const {
 
     Vertex local[4];
     for (int i = 0; i < corners; ++i) {
-        const Vec offset{world[i].x - centre.x, world[i].y - centre.y, world[i].z - centre.z};
+        const Vec offset{world[i].x - measured.x, world[i].y - measured.y, world[i].z - measured.z};
         local[i].x = offset.x * right.x + offset.y * right.y + offset.z * right.z;
         local[i].y = offset.x * up.x + offset.y * up.y + offset.z * up.z;
         local[i].z = offset.x * forward.x + offset.y * forward.y + offset.z * forward.z;
@@ -315,14 +440,44 @@ bool LiveGeometry::Place(const Vertex* world, int corners, Sprite* out) const {
     CanonicalShape(out->texture, local, corners, out->local);
     out->corners = corners;
 
+    // Now the same frame rotated onto the ground. The shape above was measured
+    // against the quad's own up; rotating both axes together is a rigid motion of
+    // that frame, so local[] still describes the same sprite - which is precisely
+    // why the tilt goes here and not into the vertices.
+    Vec rightOut = right;
+    Vec upOut = up;
+    Vec forwardOut = forward;
+    if (groundUp) {
+        // The quad's normal can point either way depending on how the game wound
+        // it, and the ground normal only ever points up. Matching the sign keeps
+        // the frame's handedness, which local[] was built against; taking it
+        // straight would mirror every sprite whose quad happened to face down.
+        const float sign = up.y >= 0.0f ? 1.0f : -1.0f;
+        const Vec ground{groundUp->x * sign, groundUp->y * sign, groundUp->z * sign};
+        // The heading, re-squared against the new up. A GTA2 sprite's first edge
+        // is horizontal, so this is a small rotation about it and nothing else.
+        const float along = right.x * ground.x + right.y * ground.y + right.z * ground.z;
+        const Vec projected{right.x - ground.x * along, right.y - ground.y * along,
+                            right.z - ground.z * along};
+        const float length = std::sqrt(projected.x * projected.x + projected.y * projected.y +
+                                       projected.z * projected.z);
+        // Only a quad standing on its edge could line up with the ground normal,
+        // and there is no heading to recover from one. Those keep their own frame.
+        if (length > 1e-4f) {
+            rightOut = {projected.x / length, projected.y / length, projected.z / length};
+            upOut = ground;
+            forwardOut = Cross(rightOut, upOut);
+        }
+    }
+
     // D3D9 multiplies row vectors on the left, so the basis goes in the rows and
     // the translation in the last one.
     gta2::Mat4& m = out->objectToWorld;
     m = gta2::Mat4{};
-    m.m[0][0] = right.x;   m.m[0][1] = right.y;   m.m[0][2] = right.z;
-    m.m[1][0] = up.x;      m.m[1][1] = up.y;      m.m[1][2] = up.z;
-    m.m[2][0] = forward.x; m.m[2][1] = forward.y; m.m[2][2] = forward.z;
-    m.m[3][0] = centre.x;  m.m[3][1] = centre.y;  m.m[3][2] = centre.z;
+    m.m[0][0] = rightOut.x;   m.m[0][1] = rightOut.y;   m.m[0][2] = rightOut.z;
+    m.m[1][0] = upOut.x;      m.m[1][1] = upOut.y;      m.m[1][2] = upOut.z;
+    m.m[2][0] = forwardOut.x; m.m[2][1] = forwardOut.y; m.m[2][2] = forwardOut.z;
+    m.m[3][0] = centre.x;     m.m[3][1] = centre.y;     m.m[3][2] = centre.z;
     m.m[3][3] = 1.0f;
     return true;
 }
@@ -349,22 +504,6 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
 
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
-    // Our y is the game's level, and the quad is flat, so this is along its own
-    // normal. See g_spriteLift: the game does not do this, and cannot need to.
-    // The stack layer is decided from where the sprite sits, before it is
-    // lifted, so a car's lights and logo land on the body rather than on each
-    // other's raised copies.
-    float cx = 0.0f, cz = 0.0f;
-    for (int i = 0; i < corners; ++i) {
-        cx += out[i].x;
-        cz += out[i].z;
-    }
-    cx /= static_cast<float>(corners);
-    cz /= static_cast<float>(corners);
-    const float stacked = g_spriteStackStep > 0.0f
-                              ? StackLayerFor(cx, cz) * g_spriteStackStep
-                              : 0.0f;
-    for (int i = 0; i < corners; ++i) out[i].y += g_spriteLift + stacked;
 
     // Only quads come through here - gbh_DrawQuad and gbh_DrawQuadClipped are the
     // only callers - and Place measures the frame from four corners.
@@ -372,9 +511,165 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         ++drops_.degenerate;
         return;
     }
+
+    // Where the game put the sprite. All four corners carry the single level of
+    // the object, so this is that level and the footprint it covers.
+    float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+    for (int i = 0; i < corners; ++i) {
+        cx += out[i].x;
+        cy += out[i].y;
+        cz += out[i].z;
+    }
+    const float inv = 1.0f / static_cast<float>(corners);
+    cx *= inv;
+    cy *= inv;
+    cz *= inv;
+
+    // The stack layer is decided from where the sprite sits, before it is
+    // lifted, so a car's lights and logo land on the body rather than on each
+    // other's raised copies.
+    const float stacked = g_spriteStackStep > 0.0f
+                              ? StackLayerFor(cx, cz) * g_spriteStackStep
+                              : 0.0f;
+
+    // Stand it on the floor the map says is under it. See the note on
+    // g_spriteConform: the quad itself is not touched, only the frame it is
+    // placed in.
+    Vec3 groundUp{0.0f, 1.0f, 0.0f};
+    bool tilted = false;
+    float baseY = cy;
+    float clearance = g_spriteLift;
+
+    // A quad standing on its edge has no floor under it in any useful sense.
+    // Nothing on this path should be one, but the guard is a line and the
+    // alternative is a sprite laid flat on the road.
+    const bool flatQuad = std::fabs(out[0].ny) > 0.5f;
+    if (g_spriteConform && ground_ && ground_->Ready() && flatQuad) {
+        // The corners plus the middle. A car parked across the ridge where a ramp
+        // meets the flat has all four corners low and the crest under its belly,
+        // which four samples cannot see at all.
+        const float xs[5] = {out[0].x, out[1].x, out[2].x, out[3].x, cx};
+        const float zs[5] = {out[0].z, out[1].z, out[2].z, out[3].z, cz};
+        const gta2dx9::GroundPlane plane =
+            ground_->Fit(xs, zs, corners + 1, cy + GroundSampler::kCeilingHeadroom, cx, cz);
+        if (!plane.valid) {
+            ++conform_.noGround;
+        } else {
+            const float gap = cy - plane.y;
+            if (gap > conform_.maxGap) conform_.maxGap = gap;
+            if (plane.residual > conform_.maxResidual) conform_.maxResidual = plane.residual;
+
+            // Never downward: above its floor, the game's own height wins.
+            baseY = gap > 0.0f ? cy : plane.y;
+
+            // The gradient the ground actually has. Working in gradient rather
+            // than in the normal keeps every adjustment below a plain scaling of
+            // two numbers, and the normal falls out at the end.
+            const float rawGx = -plane.nx / plane.ny;
+            const float rawGz = -plane.nz / plane.ny;
+
+            // Two reasons to use less of it than all. A footprint that is not one
+            // plane has a fit that means little, so a large residual damps the
+            // tilt instead of steering it - that is a corner over a kerb, which
+            // is exactly the case that used to lift one corner of a car. And a
+            // sprite off the ground levels out over the same gap the lift fades
+            // across.
+            const float trust = 1.0f - Smoothstep(kFitGood, kFitPoor, plane.residual);
+            const float fade = 1.0f - Smoothstep(kTiltFadeNear, kTiltFadeFar, gap);
+            float gx = rawGx * trust * fade;
+            float gz = rawGz * trust * fade;
+
+            // Pitch is kept, roll is damped. The long side of the quad is the
+            // sprite's own direction of travel - two blocks against one for a
+            // car - so a gradient along it tips the nose, which is what driving
+            // up a ramp looks like, and a gradient across it lifts one side,
+            // which a car on wheels does not do. See kDefaultSpriteRoll.
+            float axisX = out[1].x - out[0].x, axisZ = out[1].z - out[0].z;
+            const float sideA = std::sqrt(axisX * axisX + axisZ * axisZ);
+            const float otherX = out[2].x - out[1].x, otherZ = out[2].z - out[1].z;
+            const float sideB = std::sqrt(otherX * otherX + otherZ * otherZ);
+            if (sideB > sideA) {
+                axisX = otherX;
+                axisZ = otherZ;
+            }
+            const float axisLength = (std::max)(sideA, sideB);
+            if (axisLength > 1e-6f && g_spriteRoll < 1.0f) {
+                axisX /= axisLength;
+                axisZ /= axisLength;
+                const float along = gx * axisX + gz * axisZ;   // the pitch part
+                const float acrossX = gx - axisX * along;      // the roll part
+                const float acrossZ = gz - axisZ * along;
+                gx = axisX * along + acrossX * g_spriteRoll;
+                gz = axisZ * along + acrossZ * g_spriteRoll;
+            }
+
+            const float slope = std::sqrt(gx * gx + gz * gz);
+            if (slope > kMaxTiltTan) {
+                const float scale = kMaxTiltTan / slope;
+                gx *= scale;
+                gz *= scale;
+                ++conform_.capped;
+            }
+            if (slope > 1e-6f) {
+                const float inv = 1.0f / std::sqrt(gx * gx + 1.0f + gz * gz);
+                groundUp = {-gx * inv, inv, -gz * inv};
+                tilted = true;
+            }
+
+            // Clearance is measured against the tilt the sprite actually ended up
+            // with, not the one the ground has - so everything given away above,
+            // to the roll damping, the trust and the cap, comes back here as
+            // height instead of as a sprite cutting into the road.
+            float shortfall = 0.0f;
+            for (int i = 0; i < corners; ++i) {
+                const float dx = out[i].x - cx;
+                const float dz = out[i].z - cz;
+                const float floorHere = plane.y + rawGx * dx + rawGz * dz;
+                const float quadHere = baseY + gx * dx + gz * dz;
+                if (floorHere - quadHere > shortfall) shortfall = floorHere - quadHere;
+            }
+            const float needed = shortfall + plane.residual;
+            const float owed = (needed - g_spriteHeight * groundUp.y) / groundUp.y;
+            const float extra = owed > 0.0f ? (std::min)(owed, kMaxExtraClearance) : 0.0f;
+            clearance = kConformClearance + extra;
+            if (needed > kConformClearance) ++conform_.straddled;
+            if (fade < 1.0f) {
+                ++conform_.airborne;
+            } else {
+                ++conform_.grounded;
+            }
+        }
+    }
+
+    // Ease toward this frame's answer rather than snapping to it. Only the lift
+    // and the tilt are smoothed: baseY follows the ground directly, because a car
+    // driving up a ramp *should* rise with it and lagging that would be the
+    // strange movement rather than the fix for it. See the Track note.
+    float offset = g_spriteHeight + clearance + stacked;
+    if (const Track* previous = FindTrack(texture, cx, cz)) {
+        offset = previous->offset + (offset - previous->offset) * kSmoothing;
+        Vec3 eased{previous->nx + (groundUp.x - previous->nx) * kSmoothing,
+                   previous->ny + (groundUp.y - previous->ny) * kSmoothing,
+                   previous->nz + (groundUp.z - previous->nz) * kSmoothing};
+        const float length =
+            std::sqrt(eased.x * eased.x + eased.y * eased.y + eased.z * eased.z);
+        if (length > 1e-6f) {
+            groundUp = {eased.x / length, eased.y / length, eased.z / length};
+            tilted = std::fabs(groundUp.x) > 1e-5f || std::fabs(groundUp.z) > 1e-5f;
+        }
+    }
+    tracksNext_.push_back({texture, cx, cz, offset, groundUp.x, groundUp.y, groundUp.z});
+
+    // Along the ground normal rather than straight up: on a ramp those are not
+    // the same direction, and clearance measured the wrong way is not clearance.
+    // The ride height goes the same way, so a car on a ramp rides above the ramp
+    // rather than leaning out of it.
+    const Vec3 centre{cx + groundUp.x * offset, baseY + groundUp.y * offset,
+                      cz + groundUp.z * offset};
+
     Sprite placed;
     placed.texture = texture;
-    if (!Place(out, corners, &placed)) return;
+    if (!Place(out, corners, centre, tilted ? &groundUp : nullptr, &placed)) return;
     sprites_.push_back(placed);
     ++spriteQuads_;
     ++drops_.accepted;

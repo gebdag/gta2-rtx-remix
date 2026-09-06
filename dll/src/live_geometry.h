@@ -27,16 +27,89 @@
 
 #include "../../src/camera.h"
 #include "../../src/math3d.h"
+#include "ground.h"
 
 namespace gta2dx9 {
 
-// How far a sprite is lifted off the floor it stands on, in map blocks. See the
-// long note in live_geometry.cpp for why any lift is needed at all and how the
-// default was arrived at. Sprites are rebuilt from the game's stream every
-// frame, so a change takes effect on the next one.
+// How far a sprite is lifted off the floor when there is no floor to measure -
+// off the edge of the map, over a hole, or with conforming switched off. See
+// the long note in live_geometry.cpp for why any lift is needed at all and how
+// this number was arrived at. It doubles as the ceiling on the extra clearance
+// a footprint straddling a kerb is given, so one knob still bounds how far a
+// sprite can ever be pushed off the ground. Sprites are rebuilt from the game's
+// stream every frame, so a change takes effect on the next one.
 constexpr float kDefaultSpriteLift = 0.075f;
 
 void SetSpriteLift(float blocks);
+
+// Stand each sprite on the ground plane under it rather than at a fixed height
+// above its own level: the lid is sampled under the four corners, a plane is
+// fitted to it, and that plane becomes the sprite's transform. On when the map
+// can be read; off restores the fixed lift exactly.
+void SetSpriteConform(bool on);
+bool SpriteConform();
+
+// How far a sprite is held off the ground once it is conformed to it. A quarter
+// of a ground texel: enough to break the coplanarity that has no defined answer
+// in a path tracer, and nothing more. The fixed lift had to be twenty times this
+// only because a horizontal quad on a ramp needed the headroom.
+//
+// This is a depth-buffer number, not a visual one. How high the sprite *looks*
+// is kDefaultSpriteHeight below, which is a completely different question.
+constexpr float kConformClearance = 1.0f / 256.0f;
+
+// How high the object a sprite stands in for sits above the road.
+//
+// Separate from the clearance above: clearance answers "which surface does the
+// ray hit", this answers "is there a car here, or a picture of one painted on
+// the road".
+//
+// This was 0.3 - the mid-height of a car body at GTA2's 2 m block - on the
+// reasoning that a flat quad lying on the ground casts its shadow exactly where
+// it already is and so shows nothing. That reasoning is right about shadows and
+// wrong about the result: at a near-top-down camera the visible effect of ride
+// height is not the shadow, it is the parallax, and 60 cm of it reads as the
+// sprite hovering rather than as the sprite having depth. Judged by eye at both,
+// a tenth of that sits on the road.
+//
+// So the height is small, and the *clipping* is handled where it belongs - by
+// the conform, and by clearance that is computed per sprite rather than budgeted
+// for in advance.
+constexpr float kDefaultSpriteHeight = 0.03f;
+
+void SetSpriteHeight(float blocks);
+float SpriteHeight();
+
+// The most extra clearance a sprite can be given on top of its ride height, for
+// ground the fitted plane could not describe. Geometry bounds the real figure
+// well below this - the worst case is a footprint across a whole block step -
+// so anything reaching the cap is a bad sample rather than a steep street, and
+// the cap is what stops it launching a car into the air.
+constexpr float kMaxExtraClearance = 1.0f;
+
+// How much of a sideways tilt a sprite keeps, 0..1.
+//
+// Fitting a plane to the ground and using the whole of it is right for a rigid
+// body and wrong for a car. A car crossing a ramp at an angle stands on a plane
+// tilted along both of its own axes, so the body rolls as well as pitches and a
+// corner lifts - which is not something a car on wheels does. Pitching along the
+// direction of travel is the part that looks right, and that part is kept whole.
+//
+// The sprite's long axis is taken as its direction of travel, which for a car
+// quad is the side measuring about two blocks against the other's one. Rotation
+// about that axis is the roll, and this scales it. 0 keeps sprites level side to
+// side, 1 is the full fitted plane again.
+constexpr float kDefaultSpriteRoll = 0.25f;
+
+void SetSpriteRoll(float amount);
+float SpriteRoll();
+
+// The steepest ground a sprite is rotated onto. GTA2's 26 degree ramps come in
+// under it; its 45 degree blocks, 0.14% of the surfaces a sprite can stand on,
+// are clamped here because standing top-down artwork on its edge looks far worse
+// than the clipping it would fix. What the clamp leaves behind is picked up as
+// clearance.
+constexpr float kMaxTiltDegrees = 30.0f;
 
 // How much to soften a sprite's cutout edge, 0..1. GTA2's alpha is 1-bit, so
 // this is invented rather than recovered - see FeatherAlpha in alpha_bleed.h.
@@ -122,6 +195,11 @@ public:
 
     void BeginFrame();
 
+    // The floor sprites are stood on. Held, not copied; WorldView owns both this
+    // and the sampler, so the pointer stays good for the process. Null, or a
+    // sampler with no map in it yet, falls back to the fixed lift.
+    void SetGround(const GroundSampler* ground) { ground_ = ground; }
+
     // A sprite quad or triangle. `vertices` is the game's screen-space array;
     // the world positions are read from its shadow slots.
     void AddSprite(unsigned flags, const void* texture, const float* vertices, int corners);
@@ -153,6 +231,33 @@ private:
     };
     std::vector<Stack> stacks_;
 
+    // What a sprite was given last frame, so this frame can move toward its
+    // answer instead of jumping to it.
+    //
+    // The ground under a footprint is not a continuous function of where that
+    // footprint is: a corner crossing a kerb, or the crest where a ramp meets
+    // flat, changes the fitted plane in one step. Applied directly that is a
+    // sprite which twitches as it drives, so both the lift and the tilt are
+    // eased toward the answer instead of being set to it.
+    //
+    // Sprites have no identity in this stream - they are rebuilt from scratch
+    // every frame - so the match is the same trick the stack finder uses:
+    // nearest entry from last frame with the same texture, within a radius wider
+    // than anything can travel in one frame. No match means the sprite is new
+    // and gets its answer immediately; easing one in from nothing would be the
+    // visible pop this exists to remove.
+    struct Track {
+        const void* texture;
+        float x, z;
+        float offset;
+        float nx, ny, nz;
+    };
+    std::vector<Track> tracks_;      // last frame
+    std::vector<Track> tracksNext_;  // being built this frame
+
+    // Nearest match from last frame, or null.
+    const Track* FindTrack(const void* texture, float x, float z) const;
+
     int StackLayerFor(float cx, float cz);
 
     bool ReadCorners(const float* vertices, int corners, const void* texture, uintptr_t shadowBase,
@@ -160,8 +265,18 @@ private:
     // Splits world-space corners into a canonical object-space quad and the
     // transform that places it. False if the quad has no area to build a frame
     // from.
-    bool Place(const Vertex* world, int corners, Sprite* out) const;
+    //
+    // `centre` is where the sprite ends up, which is not the centroid of the
+    // corners: the corners are the shape, the centre is the placement. `groundUp`
+    // rotates the sprite onto the floor - null, or an exactly vertical one,
+    // leaves the frame the corners themselves describe.
+    struct Vec3 {
+        float x, y, z;
+    };
+    bool Place(const Vertex* world, int corners, const Vec3& centre, const Vec3* groundUp,
+               Sprite* out) const;
 
+    const GroundSampler* ground_ = nullptr;
     std::vector<Sprite> sprites_;
     int spriteQuads_ = 0;
     int effectQuads_ = 0;
@@ -187,8 +302,32 @@ public:
     const Drops& DropCounts() const { return drops_; }
     void ClearDropCounts() { drops_ = Drops{}; }
 
+    // What the conform actually did, per frame. This is the health check on the
+    // whole scheme: `grounded` should be nearly every sprite in a normal street,
+    // and a large `maxGap` on a frame with nothing in the air means the game's
+    // own level for a sprite disagrees with the lid the map says is under it -
+    // which is the one thing that would make conforming pointless rather than
+    // wrong, and it is measured here rather than assumed.
+    struct Conform {
+        int grounded = 0;    // stood and rotated onto a fitted plane
+        int airborne = 0;    // above its floor, so left where the game put it
+        int noGround = 0;    // nothing under the footprint; fixed lift used
+        int capped = 0;      // ground steeper than kMaxTiltDegrees
+        int straddled = 0;   // footprint over a step, given extra clearance
+        float maxGap = 0.0f;       // furthest any sprite sat above its own floor
+        float maxResidual = 0.0f;  // worst a footprint failed to be one plane
+    };
+    const Conform& ConformCounts() const { return conform_; }
+    void ClearConformCounts() { conform_ = Conform{}; }
+
 private:
     mutable Drops drops_;
+    mutable Conform conform_;
 };
+
+// The last complete frame's conform counts, for the menu. A free function for
+// the same reason EffectBatchesDrawn is one: nothing outside WorldView holds the
+// LiveGeometry instance.
+const LiveGeometry::Conform& SpriteConformCounts();
 
 }  // namespace gta2dx9

@@ -167,6 +167,9 @@ void SettingsSaveAll() {
 
     // Things that live outside a settings struct.
     fprintf(out, "\n[render]\n");
+    fprintf(out, "SpriteConform=%d\n", SpriteConform() ? 1 : 0);
+    fprintf(out, "SpriteHeight=%.4f\n", SpriteHeight());
+    fprintf(out, "SpriteRoll=%.4f\n", SpriteRoll());
     fprintf(out, "SpriteLift=%.4f\n", SpriteLift());
     fprintf(out, "SpriteStackStep=%.4f\n", SpriteStackStep());
     fprintf(out, "SpriteFeather=%.4f\n", SpriteFeather());
@@ -240,7 +243,13 @@ void SettingsLoadAll() {
         }
         if (handled || _stricmp(sectionName, "render") != 0) continue;
 
-        if (!_stricmp(key, "SpriteLift")) {
+        if (!_stricmp(key, "SpriteRoll")) {
+            SetSpriteRoll(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "SpriteHeight")) {
+            SetSpriteHeight(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "SpriteConform")) {
+            SetSpriteConform(atoi(value) != 0);
+        } else if (!_stricmp(key, "SpriteLift")) {
             SetSpriteLift(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "SpriteStackStep")) {
             SetSpriteStackStep(static_cast<float>(atof(value)));

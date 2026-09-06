@@ -286,6 +286,9 @@ void WorldView::SetRenderSize(int width, int height) {
 
 bool WorldView::Initialize(HWND window, int width, int height, std::string* error) {
     dataDir_ = GameDirectory();
+    // Both live here, so the pointer is good for the process. The sampler stays
+    // empty until a map is loaded, and the sprite pass falls back until it is.
+    live_.SetGround(&ground_);
     gameWindow_ = window;
     window_ = window;
 
@@ -388,6 +391,10 @@ bool WorldView::EnsureWorldLoaded() {
     if (mapObject == loadedMapObject_) return true;
 
     std::string error;
+    // The old ground describes the old map. Cleared here rather than after the
+    // rebuild, so a level that fails to load leaves sprites on the fixed lift
+    // instead of on a floor from the district before it.
+    ground_.Clear();
     if (!ReadLiveMap(mapObject, &map_, &error)) {
         Log("live map read failed: %s", error.c_str());
         loadedMapObject_ = mapObject;  // Do not retry every frame on a bad map.
@@ -456,6 +463,14 @@ bool WorldView::EnsureWorldLoaded() {
         }
         Log("slope table: %d ramp types read from the game", ramps);
     }
+
+    // The sprite pass stands sprites on the lid this same table shapes. Resolved
+    // once, here, and handed to both consumers: two readings of a ramp would be
+    // two different floors, and a sprite conformed to the wrong one is exactly
+    // the bug conforming exists to remove.
+    std::array<gta2::SlopeInfo, gta2::kSlopeTypeCount> resolvedSlopes = {};
+    gta2::ResolveSlopeTable(slopes.data(), resolvedSlopes.data());
+    ground_.Reset(&map_, resolvedSlopes.data());
 
     // Where a partial or corner block is cut, likewise straight from the game
     // rather than assumed. The two outer constants are a sanity check: they must
@@ -722,7 +737,18 @@ void WorldView::RenderFrame() {
 
     ++frameCount_;
     if ((frameCount_ & 0xFF) == 0) {
-        Log("frame %d: %d sprite quads", frameCount_, live_.SpriteQuads());
+        // What conforming actually did, which is also the answer to the one
+        // question the design could not settle by reading the game: whether GTA2
+        // gives a sprite the true height of the ramp under it or the top of the
+        // block. A street full of traffic with maxgap near zero says it gives the
+        // true height and the conform is doing its job; a persistent gap the size
+        // of a ramp step says it does not, and the tilt fade is quietly switching
+        // itself off on every slope in the city.
+        const LiveGeometry::Conform& c = live_.ConformCounts();
+        Log("frame %d: %d sprite quads | conform grounded=%d airborne=%d noground=%d capped=%d "
+            "straddled=%d maxgap=%.3f maxresidual=%.3f",
+            frameCount_, live_.SpriteQuads(), c.grounded, c.airborne, c.noGround, c.capped,
+            c.straddled, c.maxGap, c.maxResidual);
     }
     // Anything here is a sprite the player should have seen and did not, or a
     // texture built from artwork that was not ready.

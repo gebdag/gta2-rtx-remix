@@ -21,8 +21,14 @@ struct Uv {
     float u, v;
 };
 
-// Corner heights within a block, in the order NW, NE, SE, SW.
-using CornerHeights = std::array<float, 4>;
+}  // namespace
+
+// --- Lid shape ------------------------------------------------------------
+//
+// Out of the anonymous namespace and declared in the header because the sprite
+// pass samples the same surface it builds here. Two readings of a ramp would be
+// two different floors, and a sprite conformed to the wrong one is exactly the
+// bug the conform exists to remove.
 
 // The heights the game itself uses for a ramp block, taken straight from its
 // slope descriptor (gta2.exe!FUN_00471ce0): the raised edge sits at
@@ -65,6 +71,16 @@ SlopeInfo DeriveSlope(int slopeType) {
 }
 
 CornerHeights LidHeights(const SlopeInfo& slope) { return RampHeights(slope); }
+
+void ResolveSlopeTable(const SlopeInfo* slopes, SlopeInfo* out) {
+    for (int type = 0; type < kSlopeTypeCount; ++type) {
+        const bool usable = slopes && slopes[type].direction >= 1 && slopes[type].direction <= 4 &&
+                            slopes[type].steps != 0 && slopes[type].step < slopes[type].steps;
+        out[type] = usable ? slopes[type] : DeriveSlope(type);
+    }
+}
+
+namespace {
 
 // Orientation tables copied verbatim out of gta2.exe. Each face type has its
 // own: the game indexes them with the face word's bits 13-15 and passes the
@@ -730,11 +746,7 @@ void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
     // Prefer the game's own slope descriptors; fall back to deriving them when
     // they could not be read, so a map still builds without a live game.
     std::array<SlopeInfo, kSlopeTypeCount> resolved;
-    for (int type = 0; type < kSlopeTypeCount; ++type) {
-        const bool usable = slopes && slopes[type].direction >= 1 && slopes[type].direction <= 4 &&
-                            slopes[type].steps != 0 && slopes[type].step < slopes[type].steps;
-        resolved[type] = usable ? slopes[type] : DeriveSlope(type);
-    }
+    ResolveSlopeTable(slopes, resolved.data());
 
     MeshBuilder builder(style);
     for (int y = 0; y < kMapHeight; ++y) {

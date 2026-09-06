@@ -9,6 +9,7 @@
 // Remix a stable per-tile hash to key asset replacements off.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -62,6 +63,20 @@ struct PartialCuts {
     float low = 0.25f;
     float high = 0.75f;
 };
+
+// Corner heights of a block's lid above its own base, in the order NW, NE, SE,
+// SW - matching the block's world corners (xWest,zNorth), (xEast,zNorth),
+// (xEast,zSouth), (xWest,zSouth). A flat lid is {1,1,1,1}.
+//
+// Shared with the sprite pass, which samples the same surface this builds so a
+// sprite conforms to the floor that is actually drawn under it.
+using CornerHeights = std::array<float, 4>;
+CornerHeights LidHeights(const SlopeInfo& slope);
+
+// Fills out[kSlopeTypeCount] with the game's descriptors where they were read
+// and derived ones where they were not. Every consumer of the slope table goes
+// through this, so none of them can disagree about a ramp.
+void ResolveSlopeTable(const SlopeInfo* slopes, SlopeInfo* out);
 
 // slopes may be null, in which case the ramp geometry is derived instead.
 void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
