@@ -343,6 +343,49 @@ private:
     std::vector<std::vector<Vertex>> perTileTriangle_;
 };
 
+// Texture coordinates for a corner ramp's diagonal cut.
+//
+// A triangle is not oriented the way a quad is. A quad's four corners are
+// permuted through the per-face-type table; gbh_DrawTriangle has only three, so
+// the game hands it a fixed set of coordinates and then rewrites them from the
+// face word's own flip and rotation bits - FUN_0046b710 for the peak shape,
+// FUN_0046b910 for the chamfer. Neither goes near the wall tables.
+//
+// Both were decoded branch by branch and they agree on all eight cases, which
+// are the symmetries of the square indexed by (rotation << 1) | flip:
+//
+//   0 identity        1 mirror u          2 quarter turn    3 transpose
+//   4 half turn       5 mirror v          6 three quarters  7 anti-transpose
+//
+// The game does it by matching the three canonical texel values 0, 32 and
+// 63.9999 and swapping them about, which is the same thing written out for the
+// only coordinates a triangle can have. Doing it as arithmetic keeps it readable
+// and gives the same answer.
+Uv TriangleUv(const Face& face, float u, float v) {
+    if (face.IsFlipped()) u = 1.0f - u;
+    switch (face.Rotation()) {
+        case 1: {  // a quarter turn
+            const float was = u;
+            u = v;
+            v = 1.0f - was;
+            break;
+        }
+        case 2:  // half
+            u = 1.0f - u;
+            v = 1.0f - v;
+            break;
+        case 3: {  // three quarters
+            const float was = u;
+            u = 1.0f - v;
+            v = was;
+            break;
+        }
+        default:
+            break;
+    }
+    return Uv{UvAt(u), UvAt(v)};
+}
+
 // Texture coordinates anywhere on a wall, whatever the tile's orientation.
 //
 // A wall's four corners carry the coordinates the orientation table gave them,
@@ -569,27 +612,24 @@ void AddCornerRampBlock(MeshBuilder* builder, const Block& block, int slopeType,
     }
 
     if (cutFace) {
-        // The cut runs diagonally across the cell, and the tile runs with it:
-        // one end of the diagonal at each end of the tile and the odd corner at
-        // its middle. Read out of the wall's own frame rather than written down,
-        // so the cut follows the same flip and rotation as the two walls beside
-        // it - 42% of the corner ramps in Downtown carry one, which is why its
-        // roofs had pieces facing the wrong way.
-        const int cutTop[2] = {1, 2};
-        const int cutU[4] = {0, 0, 1, 1};
-        const WallUvFrame frame =
-            WallFrame(cutFace, westCorner ? kLeftFlags : kRightFlags, cutTop, cutU);
+        // The cut runs diagonally across the cell and the tile runs with it: one
+        // end of the diagonal at each end of the tile, the odd corner at its
+        // middle. 42% of the corner ramps in Downtown carry a flip or a rotation,
+        // which is why its hip roofs had the eaves course running up the hip.
         if (lidless) {
             // A peak: one corner at the top, the diagonal lying on the floor.
+            // The game's own coordinates for it are (32,0) (64,64) (0,64).
             builder->AddTriangle(
                 cutFace, {at(peak, 1.0f), at((peak + 1) & 3, 0.0f), at((peak + 3) & 3, 0.0f)},
-                {frame.At(0.5f, 1.0f), frame.At(1.0f, 0.0f), frame.At(0.0f, 0.0f)});
+                {TriangleUv(cutFace, 0.5f, 0.0f), TriangleUv(cutFace, 1.0f, 1.0f),
+                 TriangleUv(cutFace, 0.0f, 1.0f)});
         } else {
             // A chamfer: the diagonal along the top, dropping to the one corner.
             builder->AddTriangle(
                 cutFace,
                 {at((special + 1) & 3, 1.0f), at(special, 0.0f), at((special + 3) & 3, 1.0f)},
-                {frame.At(0.0f, 1.0f), frame.At(0.5f, 0.0f), frame.At(1.0f, 1.0f)});
+                {TriangleUv(cutFace, 0.0f, 0.0f), TriangleUv(cutFace, 0.5f, 1.0f),
+                 TriangleUv(cutFace, 1.0f, 0.0f)});
         }
     }
 
