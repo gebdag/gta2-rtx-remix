@@ -568,8 +568,9 @@ bool WorldView::EnsureWorldLoaded() {
         Log("WARNING: view rotation is %u, not the 0xFF the tile orientation assumes",
             game::ViewRotation());
     }
-    Log("world loaded: %s, %zu blocks, %zu triangles, %zu batches", stylePath.c_str(),
-        map_.BlockCount(), mesh.indices.size() / 3, mesh.batches.size());
+    Log("world loaded: %s, %zu blocks, %zu triangles, %zu batches, floor %s", stylePath.c_str(),
+        map_.BlockCount(), mesh.indices.size() / 3, mesh.batches.size(),
+        gta2::WorldSeal() ? "sealed" : "OPEN (the sky shows through any gap)");
     loadedMapObject_ = mapObject;
     worldUploaded_ = true;
     return true;

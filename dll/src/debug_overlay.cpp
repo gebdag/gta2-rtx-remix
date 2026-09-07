@@ -4,6 +4,7 @@
 #include "game_access.h"
 #include "live_geometry.h"
 #include "../../src/renderer.h"
+#include "../../src/world_mesh.h"
 #include "log.h"
 #include "overlay.h"
 #include "remix_api.h"
@@ -1039,6 +1040,34 @@ void DrawSprites() {
     ImGui::SetItemTooltip("Classification happens when a texture is built, so a threshold change "
                           "only reaches artwork that is rebuilt.");
 
+    ImGui::SeparatorText("Holes in the artwork");
+    // GTA2's artists drew outlines in the colour-key index, so there are slits
+    // straight through solid walls. The original showed the black background
+    // behind them; a path tracer shows the sky. See CloseArtworkHoles.
+    bool close = CloseHoles();
+    if (ImGui::Checkbox("Close slits in the artwork", &close)) {
+        SetCloseHoles(close);
+        RebuildDeviceTextures();
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("A transparent island that reaches no edge of the tile and is at most "
+                          "two texels across is an outline, not a hole. Windows and grilles are "
+                          "thicker than that and are left alone.");
+    ImGui::SameLine();
+    ImGui::TextColored(kDim, "%d texel(s) closed", HolesClosed());
+    if (close) {
+        int maxIsland = CloseHoleMax();
+        if (ImGui::SliderInt("...and any island up to", &maxIsland, 0, 64, "%d texels")) {
+            SetCloseHoleMax(maxIsland);
+            RebuildDeviceTextures();
+            SettingsMarkDirty();
+        }
+        ImGui::SetItemTooltip("For the slits too wide for the shape test. A long slit and a small "
+                              "window pane are the same shape, so this trades one mistake for the "
+                              "other -- raise it until a window disappears, then back off. 0 is "
+                              "the shape test alone.");
+    }
+
     ImGui::SeparatorText("Alpha");
     // GTA2's artwork is palettised with entry 0 as a colour key, so every edge
     // is binary and there is no real alpha to blend. The black rim that used to
@@ -1075,6 +1104,18 @@ void DrawSprites() {
     }
     ImGui::SetItemTooltip("0 puts a car's body, lights and logo back on one plane, which is what "
                           "makes them flicker.");
+
+    ImGui::SeparatorText("The world's floor");
+    // GTA2's map is not a closed solid, so anything looking down through a gap
+    // in it used to find the sky. See SealTileIndex in world_mesh.h.
+    bool seal = gta2::WorldSeal();
+    if (ImGui::Checkbox("Black floor under the city", &seal)) {
+        gta2::SetWorldSeal(seal);
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("One black quad well below the lowest block and reaching past the map "
+                          "on every side, so a hole in the map shows black rather than the sky. "
+                          "Built with the world, so this takes effect on the next level load.");
 
     ImGui::SeparatorText("Ground fit");
     const LiveGeometry::Conform& c = SpriteConformCounts();

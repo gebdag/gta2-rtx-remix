@@ -165,9 +165,37 @@ struct Vec3 {
 
 class MeshBuilder {
 public:
+    // One past the style's own tiles, for the seal - see SealTileIndex.
     explicit MeshBuilder(const Style& style) : style_(style) {
-        perTile_.resize(style.TileCount());
-        perTileTriangle_.resize(style.TileCount());
+        perTile_.resize(style.TileCount() + 1);
+        perTileTriangle_.resize(style.TileCount() + 1);
+    }
+
+    // A quad with no tile behind it, for the black seal under the world. The
+    // corners are given anticlockwise seen from the side the normal points at,
+    // and the winding is worked out the same way AddFaceUv does it.
+    void AddSealQuad(const std::array<Vec3, 4>& corners, Vec3 normal) {
+        const Vec3 edge1{corners[1].x - corners[0].x, corners[1].y - corners[0].y,
+                         corners[1].z - corners[0].z};
+        const Vec3 edge2{corners[2].x - corners[0].x, corners[2].y - corners[0].y,
+                         corners[2].z - corners[0].z};
+        const Vec3 cross{edge1.y * edge2.z - edge1.z * edge2.y,
+                         edge1.z * edge2.x - edge1.x * edge2.z,
+                         edge1.x * edge2.y - edge1.y * edge2.x};
+        const bool reversed =
+            cross.x * normal.x + cross.y * normal.y + cross.z * normal.z < 0.0f;
+        static const int kForward[4] = {0, 1, 2, 3};
+        static const int kReverse[4] = {0, 3, 2, 1};
+        const int* order = reversed ? kReverse : kForward;
+        // The texture is one flat colour, so the coordinates only have to be
+        // inside it; the corners of the tile keep the mapping obvious.
+        static const Uv kUv[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+        std::vector<Vertex>& out = perTile_[static_cast<size_t>(SealTileIndex(style_))];
+        for (int i = 0; i < 4; ++i) {
+            const int slot = order[i];
+            out.push_back(Vertex{corners[slot].x, corners[slot].y, corners[slot].z, normal.x,
+                                 normal.y, normal.z, kUv[slot].u, kUv[slot].v});
+        }
     }
 
     // Corners are given in the original renderer's own vertex-slot order for
@@ -282,7 +310,11 @@ public:
             batch.vertexStart = static_cast<uint32_t>(out->vertices.size());
             batch.vertexCount = static_cast<uint32_t>(quads.size() + tris.size());
             batch.indexStart = static_cast<uint32_t>(out->indices.size());
-            batch.needsAlphaTest = style_.GetTile(static_cast<int>(tile)).hasTransparency;
+            // The seal has no tile in the style and nothing to cut out of it.
+            batch.needsAlphaTest =
+                static_cast<int>(tile) < style_.TileCount()
+                    ? style_.GetTile(static_cast<int>(tile)).hasTransparency
+                    : false;
 
             out->vertices.insert(out->vertices.end(), quads.begin(), quads.end());
             // Corners arrive clockwise seen from outside, which is front-facing
@@ -763,6 +795,13 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
 
 }  // namespace
 
+namespace {
+bool g_seal = true;
+}  // namespace
+
+void SetWorldSeal(bool on) { g_seal = on; }
+bool WorldSeal() { return g_seal; }
+
 void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
                     const PartialCuts& cuts, WorldMesh* out) {
     // Prefer the game's own slope descriptors; fall back to deriving them when
@@ -782,6 +821,17 @@ void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
                          x, y, column.offset + static_cast<int>(i));
             }
         }
+    }
+    if (g_seal) {
+        // One quad, face up, below everything and reaching well past the map on
+        // every side. Winding is left to AddSealQuad; the normal is what says
+        // which way it faces.
+        const float lo = -kSealOverhang;
+        const float hiX = static_cast<float>(kMapWidth) + kSealOverhang;
+        const float hiZ = static_cast<float>(kMapHeight) + kSealOverhang;
+        const float y = -kSealDepth;
+        builder.AddSealQuad({{{lo, y, lo}, {hiX, y, lo}, {hiX, y, hiZ}, {lo, y, hiZ}}},
+                            {0.0f, 1.0f, 0.0f});
     }
     builder.Flatten(out);
 }

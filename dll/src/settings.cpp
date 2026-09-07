@@ -11,6 +11,7 @@
 #include "time_of_day.h"
 
 #include "../../src/renderer.h"
+#include "../../src/world_mesh.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -183,6 +184,9 @@ void SettingsSaveAll() {
     fprintf(out, "HudFit=%s\n", HudFit() == HudFitMode::Stretch ? "stretch" : "fit");
     fprintf(out, "FpsCap=%.4f\n", FrameLimitFps());
     fprintf(out, "DumpTextures=%d\n", TextureDumping() ? 1 : 0);
+    fprintf(out, "CloseHoles=%d\n", CloseHoles() ? 1 : 0);
+    fprintf(out, "CloseHoleMax=%d\n", CloseHoleMax());
+    fprintf(out, "WorldSeal=%d\n", gta2::WorldSeal() ? 1 : 0);
     const EffectSpriteMode mode = EffectSprites().mode;
     fprintf(out, "EffectSprites=%s\n",
             mode == EffectSpriteMode::Additive
@@ -272,7 +276,12 @@ void SettingsLoadAll() {
             FrameLimitSet(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "DumpTextures")) {
             SetTextureDumping(atoi(value) != 0);
-
+        } else if (!_stricmp(key, "CloseHoles")) {
+            SetCloseHoles(atoi(value) != 0);
+        } else if (!_stricmp(key, "CloseHoleMax")) {
+            SetCloseHoleMax(atoi(value));
+        } else if (!_stricmp(key, "WorldSeal")) {
+            gta2::SetWorldSeal(atoi(value) != 0);
         } else if (!_stricmp(key, "EffectSprites")) {
             EffectSprites().mode = !_stricmp(value, "off")
                                        ? EffectSpriteMode::Off

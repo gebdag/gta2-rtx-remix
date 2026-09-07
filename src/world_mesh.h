@@ -78,6 +78,38 @@ CornerHeights LidHeights(const SlopeInfo& slope);
 // through this, so none of them can disagree about a ramp.
 void ResolveSlopeTable(const SlopeInfo* slopes, SlopeInfo* out);
 
+// The batch that seals the world from underneath.
+//
+// GTA2's map is not a closed solid. A column stores only the blocks it actually
+// has, every block is a shell of the faces the original renderer needed to draw,
+// and where the artwork used the colour-key index there are slits straight
+// through a wall. None of that mattered against a black background; under a path
+// tracer with a sky, every one of them is a hole with the sky behind it.
+//
+// Rather than trying to work out which faces the map is missing - which cannot
+// be done reliably, because a fence block and a solid block look alike from the
+// map data - one black quad goes underneath the whole city, well below the
+// lowest block. Anything looking down through a hole then lands on that instead
+// of on the sky, which is what the original showed. It cannot clip anything
+// above ground, because it is not above ground.
+//
+// It gets a tile index one past the style's own so it is its own batch, its own
+// texture and its own stable Remix hash, rather than being smuggled into some
+// real tile's draw call.
+inline int SealTileIndex(const Style& style) { return style.TileCount(); }
+
+// How far below level 0 the seal sits, and how far past the map it reaches. The
+// overhang is what stops a camera near the edge of the city seeing sky under its
+// own feet.
+constexpr float kSealDepth = 2.0f;
+constexpr float kSealOverhang = 512.0f;
+
+// On by default. Off leaves the world exactly as the map describes it, which is
+// the way to see what the seal was hiding. Read when the mesh is built, so a
+// change wants a level reload.
+void SetWorldSeal(bool on);
+bool WorldSeal();
+
 // slopes may be null, in which case the ramp geometry is derived instead.
 void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
                     const PartialCuts& cuts, WorldMesh* out);

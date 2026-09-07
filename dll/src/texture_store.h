@@ -165,4 +165,23 @@ bool        TextureDumping();
 const char* TextureDumpDir();
 int         TextureFramesDumped();
 
+// Close the transparent slits and speckles that GTA2's artists drew in the
+// colour-key index, which the original renderers showed as a dark outline and a
+// path tracer shows as a hole with the sky behind it. See CloseArtworkHoles in
+// alpha_bleed.h for what is and is not treated as one. On by default; off is
+// there to see what it was doing. Takes effect on textures built after the
+// change, so it wants a rebuild.
+void SetCloseHoles(bool on);
+bool CloseHoles();
+
+// Also close any enclosed island of at most this many texels, whatever its
+// shape. 0 leaves the rule to thinness alone, which is the safe default: a long
+// slit and a small window pane are the same shape, and closing a window is a
+// visible mistake where leaving a slit is only the dark line the original had.
+void SetCloseHoleMax(int texels);
+int  CloseHoleMax();
+
+// How many texels it has closed this session, for the readout in the menu.
+int HolesClosed();
+
 }  // namespace gta2dx9

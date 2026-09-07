@@ -136,6 +136,10 @@ void Style::DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
         // read as a hard black line once anything filters it.
         if (tile.hasTransparency) {
             BleedTransparentEdges(tile.pixels.data(), kTileSize, kTileSize);
+            // And close the ones that are not really holes at all - see
+            // CloseArtworkHoles. The live path in texture_store.cpp does the
+            // same; this is the fallback that parses the .sty itself.
+            CloseArtworkHoles(tile.pixels.data(), kTileSize, kTileSize);
         }
     }
 }

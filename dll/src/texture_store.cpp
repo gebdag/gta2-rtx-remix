@@ -194,6 +194,10 @@ struct FrameNote {
 
 std::map<uint64_t, FrameNote> g_notes;
 bool g_dumpTextures = true;
+// See CloseArtworkHoles in alpha_bleed.h.
+bool g_closeHoles = true;
+int  g_closeHoleMax = 0;
+int  g_holesClosed = 0;
 char g_dumpDir[MAX_PATH] = "";
 int  g_dumped = 0;
 const int kMaxDumped = 2048;
@@ -440,6 +444,13 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
         // the hard black rim around cutouts. Give the invisible texels a colour
         // and it goes away.
         gta2::BleedTransparentEdges(image.data(), record->width, record->height);
+        // Slits and speckles the artist drew in the key colour, which are holes
+        // to a path tracer and were an outline to GTA2. Before the feather,
+        // which reads alpha and would otherwise soften an edge about to close.
+        if (CloseHoles()) {
+            g_holesClosed += gta2::CloseArtworkHoles(image.data(), record->width,
+                                                    record->height, CloseHoleMax());
+        }
         // And then invent the gradient the artwork never had. Off by default: a
         // fence wants its hard edge, an explosion does not.
         gta2::FeatherAlpha(image.data(), record->width, record->height, SpriteFeather());
@@ -478,6 +489,12 @@ void NoteSpriteTexture(const void* handle) {
 
 void SetTextureDumping(bool on) { g_dumpTextures = on; }
 bool TextureDumping() { return g_dumpTextures; }
+
+void SetCloseHoles(bool on) { g_closeHoles = on; }
+bool CloseHoles() { return g_closeHoles; }
+void SetCloseHoleMax(int texels) { g_closeHoleMax = texels < 0 ? 0 : texels; }
+int  CloseHoleMax() { return g_closeHoleMax; }
+int  HolesClosed() { return g_holesClosed; }
 const char* TextureDumpDir() { return DumpDir(); }
 int TextureFramesDumped() { return g_dumped; }
 
@@ -571,6 +588,11 @@ bool ResolveTileImage(int tileNumber, uint32_t* out) {
         }
     }
     gta2::BleedTransparentEdges(out, kTileSize, kTileSize);
+    // A slit through the middle of a wall tile is not a cutout, it is the colour
+    // the artist outlined with - and under a path tracer it shows the night sky.
+    if (CloseHoles()) {
+        g_holesClosed += gta2::CloseArtworkHoles(out, kTileSize, kTileSize, CloseHoleMax());
+    }
     return true;
 }
 

@@ -94,6 +94,142 @@ inline void BleedTransparentEdges(uint32_t* pixels, int width, int height, int p
     }
 }
 
+// Close the holes GTA2's artwork never meant to be holes.
+//
+// Palette entry 0 is the colour key, and the artwork uses it for two different
+// things. Around the outside of a cutout it means "this is not part of the
+// picture" - the sky around an arch, the gap a fence is not - and that has to
+// stay a hole. Inside the artwork it is just the colour the artist drew an
+// outline with, and there it is a slit straight through a solid surface.
+//
+// GTA2's own renderers never showed the difference. A slit in a wall showed the
+// black background behind it and read as a dark outline, which is presumably
+// what it was drawn to be. A path tracer shows what is really behind, and at
+// night that is the sky: every one of these becomes a bright bluish line, and
+// lets light through besides.
+//
+// A transparent island that reaches no edge of the tile is enclosed by artwork,
+// and is a candidate. That alone is not enough - a window in a wall and the gaps
+// in a grille are enclosed too, and are genuinely see-through - so the test is
+// how *narrow* it is: an island with no texel whose whole 3x3 neighbourhood is
+// also transparent is at most two texels across anywhere. Nothing that reads as
+// a window is that thin.
+//
+// Measured over a Remix capture of the shipped districts (1789 textures, 528
+// with transparency, 10133 enclosed islands): 9017 of those islands are two
+// texels across or less, and they are the speckles and the outline slits. The
+// other 1116 include every window and grille, and are left alone.
+//
+// The honest limit: a *long* slit can be three texels across where it bends, and
+// then it is the same shape as a small window pane - a 30-texel island of one
+// and a 30-texel island of the other are not distinguishable by shape. Those are
+// left open, because closing a window is a visible mistake and leaving a slit
+// open is only the dark line the original had. maxIslandTexels is the way to go
+// further: it closes any enclosed island of at most that many texels whatever
+// its shape. 0 leaves the rule to thinness alone, which is the safe default.
+//
+// Run *after* BleedTransparentEdges. Every texel being closed is within a texel
+// or two of the artwork, so the bleed has already given it the neighbouring
+// colour and there is nothing to do here but the alpha. Returns how many texels
+// it closed.
+inline int CloseArtworkHoles(uint32_t* pixels, int width, int height,
+                             int maxIslandTexels = 0) {
+    if (!pixels || width <= 2 || height <= 2) return 0;
+    const int count = width * height;
+
+    // 0 = artwork, 1 = transparent and not yet reached, 2 = transparent and
+    // connected to the edge of the tile, so part of a real cutout.
+    std::vector<uint8_t> state(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) state[i] = (pixels[i] >> 24) ? 0u : 1u;
+
+    std::vector<int> stack;
+    stack.reserve(static_cast<size_t>(count));
+    auto reach = [&](int i) {
+        if (state[i] == 1u) {
+            state[i] = 2u;
+            stack.push_back(i);
+        }
+    };
+    for (int x = 0; x < width; ++x) {
+        reach(x);
+        reach((height - 1) * width + x);
+    }
+    for (int y = 0; y < height; ++y) {
+        reach(y * width);
+        reach(y * width + width - 1);
+    }
+    while (!stack.empty()) {
+        const int i = stack.back();
+        stack.pop_back();
+        const int x = i % width, y = i / width;
+        if (x > 0) reach(i - 1);
+        if (x < width - 1) reach(i + 1);
+        if (y > 0) reach(i - width);
+        if (y < height - 1) reach(i + width);
+    }
+
+    // Whatever is still 1 is enclosed. Take one island at a time.
+    int closed = 0;
+    std::vector<int> island;
+    for (int seed = 0; seed < count; ++seed) {
+        if (state[seed] != 1u) continue;
+        island.clear();
+        stack.clear();
+        stack.push_back(seed);
+        state[seed] = 3u;   // claimed by this island
+        while (!stack.empty()) {
+            const int i = stack.back();
+            stack.pop_back();
+            island.push_back(i);
+            // No bounds test: an enclosed island holds no border texel by
+            // construction, so all four neighbours are real and i-1 / i+1
+            // cannot wrap onto the row next door.
+            const int n[4] = {i - 1, i + 1, i - width, i + width};
+            for (int k = 0; k < 4; ++k) {
+                if (state[n[k]] == 1u) {
+                    state[n[k]] = 3u;
+                    stack.push_back(n[k]);
+                }
+            }
+        }
+
+        bool wide = false;
+        if (static_cast<int>(island.size()) > maxIslandTexels) {
+            // Thick anywhere means see-through on purpose. The 3x3 is what makes
+            // this test survive a diagonal: a staircase of single texels has all
+            // four orthogonal neighbours inside the island at every step, and
+            // would read as solid to a four-neighbour test.
+            for (int i : island) {
+                const int x = i % width, y = i / width;
+                bool solid = true;
+                for (int dy = -1; dy <= 1 && solid; ++dy) {
+                    for (int dx = -1; dx <= 1 && solid; ++dx) {
+                        if (!dx && !dy) continue;
+                        const int nx = x + dx, ny = y + dy;
+                        // Off the tile counts as artwork, which is right: an
+                        // island touching the edge is not enclosed anyway.
+                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+                            solid = false;
+                        } else if (state[ny * width + nx] == 0u) {
+                            solid = false;
+                        }
+                    }
+                }
+                if (solid) {
+                    wide = true;
+                    break;
+                }
+            }
+        }
+        if (wide) continue;
+        for (int i : island) {
+            pixels[i] |= 0xFF000000u;
+            ++closed;
+        }
+    }
+    return closed;
+}
+
 // Soften a cutout's edge.
 //
 // Bleeding fixed the colour, and the edge is still hard, because the alpha was

@@ -257,8 +257,11 @@ bool Renderer::UploadWorld(const WorldMesh& mesh, const Style& style, std::strin
     indexBuffer_->Unlock();
 
     // One texture per tile keeps Remix's texture hashes stable and per-tile
-    // replaceable, instead of hiding every surface behind one atlas hash.
-    textures_.assign(style.TileCount(), nullptr);
+    // replaceable, instead of hiding every surface behind one atlas hash. One
+    // slot past the end for the seal under the world, which has no tile of its
+    // own - see SealTileIndex.
+    const int sealTile = SealTileIndex(style);
+    textures_.assign(static_cast<size_t>(sealTile) + 1, nullptr);
     for (const TileBatch& batch : batches_) {
         if (textures_[batch.tile]) continue;
 
@@ -270,10 +273,21 @@ bool Renderer::UploadWorld(const WorldMesh& mesh, const Style& style, std::strin
         }
         D3DLOCKED_RECT rect;
         texture->LockRect(0, &rect, nullptr, 0);
-        const Tile& tile = style.GetTile(batch.tile);
-        for (int y = 0; y < kTileSize; ++y) {
-            memcpy(static_cast<uint8_t*>(rect.pBits) + y * rect.Pitch,
-                   &tile.pixels[static_cast<size_t>(y) * kTileSize], kTileSize * 4);
+        if (batch.tile == sealTile) {
+            // Opaque black, and a whole tile of it: the seal is meant to absorb,
+            // and giving Remix a real texture rather than an untextured draw
+            // keeps it one identifiable material that can be replaced.
+            for (int y = 0; y < kTileSize; ++y) {
+                uint32_t* row = reinterpret_cast<uint32_t*>(
+                    static_cast<uint8_t*>(rect.pBits) + y * rect.Pitch);
+                for (int x = 0; x < kTileSize; ++x) row[x] = 0xFF000000u;
+            }
+        } else {
+            const Tile& tile = style.GetTile(batch.tile);
+            for (int y = 0; y < kTileSize; ++y) {
+                memcpy(static_cast<uint8_t*>(rect.pBits) + y * rect.Pitch,
+                       &tile.pixels[static_cast<size_t>(y) * kTileSize], kTileSize * 4);
+            }
         }
         texture->UnlockRect(0);
         textures_[batch.tile] = texture;
