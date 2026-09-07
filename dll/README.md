@@ -342,7 +342,7 @@ hardcoded **33 ms**, or 11 ms in a network game — and the two registry values 
 writes are read at `FUN_004CB1D0` as plain booleans into `0x00595010` (`max_frame_rate`)
 and `0x00673598` (`min_frame_rate`). There is no number in the registry to raise.
 
-So the cap is ours: `fps_cap` under `[renderer]` in `gta2dx9.ini`, live on the Status tab,
+So the cap is ours: `fps_cap` under `[renderer]` in `gta2dx9.ini`, live on the General tab,
 implemented in `frame_limiter.cpp` as a sleep-then-spin at the end of the frame with the
 game's own cap left off.
 

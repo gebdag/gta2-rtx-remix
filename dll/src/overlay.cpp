@@ -23,12 +23,17 @@ constexpr int kPageStride = 256;
 
 constexpr DWORD kOverlayFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
 
+HudFitMode g_fit = HudFitMode::Fit;
+
 uint32_t GreyFromShade(uint8_t shade) {
     return 0xFF000000u | (static_cast<uint32_t>(shade) << 16) |
            (static_cast<uint32_t>(shade) << 8) | shade;
 }
 
 }  // namespace
+
+void SetHudFit(HudFitMode mode) { g_fit = mode; }
+HudFitMode HudFit() { return g_fit; }
 
 void Overlay::SetGameScreenSize(int width, int height) {
     if (width <= 0 || height <= 0) return;
@@ -334,8 +339,20 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
 
     // The game draws at its own resolution - 640x480 by default - while our back
     // buffer is the window's real size, so everything is scaled on the way out.
-    const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(gameWidth_);
-    const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(gameHeight_);
+    float scaleX = static_cast<float>(targetWidth) / static_cast<float>(gameWidth_);
+    float scaleY = static_cast<float>(targetHeight) / static_cast<float>(gameHeight_);
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+    if (g_fit == HudFitMode::Fit && scaleX != scaleY) {
+        // The smaller scale, so all of the game's screen is on screen, and the
+        // slack split evenly - the front end is a full-screen image and belongs
+        // in the middle of the display rather than against one edge.
+        const float uniform = scaleX < scaleY ? scaleX : scaleY;
+        offsetX = (static_cast<float>(targetWidth) - gameWidth_ * uniform) * 0.5f;
+        offsetY = (static_cast<float>(targetHeight) - gameHeight_ * uniform) * 0.5f;
+        scaleX = uniform;
+        scaleY = uniform;
+    }
 
     device->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
     device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
@@ -432,8 +449,10 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
         std::vector<Vertex> batch(vertices_.begin() + draw.first,
                                   vertices_.begin() + draw.first + draw.count);
         for (Vertex& vertex : batch) {
-            vertex.x = vertex.x * scaleX - 0.5f;
-            vertex.y = vertex.y * scaleY - 0.5f;
+            // The half pixel is the usual Direct3D 9 texel-to-pixel offset, and
+            // it is subtracted after the fit so that centring cannot shift it.
+            vertex.x = vertex.x * scaleX + offsetX - 0.5f;
+            vertex.y = vertex.y * scaleY + offsetY - 0.5f;
             vertex.z = 0.0f;
             vertex.rhw = 1.0f;
             vertex.u *= invU;

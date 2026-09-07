@@ -30,39 +30,55 @@ constexpr size_t kMatchBlocks = 4000;
 constexpr float kHeightFollowRate = 0.06f;
 constexpr float kDegreesToRadians = 3.14159265f / 180.0f;
 
-// The desktop in real pixels.
+// The desktop, in the physical pixels a window is really sized in.
 //
-// Not GetSystemMetrics: this DLL is DPI-unaware, so SM_CXSCREEN reports the
-// scaled desktop - 1536x960 for a 3840x2400 screen at 250% - and rendering at
-// that would throw away more than half the resolution. EnumDisplaySettings
-// returns physical pixels whatever the process's DPI awareness.
+// Three APIs answer "how big is the screen" and on a scaled desktop they
+// disagree. Measured here on a 1920x1080 display at 125%:
 //
-// It also reports whatever mode is current, so if GTA2 has already taken the
-// display into an exclusive fullscreen 640x480 this reads 640x480. That is why
-// deploy forces start_mode=0: windowed, the game leaves the display alone.
+//   EnumDisplaySettings(ENUM_CURRENT_SETTINGS)   1920x1080   the mode in force
+//   EnumDisplaySettings(ENUM_REGISTRY_SETTINGS)  3840x2400   a mode from months ago
+//   GetSystemMetrics / MONITORINFO               1536x864    the DPI-scaled desktop
+//
+// CreateWindowEx sizes land on screen as physical pixels, so the current display
+// mode is the one to build a present window from. The other two each broke it in
+// their own direction:
+//
+//   - the registry mode is the display's *persistent* mode, not the mode it is
+//     in. It was preferred here, on the reasoning that ENUM_CURRENT_SETTINGS
+//     reads back GTA2's own 640x480 once its video device has taken the display.
+//     It does survive that - but it also survived the desktop being moved from
+//     3840x2400 down to 1920x1080, so the present window was built at twice the
+//     size of the screen and only its top-left quarter was ever visible. That is
+//     what a front end "zoomed in" is.
+//   - GetSystemMetrics reports the desktop as a DPI-unaware process may address
+//     it, which is 4/5 of the real thing at 125%. Sizing the window from that
+//     leaves a fifth of the screen showing the desktop behind it.
+//
+// The takeover case the old comment worried about is guarded rather than
+// assumed: a mode too small to be a desktop is not believed, and the registry
+// mode - the one the display will go back to - is used instead. As deployed it
+// cannot arise anyway, because configure_game.py asserts dxwrapper's
+// EnableWindowMode and GTA2 then never changes the mode at all.
 void DesktopSize(int* width, int* height) {
-    // ENUM_REGISTRY_SETTINGS, not ENUM_CURRENT_SETTINGS: GTA2's video device puts
-    // the display into its own mode during startup, before the renderer is even
-    // loaded, so "current" reads back 640x480 and there is no way to ask what the
-    // desktop was. The registry mode is the desktop's persistent one and survives
-    // that.
-    DEVMODEA mode = {};
-    mode.dmSize = sizeof(mode);
-    if (EnumDisplaySettingsA(nullptr, ENUM_REGISTRY_SETTINGS, &mode) && mode.dmPelsWidth >= 640) {
-        *width = static_cast<int>(mode.dmPelsWidth);
-        *height = static_cast<int>(mode.dmPelsHeight);
-        return;
+    // Anything smaller than this is GTA2's own screen, not a desktop.
+    const DWORD kMinDesktopWidth = 800;
+    const DWORD kMinDesktopHeight = 600;
+
+    // DWORD, not int: ENUM_CURRENT_SETTINGS and ENUM_REGISTRY_SETTINGS are
+    // (DWORD)-1 and (DWORD)-2, which narrow.
+    const DWORD modes[2] = {ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS};
+    for (DWORD which : modes) {
+        DEVMODEA mode = {};
+        mode.dmSize = sizeof(mode);
+        if (EnumDisplaySettingsA(nullptr, which, &mode) && mode.dmPelsWidth >= kMinDesktopWidth
+            && mode.dmPelsHeight >= kMinDesktopHeight) {
+            *width = static_cast<int>(mode.dmPelsWidth);
+            *height = static_cast<int>(mode.dmPelsHeight);
+            return;
+        }
     }
-    mode = DEVMODEA{};
-    mode.dmSize = sizeof(mode);
-    if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth) {
-        *width = static_cast<int>(mode.dmPelsWidth);
-        *height = static_cast<int>(mode.dmPelsHeight);
-        return;
-    }
-    // GetSystemMetrics last: this DLL is DPI-unaware, so it reports the *scaled*
-    // desktop - 1536x960 for a 3840x2400 screen at 250% - and rendering at that
-    // throws away more than half the resolution.
+    // Last, and the one that is wrong on a scaled desktop - but a window that is
+    // too small still shows all of itself, which is the better failure.
     *width = GetSystemMetrics(SM_CXSCREEN);
     *height = GetSystemMetrics(SM_CYSCREEN);
 }
@@ -246,8 +262,11 @@ HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow m
     GetWindowRect(gameWindow, &gameRect);
     int left = gameRect.left;
     int top = gameRect.top;
-    const int screenW = GetSystemMetrics(SM_CXSCREEN);
-    const int screenH = GetSystemMetrics(SM_CYSCREEN);
+    // The same measure the render size came from, so the two are comparable. On
+    // a scaled desktop GetSystemMetrics answers a different question - see
+    // DesktopSize - and mixing the two here put the window half off the screen.
+    int screenW = 0, screenH = 0;
+    DesktopSize(&screenW, &screenH);
     if (width >= screenW && height >= screenH) {
         left = 0;
         top = 0;
@@ -307,8 +326,27 @@ bool WorldView::Initialize(HWND window, int width, int height, std::string* erro
         width_ = width;
         height_ = height;
     }
-    Log("render size %dx%d (desktop %dx%d, game screen %dx%d, ini asked for %dx%d)", width_,
-        height_, desktopW, desktopH, width, height, requestedWidth_, requestedHeight_);
+    // Everything the sizing depends on, in one line: the three answers Windows
+    // gives for "how big is the screen" disagree whenever DPI scaling is on, and
+    // which one arrived is the first thing to know when the picture is the wrong
+    // size.
+    {
+        typedef UINT(WINAPI * GetDpiForWindowFn)(HWND);
+        static GetDpiForWindowFn getDpi = reinterpret_cast<GetDpiForWindowFn>(
+            GetProcAddress(GetModuleHandleA("user32.dll"), "GetDpiForWindow"));
+        DEVMODEA mode = {};
+        mode.dmSize = sizeof(mode);
+        EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &mode);
+        // The client rect of our own window is what ImGui lays the F4 menu out
+        // in and what the mouse is measured against, so a disagreement with the
+        // back buffer is a misplaced cursor rather than a wrong-sized picture.
+        Log("render size %dx%d (monitor %dx%d, system metrics %dx%d, display mode %ux%u, "
+            "game window %u dpi, game screen %dx%d, ini asked for %dx%d)",
+            width_, height_, desktopW, desktopH, GetSystemMetrics(SM_CXSCREEN),
+            GetSystemMetrics(SM_CYSCREEN), mode.dmPelsWidth, mode.dmPelsHeight,
+            getDpi && window ? getDpi(window) : 0, width, height, requestedWidth_,
+            requestedHeight_);
+    }
     if (desktopW <= 800 && requestedWidth_ <= 0) {
         Log("WARNING: even the registry display mode reads %dx%d. Set render_width and "
             "render_height in gta2dx9.ini explicitly.", desktopW, desktopH);
@@ -317,8 +355,11 @@ bool WorldView::Initialize(HWND window, int width, int height, std::string* erro
     height = height_;
     if (present_ != PresentWindow::GameWindow) {
         window_ = CreatePresentWindow(window, width, height, present_);
-        Log("presenting into our own %s window %p over the game's %p",
-            present_ == PresentWindow::Child ? "child" : "topmost", window_, window);
+        RECT client = {0, 0, 0, 0};
+        if (window_) GetClientRect(window_, &client);
+        Log("presenting into our own %s window %p (client %ldx%ld) over the game's %p",
+            present_ == PresentWindow::Child ? "child" : "topmost", window_,
+            client.right - client.left, client.bottom - client.top, window);
         if (!window_) window_ = window;
     }
     gta2::SetRendererTrace([](const char* line) { Log("d3d: %s", line); });

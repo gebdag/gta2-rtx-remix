@@ -1,9 +1,14 @@
-// The F4 menu: an ImGui panel for the Remix light injection.
+// The F4 menu: the in-game panel for everything this renderer can be told to do.
 //
-// Getting the game's lights into a path tracer is mostly a tuning problem -
-// whether a lamp reached Remix at all, and what radiance it ended up with, are
-// things that have to be read off the running game and changed without a
-// rebuild. This is that readout and those controls.
+// Two audiences share one window. By default it is the short list a player
+// wants - brightness, the day/night cycle, the frame cap, how sprites sit on the
+// road - and the Advanced switch in its title bar unfolds the rest: the light
+// tables, the classification thresholds, the per-light overrides and the
+// particle-type binding the port was actually tuned with. Nothing was removed to
+// make the simple view simple.
+//
+// Long explanations live in comments in debug_overlay.cpp rather than on screen;
+// what survives in the UI is a one-line tooltip per control.
 //
 // It draws through the renderer's own device, inside the existing
 // BeginScene/EndScene pair, so it needs no separate presentation path. Note that
@@ -35,5 +40,10 @@ void DebugMenuPoll();
 void DebugMenuRender();
 
 bool DebugMenuVisible();
+
+// How much bigger than ImGui's 1080p defaults to draw the panel; 0 follows the
+// display, which is what puts it at 2x on a 4K screen. Saved with the rest of
+// the settings, hence the reference - see settings.cpp.
+float& DebugMenuUiScale();
 
 }  // namespace gta2dx9

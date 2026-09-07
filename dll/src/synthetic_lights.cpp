@@ -133,7 +133,7 @@ void EnsureBinding() {
     // and both were wrong - each emitted thousands of lights on the wrong sprite.
     // They stay unbound rather than plausibly wrong: an unbound category says so
     // in the menu, a mis-bound one just puts light somewhere odd. Use Highlight
-    // on the Effects tab to settle them by eye.
+    // in the menu to settle them by eye.
 
     SyntheticCategorySettings& muzzle = g_settings.category[kSynthMuzzle];
     muzzle.rgb[0] = 1.0f; muzzle.rgb[1] = 0.82f; muzzle.rgb[2] = 0.45f;
@@ -406,7 +406,7 @@ void WalkVehicles() {
             continue;
         }
         // Beams off in daylight. The car is still walked and still counted, so
-        // the model list on the Effects tab does not empty out at noon.
+        // the menu's model list does not empty out at noon.
         const float daylight = DaylightGateFactor(c.gate);
         if (daylight <= kGateFloor) {
             entry = next;
@@ -980,7 +980,7 @@ void SyntheticLightsSave() {
     fprintf(f, ";\n");
     fprintf(f, "; Bind lines map a particle type id to a category. GTA2 gives every particle\n");
     fprintf(f, "; a type at +0x38; which id is which effect is not written down anywhere, so\n");
-    fprintf(f, "; the F4 menu's Effects tab lists the ids as they appear and you bind them by\n");
+    fprintf(f, "; the F4 menu's Diagnostics tab lists the ids as they appear and you bind them by\n");
     fprintf(f, "; triggering the effect and watching which one lights up.\n");
     fprintf(f, ";\n");
     fprintf(f, "; Categories: ");

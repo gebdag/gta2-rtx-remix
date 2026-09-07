@@ -25,6 +25,21 @@
 
 namespace gta2dx9 {
 
+// How GTA2's own screen is fitted to a back buffer of a different shape.
+//
+// The game lays its front end out at 640x480 and its HUD at whatever its options
+// screen was set to - both 4:3 - while the path traced image is the size of the
+// display. Scaling each axis to fill therefore stretches 4:3 artwork across a
+// 16:9 screen by a third, which is subtle on text and obvious on anything round:
+// the ring on the front-end photograph comes out a clear ellipse.
+enum class HudFitMode {
+    Fit,       // one scale for both axes, centred - a circle stays a circle
+    Stretch,   // fill the back buffer, which is what the original renderer did
+};
+
+void SetHudFit(HudFitMode mode);
+HudFitMode HudFit();
+
 // Flag bits the original renderer acts on, from d3ddll.dll!FUN_00e02cc0.
 namespace quad_flags {
 constexpr unsigned kVertexColour = 0x2000;   // diffuse is already in the vertices

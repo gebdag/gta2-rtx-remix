@@ -1,8 +1,10 @@
 #include "settings.h"
 
+#include "debug_overlay.h"
 #include "frame_limiter.h"
 #include "live_geometry.h"
 #include "log.h"
+#include "overlay.h"
 #include "remix_lights.h"
 #include "synthetic_lights.h"
 #include "texture_store.h"
@@ -91,6 +93,9 @@ void Fields(FloatField** floats, int* floatCount, BoolField** bools, int* boolCo
     f[nf++] = {"timeofday", "ElevationOffset", &tod.elevationOffsetDeg};
     f[nf++] = {"timeofday", "PushIntervalMs", &tod.pushIntervalMs};
 
+    // The menu's own scale. 0 means follow the display.
+    f[nf++] = {"ui", "Scale", &DebugMenuUiScale()};
+
     EffectSpriteSettings& fx = EffectSprites();
     f[nf++] = {"effectsprites", "EdgeLuma", &fx.edgeLuma};
     f[nf++] = {"effectsprites", "FaintLuma", &fx.faintLuma};
@@ -175,6 +180,7 @@ void SettingsSaveAll() {
     fprintf(out, "SpriteFeather=%.4f\n", SpriteFeather());
     fprintf(out, "AlphaMode=%s\n", gta2::GetAlphaMode() == gta2::AlphaMode::Blend ? "blend" : "test");
     fprintf(out, "AlphaRef=%d\n", gta2::GetAlphaRef());
+    fprintf(out, "HudFit=%s\n", HudFit() == HudFitMode::Stretch ? "stretch" : "fit");
     fprintf(out, "FpsCap=%.4f\n", FrameLimitFps());
     fprintf(out, "DumpTextures=%d\n", TextureDumping() ? 1 : 0);
     const EffectSpriteMode mode = EffectSprites().mode;
@@ -260,10 +266,13 @@ void SettingsLoadAll() {
                                                          : gta2::AlphaMode::Test);
         } else if (!_stricmp(key, "AlphaRef")) {
             gta2::SetAlphaRef(atoi(value));
+        } else if (!_stricmp(key, "HudFit")) {
+            SetHudFit(!_stricmp(value, "stretch") ? HudFitMode::Stretch : HudFitMode::Fit);
         } else if (!_stricmp(key, "FpsCap")) {
             FrameLimitSet(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "DumpTextures")) {
             SetTextureDumping(atoi(value) != 0);
+
         } else if (!_stricmp(key, "EffectSprites")) {
             EffectSprites().mode = !_stricmp(value, "off")
                                        ? EffectSpriteMode::Off
