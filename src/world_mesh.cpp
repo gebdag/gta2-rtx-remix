@@ -343,25 +343,68 @@ private:
     std::vector<std::vector<Vertex>> perTileTriangle_;
 };
 
-// Texture coordinates for a wall whose top edge has been cut down by a ramp.
-// v is 0 at the top of the tile and 1 at its foot, so a top corner at height h
-// starts the tile h of the way down: the artwork keeps its footing and loses
-// its head, which is what the game does.
-float CropV(float height) { return kUvMin + (1.0f - height) * (kUvMax - kUvMin); }
+// Texture coordinates anywhere on a wall, whatever the tile's orientation.
+//
+// A wall's four corners carry the coordinates the orientation table gave them,
+// and the table is not the identity even for a face word with no flip and no
+// rotation - the left wall's entry 0 is 0x23, a quarter turn. So the coordinates
+// cannot be written out by hand from the geometry: they have to come from the
+// table, and anything wanted at a point *between* the corners has to be
+// interpolated in whatever frame the table left behind.
+//
+// That is what this is. The four corners are re-indexed by what they mean on the
+// wall rather than by slot - along the wall, and up it - and At() reads any
+// point out of that. A ramp then asks for its shortened top edge, and a corner
+// ramp's diagonal cut asks for the midpoint of the top edge, without either of
+// them needing to know which way the artwork ended up facing.
+//
+// This is what the sloped-wall path was missing. It wrote u from the geometry
+// and v from the height, which reproduces the table exactly for a face word of
+// zero - the uOrder tables below were chosen to make it so - and ignores flip
+// and rotation entirely for anything else. Across the shipped districts 12% to
+// 21% of ramp walls carry one, and 4% to 42% of corner-ramp cuts do, which is
+// why the roofs in Downtown were the worst of it.
+struct WallUvFrame {
+    Uv corner[2][2];   // [along the wall 0 or 1][up it 0 or 1]
 
-// Slot layouts differ per face, so each wall states which of its slots carry
-// the top edge and what the two heights there are.
-std::array<Uv, 4> SlopedWallUvs(const Face& face, const int (&topSlots)[2], const float (&topHeights)[2],
-                                const int (&uOrder)[4]) {
-    const bool flipped = face.IsFlipped();
-    std::array<Uv, 4> uv;
-    for (int i = 0; i < 4; ++i) {
-        const int u = flipped ? 1 - uOrder[i] : uOrder[i];
-        uv[i].u = u ? kUvMax : kUvMin;
-        uv[i].v = kUvMax;
+    Uv At(float along, float up) const {
+        const Uv bottom{corner[0][0].u + (corner[1][0].u - corner[0][0].u) * along,
+                        corner[0][0].v + (corner[1][0].v - corner[0][0].v) * along};
+        const Uv top{corner[0][1].u + (corner[1][1].u - corner[0][1].u) * along,
+                     corner[0][1].v + (corner[1][1].v - corner[0][1].v) * along};
+        return Uv{bottom.u + (top.u - bottom.u) * up, bottom.v + (top.v - bottom.v) * up};
     }
-    uv[topSlots[0]].v = CropV(topHeights[0]);
-    uv[topSlots[1]].v = CropV(topHeights[1]);
+};
+
+// topSlots names the two slots carrying the wall's top edge and uOrder which end
+// of the wall each slot sits at, which between them say what every slot means.
+WallUvFrame WallFrame(const Face& face, const uint8_t (&table)[8], const int (&topSlots)[2],
+                      const int (&uOrder)[4]) {
+    const std::array<Uv, 4> uv = FaceUvs(face, table);
+    WallUvFrame frame{};
+    for (int slot = 0; slot < 4; ++slot) {
+        const int up = (slot == topSlots[0] || slot == topSlots[1]) ? 1 : 0;
+        frame.corner[uOrder[slot]][up] = uv[slot];
+    }
+    return frame;
+}
+
+// A wall a ramp has shortened shows the *bottom* of its tile with the top
+// cropped off, rather than the whole tile squashed into a shorter quad
+// (gta2.exe!FUN_0046c2c0, which stores 63.9999 - height * 64 into the vertex's
+// own coordinate and takes the orientation flags from the face word as usual).
+// So each top corner is simply the point `height` of the way up the wall.
+std::array<Uv, 4> SlopedWallUvs(const Face& face, const uint8_t (&table)[8],
+                                const int (&topSlots)[2], const float (&topHeights)[2],
+                                const int (&uOrder)[4]) {
+    const WallUvFrame frame = WallFrame(face, table, topSlots, uOrder);
+    std::array<Uv, 4> uv;
+    for (int slot = 0; slot < 4; ++slot) {
+        float up = 0.0f;
+        if (slot == topSlots[0]) up = topHeights[0];
+        else if (slot == topSlots[1]) up = topHeights[1];
+        uv[slot] = frame.At(static_cast<float>(uOrder[slot]), up);
+    }
     return uv;
 }
 
@@ -492,7 +535,7 @@ void AddCornerRampBlock(MeshBuilder* builder, const Block& block, int slopeType,
         if (!face) return;
         if (heights[0] < 1.0f || heights[1] < 1.0f) {
             builder->AddFaceUv(face, corners, normal,
-                               SlopedWallUvs(face, topSlots, heights, uOrder));
+                               SlopedWallUvs(face, table, topSlots, heights, uOrder));
         } else {
             builder->AddFace(face, corners, normal, table);
         }
@@ -526,20 +569,27 @@ void AddCornerRampBlock(MeshBuilder* builder, const Block& block, int slopeType,
     }
 
     if (cutFace) {
+        // The cut runs diagonally across the cell, and the tile runs with it:
+        // one end of the diagonal at each end of the tile and the odd corner at
+        // its middle. Read out of the wall's own frame rather than written down,
+        // so the cut follows the same flip and rotation as the two walls beside
+        // it - 42% of the corner ramps in Downtown carry one, which is why its
+        // roofs had pieces facing the wrong way.
+        const int cutTop[2] = {1, 2};
+        const int cutU[4] = {0, 0, 1, 1};
+        const WallUvFrame frame =
+            WallFrame(cutFace, westCorner ? kLeftFlags : kRightFlags, cutTop, cutU);
         if (lidless) {
-            // A peak: one corner at the top, the diagonal on the floor, and the
-            // tile's top edge pinched to the middle.
+            // A peak: one corner at the top, the diagonal lying on the floor.
             builder->AddTriangle(
                 cutFace, {at(peak, 1.0f), at((peak + 1) & 3, 0.0f), at((peak + 3) & 3, 0.0f)},
-                {Uv{UvAt(0.5f), UvAt(0.0f)}, Uv{UvAt(1.0f), UvAt(1.0f)},
-                 Uv{UvAt(0.0f), UvAt(1.0f)}});
+                {frame.At(0.5f, 1.0f), frame.At(1.0f, 0.0f), frame.At(0.0f, 0.0f)});
         } else {
             // A chamfer: the diagonal along the top, dropping to the one corner.
             builder->AddTriangle(
                 cutFace,
                 {at((special + 1) & 3, 1.0f), at(special, 0.0f), at((special + 3) & 3, 1.0f)},
-                {Uv{UvAt(0.0f), UvAt(0.0f)}, Uv{UvAt(0.5f), UvAt(1.0f)},
-                 Uv{UvAt(1.0f), UvAt(0.0f)}});
+                {frame.At(0.0f, 1.0f), frame.At(0.5f, 0.0f), frame.At(1.0f, 1.0f)});
         }
     }
 
@@ -715,7 +765,7 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
                        const float (&topHeights)[2], const int (&uOrder)[4]) {
         if (ramp && (topHeights[0] < 1.0f || topHeights[1] < 1.0f)) {
             builder->AddFaceUv(face, corners, normal,
-                               SlopedWallUvs(face, topSlots, topHeights, uOrder));
+                               SlopedWallUvs(face, table, topSlots, topHeights, uOrder));
         } else {
             builder->AddFace(face, corners, normal, table);
         }
