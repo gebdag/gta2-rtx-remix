@@ -123,16 +123,29 @@
 
 namespace {
 
-// The original, renamed aside by deploy.bat exactly the way the renderer's
-// d3ddll_orig.dll is.
 // Handed back by Vid_CheckMode when the display has no such mode and we are
 // not setting one anyway. Only ever tested against zero.
 const int kSyntheticMode = 0x7FFF;
 
 const char kBackslash = 92;  // written by code point: escaping it has bitten twice
-const char* const kOriginalName = "Dmavideo_orig.dll";
+
+// What to forward to, decided by the name we were loaded under.
+//
+// There are two ways to install this and they need opposite answers. Under our
+// own name - videoname in the registry pointed at gta2dx9_vid.dll, which is what
+// a release does - the game's Dmavideo.dll is untouched and is the thing to
+// forward to. Wearing the game's name, which is what deploy.bat's vidproxy mode
+// does, the original has been renamed aside and forwarding to Dmavideo.dll would
+// load *this* file again and recurse until the stack ran out.
+//
+// So the test is what we are called, not what is on disk.
+const char* const kGameName = "Dmavideo.dll";
+const char* const kRenamedName = "Dmavideo_orig.dll";
 
 HMODULE g_original = nullptr;
+HMODULE g_self = nullptr;
+// The file name we were loaded under, which decides what we forward to.
+char g_ownLeaf[MAX_PATH] = "Dmavideo.dll";
 bool g_bindTried = false;
 CRITICAL_SECTION g_lock;
 bool g_lockReady = false;
@@ -148,10 +161,13 @@ int g_surfaces = 0;
 // Where this DLL is, which is where the original and the log live too. The
 // game's working directory is not reliably its own folder.
 void BuildPaths(HMODULE self) {
+    g_self = self;
     char path[MAX_PATH] = "";
     if (!GetModuleFileNameA(self, path, MAX_PATH)) return;
-    char* slash = strrchr(path, '\\');
+    char* slash = strrchr(path, kBackslash);
     if (!slash) return;
+    _snprintf(g_ownLeaf, sizeof(g_ownLeaf) - 1, "%s", slash + 1);
+    g_ownLeaf[sizeof(g_ownLeaf) - 1] = 0;
     *(slash + 1) = '\0';
     _snprintf(g_logPath, sizeof(g_logPath) - 1, "%sgta2dx9_vid.log", path);
     g_logPath[sizeof(g_logPath) - 1] = '\0';
@@ -179,18 +195,25 @@ HMODULE Original() {
     if (g_bindTried) return g_original;
     g_bindTried = true;
 
+    const char* want = _stricmp(g_ownLeaf, kGameName) == 0 ? kRenamedName : kGameName;
     char path[MAX_PATH] = "";
     if (g_logPath[0]) {
         _snprintf(path, sizeof(path) - 1, "%s", g_logPath);
-        char* slash = strrchr(path, '\\');
+        char* slash = strrchr(path, kBackslash);
         if (slash) {
-            *(slash + 1) = '\0';
-            strncat(path, kOriginalName, sizeof(path) - strlen(path) - 1);
+            *(slash + 1) = 0;
+            strncat(path, want, sizeof(path) - strlen(path) - 1);
         }
     }
     g_original = path[0] ? LoadLibraryA(path) : nullptr;
-    if (!g_original) g_original = LoadLibraryA(kOriginalName);
-    Log("bind %s -> %p", path[0] ? path : kOriginalName, g_original);
+    if (!g_original) g_original = LoadLibraryA(want);
+    // Belt and braces: forwarding into ourselves would recurse through every
+    // export until the stack ran out.
+    if (g_original == g_self) {
+        Log("forward target %s resolved to this DLL; refusing to forward to myself", want);
+        g_original = nullptr;
+    }
+    Log("loaded as %s, forwarding to %s -> %p", g_ownLeaf, want, g_original);
     return g_original;
 }
 

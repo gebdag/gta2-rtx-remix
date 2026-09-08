@@ -15,8 +15,8 @@ if not exist build mkdir build
 rem The .def exports the plain names: __stdcall would otherwise decorate them as
 rem _Vid_CheckMode@16 and GTA2 looks them up by the undecorated name.
 cl /nologo /std:c++17 /EHsc /O2 /W3 /MT /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS ^
-   /LD /Fe:build\Dmavideo.dll /Fo:build\ ^
+   /LD /Fe:build\gta2dx9_vid.dll /Fo:build\ ^
    src\vid_proxy.cpp ^
    /link /DEF:dmavideo.def || exit /b 1
 
-echo Built build\Dmavideo.dll
+echo Built build\gta2dx9_vid.dll

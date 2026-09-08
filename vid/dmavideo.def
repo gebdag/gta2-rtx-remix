@@ -2,7 +2,11 @@
 ; (gta2.exe pushes each string at 0x004D2F54 onward and stores the result in the
 ; table at 0x59501C), so the ordinals are not strictly load-bearing - but the
 ; GTA2 manager and anything else that pokes the file gets what it expects.
-LIBRARY Dmavideo
+;
+; No LIBRARY line: the file is built as gta2dx9_vid.dll and installed under that
+; name, with videoname in the registry pointed at it, so nothing of the game's is
+; overwritten. deploy.bat's vidproxy mode still copies it over Dmavideo.dll, and
+; the proxy works out which it is from its own module name.
 EXPORTS
     Vid_CheckMode       @1
     Vid_ClearScreen     @2

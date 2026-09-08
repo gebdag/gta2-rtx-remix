@@ -1,6 +1,7 @@
 # Build output
 build/
 build_plain/
+release/
 *.obj
 *.exp
 *.lib

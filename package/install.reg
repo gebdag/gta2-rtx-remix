@@ -1,0 +1,38 @@
+Windows Registry Editor Version 5.00
+
+; GTA2 RTX Remix renderer - registry setup.
+;
+; GTA2 loads two DLLs by name from this key: the renderer and the video device.
+; Pointing both at our own file names is what lets the mod install by unzipping,
+; without overwriting anything of the game's.
+;
+;   rendername   the renderer. gta2dx9.dll is ours.
+;   videoname    the video device, which owns the screen. gta2dx9_vid.dll is
+;                ours and forwards everything it does not handle to the game's
+;                own Dmavideo.dll, which is left exactly where it is.
+;   lighting     GTA2 only builds its light list when this is set. With it clear
+;                the game never calls gbh_AddLight and there is nothing for the
+;                path tracer to light the city with.
+;   max/min_frame_rate  GTA2's own frame cap, which is a boolean and not a
+;                number: on means 30 fps. Off here because the renderer caps the
+;                frame itself, and its cap is a real number - see fps_cap in
+;                gta2dx9.ini.
+;
+; Both hives are written. The GTA2 manager and the in-game options screen write
+; HKLM, and the game has been seen reading either.
+;
+; Your own resolution settings are deliberately not touched.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\DMA Design Ltd\GTA2\Screen]
+"rendername"="gta2dx9.dll"
+"videoname"="gta2dx9_vid.dll"
+"lighting"=dword:00000001
+"max_frame_rate"=dword:00000000
+"min_frame_rate"=dword:00000000
+
+[HKEY_CURRENT_USER\SOFTWARE\DMA Design Ltd\GTA2\Screen]
+"rendername"="gta2dx9.dll"
+"videoname"="gta2dx9_vid.dll"
+"lighting"=dword:00000001
+"max_frame_rate"=dword:00000000
+"min_frame_rate"=dword:00000000
