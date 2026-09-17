@@ -56,13 +56,19 @@ static int AuditWholeMap(const char* mapPath, const char* stylePath) {
 
 int main(int argc, char** argv) {
     if (argc > 1 && strcmp(argv[1], "audit") == 0) {
-        return AuditWholeMap(argc > 2 ? argv[2] : "<GTA2 folder>\\data\\wil.gmp",
-                             argc > 3 ? argv[3] : "<GTA2 folder>\\data\\wil.sty");
+        if (argc < 4) {
+            printf("usage: dump_block.exe audit <path to .gmp> <path to .sty>\n");
+            return 1;
+        }
+        return AuditWholeMap(argv[2], argv[3]);
     }
-    const int type = argc > 1 ? atoi(argv[1]) : 49;
-    const char* stylePath = (argc > 2 && argv[2][0] != '-')
-                                ? argv[2]
-                                : "<GTA2 folder>\\data\\wil.sty";
+    if (argc < 3 || argv[2][0] == '-') {
+        printf("usage: dump_block.exe <slope type> <path to .sty> [-lidless]\n"
+               "       dump_block.exe audit <path to .gmp> <path to .sty>\n");
+        return 1;
+    }
+    const int type = atoi(argv[1]);
+    const char* stylePath = argv[2];
 
     // One block at cell (0,0); every other cell points at an empty column.
     std::vector<uint8_t> columns(64, 0);
