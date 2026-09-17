@@ -9,6 +9,7 @@
 #include "synthetic_lights.h"
 #include "texture_store.h"
 #include "time_of_day.h"
+#include "world_view.h"
 
 #include "../../src/renderer.h"
 #include "../../src/world_mesh.h"
@@ -173,6 +174,8 @@ void SettingsSaveAll() {
 
     // Things that live outside a settings struct.
     fprintf(out, "\n[render]\n");
+    fprintf(out, "SpawnOffscreen=%d\n", SpawnOffscreen() ? 1 : 0);
+    fprintf(out, "ObjectMargin=%.3f\n", ObjectMargin());
     fprintf(out, "SpriteConform=%d\n", SpriteConform() ? 1 : 0);
     fprintf(out, "SpriteHeight=%.4f\n", SpriteHeight());
     fprintf(out, "SpriteRoll=%.4f\n", SpriteRoll());
@@ -253,7 +256,11 @@ void SettingsLoadAll() {
         }
         if (handled || _stricmp(sectionName, "render") != 0) continue;
 
-        if (!_stricmp(key, "SpriteRoll")) {
+        if (!_stricmp(key, "SpawnOffscreen")) {
+            SetSpawnOffscreen(atoi(value) != 0);
+        } else if (!_stricmp(key, "ObjectMargin")) {
+            SetObjectMargin(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "SpriteRoll")) {
             SetSpriteRoll(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "SpriteHeight")) {
             SetSpriteHeight(static_cast<float>(atof(value)));

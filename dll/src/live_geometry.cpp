@@ -224,6 +224,8 @@ void LiveGeometry::BeginFrame() {
     effectQuads_ = 0;
     g_lastConform = conform_;
     conform_ = Conform{};
+    spriteExtent_ = SpriteExtent{};
+    ++spriteReach_.frames;
     // This frame's placements become next frame's history.
     tracks_.swap(tracksNext_);
     tracksNext_.clear();
@@ -666,6 +668,36 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // rather than leaning out of it.
     const Vec3 centre{cx + groundUp.x * offset, baseY + groundUp.y * offset,
                       cz + groundUp.z * offset};
+
+    // Where the game is actually willing to hand us sprites.
+    if (spriteExtent_.count == 0) {
+        spriteExtent_.minX = spriteExtent_.maxX = cx;
+        spriteExtent_.minZ = spriteExtent_.maxZ = cz;
+    } else {
+        spriteExtent_.minX = (std::min)(spriteExtent_.minX, cx);
+        spriteExtent_.maxX = (std::max)(spriteExtent_.maxX, cx);
+        spriteExtent_.minZ = (std::min)(spriteExtent_.minZ, cz);
+        spriteExtent_.maxZ = (std::max)(spriteExtent_.maxZ, cz);
+    }
+    ++spriteExtent_.count;
+
+    // Accumulated against the camera. See LiveGeometry::SpriteReach.
+    const float ox = cx - cameraX_;
+    const float oz = cz - cameraZ_;
+    if (spriteReach_.count == 0) {
+        spriteReach_.minX = spriteReach_.maxX = ox;
+        spriteReach_.minZ = spriteReach_.maxZ = oz;
+    } else {
+        spriteReach_.minX = (std::min)(spriteReach_.minX, ox);
+        spriteReach_.maxX = (std::max)(spriteReach_.maxX, ox);
+        spriteReach_.minZ = (std::min)(spriteReach_.minZ, oz);
+        spriteReach_.maxZ = (std::max)(spriteReach_.maxZ, oz);
+    }
+    ++spriteReach_.count;
+    const int binX = static_cast<int>(std::floor(ox)) + kReachHalf;
+    const int binZ = static_cast<int>(std::floor(oz)) + kReachHalf;
+    if (binX >= 0 && binX < kReachBins) ++spriteReach_.histX[binX];
+    if (binZ >= 0 && binZ < kReachBins) ++spriteReach_.histZ[binZ];
 
     Sprite placed;
     placed.texture = texture;

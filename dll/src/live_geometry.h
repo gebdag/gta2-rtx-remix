@@ -317,12 +317,57 @@ public:
         float maxGap = 0.0f;       // furthest any sprite sat above its own floor
         float maxResidual = 0.0f;  // worst a footprint failed to be one plane
     };
+    // The world-space span of the sprites the game actually handed us this
+    // frame. Four rectangles in gta2.exe have each looked like the one that
+    // stops cars and pedestrians reaching a wide frame's margins, and widening
+    // each of them changed nothing. This measures where the game really stops
+    // sending them, in the coordinates we draw in, so the boundary can be
+    // compared against our own frame instead of deduced.
+    struct SpriteExtent {
+        float minX = 0.0f, maxX = 0.0f;
+        float minZ = 0.0f, maxZ = 0.0f;
+        int count = 0;
+    };
+    const SpriteExtent& SpriteExtentSeen() const { return spriteExtent_; }
+
+    // The same span measured against the camera instead of the map, and kept
+    // across frames rather than reset with each one.
+    //
+    // Per-frame min and max is a lower bound on the boundary, not the boundary:
+    // it says where cars happened to be this frame, so an empty stretch of road
+    // reads the same as a hard edge. Held across a few hundred frames while the
+    // traffic moves, the offsets converge on the edge the game actually stops
+    // at, and then it is a number that moves when a lever is the right one.
+    // A histogram, not a min and max, because min and max are what kept lying.
+    // A single screen-space sprite that rides along with the camera - the HUD
+    // sits at a fixed +44.5 tiles - pins the extreme for as long as the game
+    // runs, so the number never moves no matter which lever is pulled. Counting
+    // sprites per tile of offset instead makes the real edge the place the
+    // counts collapse, and leaves a stray visible as the isolated 1 that it is.
+    static constexpr int kReachBins = 33;   // -16..+16 tiles, one per tile
+    static constexpr int kReachHalf = kReachBins / 2;
+    struct SpriteReach {
+        float minX = 0.0f, maxX = 0.0f;
+        float minZ = 0.0f, maxZ = 0.0f;
+        int histX[kReachBins] = {};
+        int histZ[kReachBins] = {};
+        int frames = 0;
+        int count = 0;
+    };
+    const SpriteReach& SpriteReachSeen() const { return spriteReach_; }
+    void ResetSpriteReach() { spriteReach_ = SpriteReach{}; }
+    // Where our camera is looking, so a sprite can be measured relative to it.
+    void SetCameraTarget(float x, float z) { cameraX_ = x; cameraZ_ = z; }
+
     const Conform& ConformCounts() const { return conform_; }
     void ClearConformCounts() { conform_ = Conform{}; }
 
 private:
     mutable Drops drops_;
     mutable Conform conform_;
+    SpriteExtent spriteExtent_;
+    SpriteReach spriteReach_;
+    float cameraX_ = 0.0f, cameraZ_ = 0.0f;
 };
 
 // The last complete frame's conform counts, for the menu. A free function for

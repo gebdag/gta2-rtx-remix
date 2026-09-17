@@ -28,6 +28,173 @@ constexpr size_t kMatchBlocks = 4000;
 
 // Per-frame easing toward the street height under the camera.
 constexpr float kHeightFollowRate = 0.06f;
+
+// How far beyond its own viewport GTA2 keeps objects alive, in tiles.
+float g_objectMargin = kDefaultObjectMargin;
+
+// The two Fixed values gta2.exe reads when it sizes the object grid rectangle,
+// once PatchObjectRange has pointed it at these instead of its own zeroes. They
+// must outlive the game, so they are here rather than in any object.
+int32_t g_objectPadMin = 0;
+int32_t g_objectPadMax = 0;
+
+// ---------------------------------------------------------------------------
+// The three patches gta2.exe needs, and the switch that takes them all back out
+// again. Nothing here is permanent: every site keeps the bytes it had, so
+// spawn_offscreen=0 - or the checkbox in the menu, mid-game - leaves the running
+// process byte for byte as it shipped.
+// ---------------------------------------------------------------------------
+
+bool g_spawnOffscreen = kDefaultSpawnOffscreen;
+bool g_spawnOffscreenActive = false;
+
+// One patched run of bytes and what was there before it.
+struct BytePatch {
+    uintptr_t at = 0;
+    size_t size = 0;
+    uint8_t original[8] = {};
+    bool applied = false;
+};
+
+bool WriteCode(uintptr_t at, const void* bytes, size_t size) {
+    void* target = reinterpret_cast<void*>(at);
+    DWORD previous = 0;
+    if (!VirtualProtect(target, size, PAGE_EXECUTE_READWRITE, &previous)) return false;
+    memcpy(target, bytes, size);
+    VirtualProtect(target, size, previous, &previous);
+    FlushInstructionCache(GetCurrentProcess(), nullptr, 0);
+    return true;
+}
+
+// Saves what is there, then writes. A site that does not hold what it is
+// supposed to is left alone rather than half patched - that is the guard
+// against a different build of gta2.exe.
+bool ApplyPatch(BytePatch* patch, uintptr_t at, const void* expected, const void* bytes,
+                size_t size, const char* what) {
+    if (patch->applied) return true;
+    if (size > sizeof(patch->original)) return false;
+    if (memcmp(reinterpret_cast<const void*>(at), expected, size) != 0) {
+        Log("%s: %08X does not hold what this expects - leaving gta2.exe alone", what,
+            static_cast<unsigned>(at));
+        return false;
+    }
+    memcpy(patch->original, reinterpret_cast<const void*>(at), size);
+    if (!WriteCode(at, bytes, size)) {
+        Log("%s: could not write %08X", what, static_cast<unsigned>(at));
+        return false;
+    }
+    patch->at = at;
+    patch->size = size;
+    patch->applied = true;
+    return true;
+}
+
+void RevertPatch(BytePatch* patch) {
+    if (!patch->applied) return;
+    WriteCode(patch->at, patch->original, patch->size);
+    patch->applied = false;
+}
+
+// --- 1. the object grid walk ------------------------------------------------
+//
+// So that cars and pedestrians out in the margins are drawn at all. See
+// game_access.h kObjectRangeSites.
+BytePatch g_objectRangePatch[4];
+
+// --- 2. where a car may be created ------------------------------------------
+//
+// See game_access.h kSpawnVisibleTest. The pad is not a taste setting: it is how
+// much wider our frame is than the one GTA2 reasons about, which the renderer
+// knows exactly, plus whatever the object margin adds on top.
+// A little past the edge rather than exactly on it, so a spawn is not visible
+// in the frame it happens. Small on purpose - see the note where it is used.
+constexpr float kSpawnSlack = 0.5f;
+int32_t g_spawnPadX = 0;
+int32_t g_spawnPadY = 0;
+BytePatch g_spawnTestPatch;
+
+// __fastcall-ish: ECX is the rectangle, one stack argument is the position.
+// x sits at pos+4 and y at pos+8, both 16.14 Fixed, and the rectangle's four
+// bounds at rect+0x20, +0x24, +0x28, +0x2C. Non-zero means inside, which is what
+// stops a spawn. Safe to widen without starving anything: FUN_004B34E0 walks
+// further along the road and asks again.
+extern "C" int __cdecl SpawnPointVisible(const int32_t* rect, const int32_t* pos) {
+    const int32_t x = pos[1];
+    const int32_t y = pos[2];
+    return (y <= rect[11] + g_spawnPadY && y >= rect[10] - g_spawnPadY
+            && x <= rect[9] + g_spawnPadX && x >= rect[8] - g_spawnPadX)
+               ? 1
+               : 0;
+}
+
+// The game reads the answer out of AL and the callee clears the one stack
+// argument, exactly as FUN_0045AF40 did.
+__declspec(naked) void SpawnVisibleThunk() {
+    __asm {
+        mov  eax, [esp + 4]
+        push eax
+        push ecx
+        call SpawnPointVisible
+        add  esp, 8
+        ret  4
+    }
+}
+
+// --- 3. where a pedestrian may be created -----------------------------------
+//
+// The ring they are placed on, widened on x only and only by what the frame
+// really overhangs. See game_access.h kPedRingSitesX for why it is the ring
+// rather than the test, and why it is x only.
+int32_t g_pedRingPadX = 0;
+BytePatch g_pedRingPatchX[2];
+
+bool ApplyGamePatches() {
+    bool ok = true;
+    for (int i = 0; i < 4; ++i) {
+        const uintptr_t site = game::kObjectRangeSites[i];
+        const uintptr_t expected = (i & 1) ? game::kObjectRangeMaxPad : game::kObjectRangeMinPad;
+        int32_t* replacement = (i & 1) ? &g_objectPadMax : &g_objectPadMin;
+        if (*reinterpret_cast<const uint8_t*>(site - 1) != 0x68) {
+            Log("object range: site %d at %08X is not a PUSH", i, static_cast<unsigned>(site));
+            ok = false;
+            continue;
+        }
+        ok &= ApplyPatch(&g_objectRangePatch[i], site, &expected, &replacement, sizeof(void*),
+                         "object range");
+    }
+
+    // A plain JMP rather than a trampoline: the replacement answers the whole
+    // question, so the original body is never returned to.
+    uint8_t jump[5] = {0xE9};
+    const int32_t relative = static_cast<int32_t>(reinterpret_cast<uintptr_t>(&SpawnVisibleThunk)
+                                                  - (game::kSpawnVisibleTest + 5));
+    memcpy(jump + 1, &relative, 4);
+    ok &= ApplyPatch(&g_spawnTestPatch, game::kSpawnVisibleTest, game::kSpawnVisiblePrologue, jump,
+                     sizeof(jump), "car spawn test");
+
+    for (int i = 0; i < 2; ++i) {
+        const uintptr_t site = game::kPedRingSitesX[i];
+        const uintptr_t expected = game::kPedRingWidth;
+        int32_t* replacement = &g_pedRingPadX;
+        if (*reinterpret_cast<const uint8_t*>(site - 1) != 0x68) {
+            Log("ped ring: site %d at %08X is not a PUSH", i, static_cast<unsigned>(site));
+            ok = false;
+            continue;
+        }
+        ok &= ApplyPatch(&g_pedRingPatchX[i], site, &expected, &replacement, sizeof(void*),
+                         "ped ring");
+    }
+    Log("spawn offscreen: %s", ok ? "gta2.exe patched" : "partly applied, see above");
+    return ok;
+}
+
+void RevertGamePatches() {
+    for (int i = 0; i < 4; ++i) RevertPatch(&g_objectRangePatch[i]);
+    RevertPatch(&g_spawnTestPatch);
+    for (int i = 0; i < 2; ++i) RevertPatch(&g_pedRingPatchX[i]);
+    Log("spawn offscreen: gta2.exe put back the way it shipped");
+}
+
 constexpr float kDegreesToRadians = 3.14159265f / 180.0f;
 
 // The desktop, in the physical pixels a window is really sized in.
@@ -287,6 +454,141 @@ HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow m
 }
 
 }  // namespace
+
+void SetObjectMargin(float tiles) {
+    g_objectMargin = tiles < 0.0f ? 0.0f : (tiles > 32.0f ? 32.0f : tiles);
+}
+
+float ObjectMargin() { return g_objectMargin; }
+
+void SetSpawnOffscreen(bool on) { g_spawnOffscreen = on; }
+bool SpawnOffscreen() { return g_spawnOffscreen; }
+bool SpawnOffscreenActive() { return g_spawnOffscreenActive; }
+
+// Let cars and pedestrians live outside GTA2's own 4:3 viewport.
+//
+// Measured first, because four rectangles in gta2.exe read convincingly as the
+// cause and none of them was. The margins log below prints the world-space span
+// of the sprites the game actually hands us against the frame we draw: at rest
+// the sprites arrive across x=39.3..49.5 while we draw x=38.5..50.5, and we drop
+// none of them. So the game withholds them, a full tile short on each side - and
+// tripling SetupCameraView's tile rectangle on one axis moved that span by two
+// tiles and then stopped, which is what ruled that rectangle out.
+//
+// What actually bounds it is FUN_0045AEA0, the point-in-rectangle every
+// visibility query funnels into:
+//
+//     pos.x > viewport[0x20] - margin  &&  pos.x < viewport[0x24] + margin
+//
+// and the margin is game::kVisibilityMarginPtr, a single global that the game
+// initialises to zero and never writes again. Zero padding means the keep-alive
+// rectangle is exactly the 4:3 viewport: a car a step past the edge stops being
+// drawn, its unseen-frame count climbs, and the recycler destroys it - then a
+// replacement spawns just outside and walks back in. Both halves of the popping,
+// from one number.
+//
+// Written every frame rather than once: it costs nothing, and it survives
+// anything in the game that reinitialises the value on a level change.
+// The half-width our frame has that GTA2's does not, in tiles. Both frames are
+// the same height by construction - the renderer frames visibleTiles_ vertically
+// - so the whole difference is horizontal, which is why the popping is too.
+float WorldView::FrameOverhang() const {
+    if (visibleTiles_ <= 0.01f || renderer_.Height() <= 0) return 0.0f;
+    game::ViewExtent view;
+    if (!game::VisibleExtent(&view)) return 0.0f;
+    const float aspect =
+        static_cast<float>(renderer_.Width()) / static_cast<float>(renderer_.Height());
+    const float ours = visibleTiles_ * aspect * 0.5f;
+    const float theirs = view.Width() * 0.5f;
+    return ours > theirs ? ours - theirs : 0.0f;
+}
+
+void WorldView::ExtendObjectVisibility() {
+    // Follow the switch, in both directions and at any time. Applying reads and
+    // keeps the original bytes, so turning it off mid-game is a real revert
+    // rather than a second patch that happens to cancel the first.
+    if (g_spawnOffscreen != g_spawnOffscreenActive) {
+        if (g_spawnOffscreen) {
+            ApplyGamePatches();
+        } else {
+            RevertGamePatches();
+        }
+        g_spawnOffscreenActive = g_spawnOffscreen;
+    }
+    if (!g_spawnOffscreenActive) return;
+
+    // A lever that just changed invalidates everything the reach has measured
+    // under the old one, so start it over rather than reading a mixed number.
+    if (g_objectMargin != appliedMargin_) {
+        appliedMargin_ = g_objectMargin;
+        live_.ResetSpriteReach();
+    }
+
+    const int32_t fixed = static_cast<int32_t>(g_objectMargin * 16384.0f);
+
+    // The viewport rectangle itself, at the address that actually holds it.
+    //
+    // This does land: at an 8 tile margin the rectangle reads 8.75 tiles wider
+    // than the camera's view on each side, against 2.75 at a 2 tile margin, so
+    // the game's own pad is 0.75 and the rest is this. It does not grow without
+    // bound either, so the game rebuilds the rectangle once per frame somewhere
+    // between this write and the next read.
+    //
+    // What it does not settle is whether the widening is still in place when the
+    // population pass asks, which is why the spawn tests are detoured as well -
+    // see PatchSpawnTest. This stays for every other consumer of the rectangle.
+    for (int i = 0; i < game::kMaxViewports; ++i) {
+        uint8_t* viewport = game::Viewport(i);
+        if (!viewport) continue;
+        const int rects = *(viewport + game::kViewportSecondRectFlag) ? 2 : 1;
+        for (int r = 0; r < rects; ++r) {
+            uint8_t* rect = viewport + game::kViewportRectBases[r];
+            int32_t* minX = reinterpret_cast<int32_t*>(rect + game::kRectMinXOffset);
+            int32_t* maxX = reinterpret_cast<int32_t*>(rect + game::kRectMaxXOffset);
+            int32_t* minY = reinterpret_cast<int32_t*>(rect + game::kRectMinYOffset);
+            int32_t* maxY = reinterpret_cast<int32_t*>(rect + game::kRectMaxYOffset);
+            // Only ever grow it, and only a rectangle that looks like one - a
+            // slot the game has not filled in stays untouched rather than
+            // becoming a huge box centred on nothing.
+            if (*maxX <= *minX || *maxY <= *minY) continue;
+            *minX -= fixed;
+            *maxX += fixed;
+            *minY -= fixed;
+            *maxY += fixed;
+        }
+    }
+
+    // How far out a new object has to be before the game will create it: the
+    // width our frame has and GTA2's does not, so it lands off screen, plus the
+    // margin on top. Vertically the two frames match, so only the margin
+    // applies - padding y further would push spawns away for no reason.
+    // How far out a new object has to be before the game will create it.
+    //
+    // This is the frame's own overhang and a little slack, and deliberately not
+    // the object margin on top of it. The object margin is a *drawing and
+    // recycling* lever and it can be wound up to 16 tiles; spending it here
+    // pushed pedestrians so far out that the recycler killed them before they
+    // could walk in, and the pavements emptied. A spawn wants exactly enough to
+    // clear the edge of the frame and no more.
+    //
+    // And x only. The renderer keeps GTA2's own vertical extent exactly, so
+    // there is no overhang to clear at the top and bottom, and padding there
+    // would cost population for nothing.
+    const float overhang = FrameOverhang();
+    g_spawnPadX = static_cast<int32_t>((overhang + kSpawnSlack) * 16384.0f);
+    g_spawnPadY = 0;
+    // The ring is the game's own width plus that. Read fresh rather than
+    // captured: DAT_005E5E74 is built at startup, so it reads zero in the image
+    // and only exists once the game is running.
+    g_pedRingPadX = *reinterpret_cast<const int32_t*>(game::kPedRingWidth) + g_spawnPadX;
+
+    // How far out the grid is walked, so they are drawn out there at all.
+    g_objectPadMin = fixed;
+    g_objectPadMax = fixed;
+    // And how far out they survive: an object the recycler destroys for being
+    // unseen is not helped by a wider grid walk, so both have to move together.
+    game::SetVisibilityMargin(fixed);
+}
 
 void WorldView::Configure(float pitchDegrees, float fovDegrees, bool useGameTiles,
                           PresentWindow present) {
@@ -631,6 +933,9 @@ void WorldView::UpdateCamera() {
 
     // Map rows run north to south, so the row is mirrored exactly the way the
     // mesh builder mirrors it.
+    lastTargetX_ = tileX;
+    lastTargetZ_ = static_cast<float>(gta2::kMapHeight) - tileY;
+    live_.SetCameraTarget(lastTargetX_, lastTargetZ_);
     const gta2::Vec3 target{tileX, smoothedHeight_,
                             static_cast<float>(gta2::kMapHeight) - tileY};
 
@@ -857,11 +1162,128 @@ void WorldView::RenderFrame() {
             g_trouble = TextureTrouble{};
         }
     }
+    // Where the game actually stops handing us sprites, against where our frame
+    // reaches. Four rectangles in gta2.exe have each read convincingly and each
+    // changed nothing when widened, so this measures the boundary rather than
+    // deducing it: a sprite span that stops short of our frame means the game is
+    // withholding them and the number says which rectangle it matches; a span
+    // that reaches our edges means they arrive and something here drops them.
+    if ((frameCount_ & 0x3F) == 0) {
+        const LiveGeometry::SpriteExtent& seen = live_.SpriteExtentSeen();
+        const float aspect =
+            static_cast<float>(renderer_.Width()) / static_cast<float>(renderer_.Height());
+        const float halfW = visibleTiles_ * aspect * 0.5f;
+        const float halfH = visibleTiles_ * 0.5f;
+        // Every enabled viewport, because the game keeps no count and slot 0 is
+        // not necessarily the one in use.
+        // Read at last from viewport+0xB0, which is where the rectangle is.
+        char viewportRect[192] = "none";
+        int written = 0;
+        for (int i = 0; i < game::kMaxViewports; ++i) {
+            uint8_t* viewport = game::Viewport(i);
+            if (!viewport) continue;
+            const uint8_t* rect = viewport + game::kViewportRectBases[0];
+            const float toTiles = 1.0f / 16384.0f;
+            const int room = static_cast<int>(sizeof(viewportRect)) - 1 - written;
+            const int n = _snprintf(
+                viewportRect + written, room, "%s#%d %.1f..%.1f", written ? " " : "", i,
+                *reinterpret_cast<const int32_t*>(rect + game::kRectMinXOffset) * toTiles,
+                *reinterpret_cast<const int32_t*>(rect + game::kRectMaxXOffset) * toTiles);
+            if (n < 0 || n >= room) break;
+            written += n;
+        }
+        viewportRect[sizeof(viewportRect) - 1] = 0;
+        const LiveGeometry::SpriteReach& reach = live_.SpriteReachSeen();
+        const LiveGeometry::Drops& d = live_.DropCounts();
+        Log("margins @%d: %d sprite(s) x=%.1f..%.1f z=%.1f..%.1f | our frame x=%.1f..%.1f "
+            "z=%.1f..%.1f | gbh_SetCamera x=%.1f..%.1f y=%.1f..%.1f | viewports x=%s | "
+            "margin=%.1f tile(s) live=%.2f | dropped outside=%d wrongarray=%d "
+            "degenerate=%d",
+            frameCount_, seen.count, seen.minX, seen.maxX, seen.minZ, seen.maxZ,
+            lastTargetX_ - halfW, lastTargetX_ + halfW, lastTargetZ_ - halfH,
+            lastTargetZ_ + halfH, minX_, maxX_, minY_, maxY_, viewportRect,
+            ObjectMargin(), game::VisibilityMargin() / 16384.0f, d.outOfWorld,
+            d.notTheSpriteArray, d.degenerate);
+        // The number that actually identifies the boundary: how far from the
+        // camera a sprite has been seen, held across every frame since the last
+        // reset. Our own half-width is printed beside it, so "reach stops short
+        // of half" is the popping and "reach meets half" is not.
+        // One character per tile of offset from the camera, '0'..'9' scaled
+        // against the busiest bin and '.' for empty. The edge the game stops at
+        // is where the digits collapse to dots; our own half-frame is marked
+        // with '[' and ']' so the two can be read against each other directly.
+        auto profile = [](const int* bins, float half, char* out) {
+            int peak = 1;
+            for (int i = 0; i < LiveGeometry::kReachBins; ++i)
+                if (bins[i] > peak) peak = bins[i];
+            const int lo = LiveGeometry::kReachHalf -
+                           static_cast<int>(half + 0.5f);
+            const int hi = LiveGeometry::kReachHalf +
+                           static_cast<int>(half + 0.5f);
+            for (int i = 0; i < LiveGeometry::kReachBins; ++i) {
+                const int scaled = bins[i] * 9 / peak;
+                out[i] = bins[i] == 0 ? '.'
+                       : static_cast<char>('0' + (scaled == 0 ? 1 : scaled));
+                if (i == lo) out[i] = '[';
+                if (i == hi) out[i] = ']';
+            }
+            out[LiveGeometry::kReachBins] = 0;
+        };
+        char profX[LiveGeometry::kReachBins + 1];
+        char profZ[LiveGeometry::kReachBins + 1];
+        profile(reach.histX, halfW, profX);
+        profile(reach.histZ, halfH, profZ);
+        Log("  reach over %d frame(s), %d sprite(s), -16..+16 tiles from camera, "
+            "[] is our frame:\n    x %s\n    z %s",
+            reach.frames, reach.count, profX, profZ);
+
+    }
+
+    // Where a pedestrian can now be created, against where our frame reaches.
+    //
+    // The ring FUN_00440CC0 puts them on is the viewport's *second* rectangle
+    // padded by what kPedRingSites now points at, and the second rectangle is
+    // not the one every other test reads - so this prints both, in tiles, next
+    // to our own half width. If the ring is outside our frame and pedestrians
+    // still appear inside it, they are not coming from that spawner and the
+    // hunt moves on; if it is inside, the pad is simply not big enough yet.
+    if ((frameCount_ & 0x3F) == 0) {
+        float camX = 0.0f, camY = 0.0f;
+        uint8_t* viewport = game::Viewport(0);
+        if (viewport && game::CameraPosition(&camX, &camY) && visibleTiles_ > 0.01f
+            && renderer_.Height() > 0) {
+            const uint8_t* rect = viewport + game::kViewportRectBases[0];
+            const float toTiles = 1.0f / 16384.0f;
+            const float minX =
+                *reinterpret_cast<const int32_t*>(rect + game::kRect2MinXOffset) * toTiles;
+            const float maxX =
+                *reinterpret_cast<const int32_t*>(rect + game::kRect2MaxXOffset) * toTiles;
+            const float minY =
+                *reinterpret_cast<const int32_t*>(rect + game::kRect2MinYOffset) * toTiles;
+            const float maxY =
+                *reinterpret_cast<const int32_t*>(rect + game::kRect2MaxYOffset) * toTiles;
+            const float ring = g_pedRingPadX * toTiles;
+            const float aspect =
+                static_cast<float>(renderer_.Width()) / static_cast<float>(renderer_.Height());
+            const float halfW = visibleTiles_ * aspect * 0.5f;
+            Log("ped ring @%d: rect2 x %.2f..%.2f y %.2f..%.2f | ring x %.2f (game %.2f + "
+                "%.2f) | camera %.2f,%.2f | spawns at %.2f tiles out, frame reaches %.2f",
+                frameCount_, minX, maxX, minY, maxY, ring,
+                *reinterpret_cast<const int32_t*>(game::kPedRingWidth) * toTiles,
+                g_spawnPadX * toTiles, camX, camY,
+                (std::max)(camX - (minX - ring), (maxX + ring) - camX), halfW);
+        }
+    }
+
     if ((frameCount_ & 0x3F) == 0) DumpCameraStruct();
 
     // Last thing in the frame, after the flip: GTA2's own pacer is a checkbox
     // between 30 fps and none at all, so the number lives here instead. See
     // frame_limiter.h for what a cap above 30 does to the game's speed.
+    // Again after the frame: the game's population and recycling work runs
+    // between our scenes, so the margin has to be in place for that too.
+    ExtendObjectVisibility();
+
     FrameLimitWait();
 }
 
