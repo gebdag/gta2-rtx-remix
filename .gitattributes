@@ -1,0 +1,5 @@
+* text=auto
+*.bat text eol=crlf
+*.reg text eol=crlf
+*.ini text eol=crlf
+*.def text eol=crlf

@@ -14,8 +14,7 @@ rem x86: gta2.exe is a 32-bit process, and the naked thunks are x86 inline asm.
 call "%VSPATH%\VC\Auxiliary\Build\vcvars32.bat" >nul || exit /b 1
 
 if not exist build mkdir build
-rem The world renderer, mesh builder and file loaders are shared verbatim with the
-rem standalone viewer in ..\src.
+rem The world renderer, mesh builder and file loaders live in ..\src.
 rem No d3d9.lib on the link line: the renderer resolves Direct3DCreate9 with
 rem LoadLibrary so the RTX Remix bridge client does not start under the loader lock.
 rem deps\bridge_api holds the RTX Remix API headers. They must match the deployed
