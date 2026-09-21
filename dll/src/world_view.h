@@ -20,16 +20,10 @@
 
 namespace gta2dx9 {
 
-// How far beyond its own viewport GTA2 is asked to keep objects alive, in
-// tiles. See WorldView::ExtendObjectVisibility.
-constexpr float kDefaultObjectMargin = 2.0f;
-void SetObjectMargin(float tiles);
-float ObjectMargin();
-
-// Whether gta2.exe is patched at all to keep new cars and pedestrians out of a
-// wide frame's margins. Off puts every byte of the game back the way it shipped
-// - the patches are kept with their original bytes so this is reversible while
-// the game is running, not only at startup.
+// Whether gta2.exe is patched so its own view rectangle is the shape of the
+// frame we draw, which keeps new cars and pedestrians out of a wide frame's
+// margins. Off puts every byte of the game back the way it shipped - the sites
+// keep their original bytes, so this is reversible while the game is running.
 constexpr bool kDefaultSpawnOffscreen = true;
 void SetSpawnOffscreen(bool on);
 bool SpawnOffscreen();
@@ -83,7 +77,7 @@ public:
     void NoteScreenClear() { renderer_.NoteScreenClear(); }
 
     void BeginFrame() {
-        ExtendObjectVisibility();
+        MatchGameViewToFrame();
         overlay_.BeginFrame();
         live_.BeginFrame();
     }
@@ -115,11 +109,8 @@ private:
     void DumpCameraStruct() const;
     float GroundHeightAt(float tileX, float tileY) const;
 
-    // Pad the rectangle every visibility test measures an object against.
-    void ExtendObjectVisibility();
-    // How much wider our frame is than the 4:3 one GTA2 spawns against, in
-    // tiles, this frame. Fed to the spawn test so new objects land off screen.
-    float FrameOverhang() const;
+    // Widen GTA2's own view rectangle to the frame's aspect. See the .cpp.
+    void MatchGameViewToFrame();
 
     gta2::Renderer renderer_;
     Overlay overlay_;
@@ -134,14 +125,6 @@ private:
     // loadedMapObject_, which gbh_EndLevel clears to force a rebuild while the
     // old mesh is still sitting in the vertex buffer.
     bool worldUploaded_ = false;
-    // The margin currently written into the game, so a change to it can reset
-    // the measurement it invalidates.
-    float appliedMargin_ = -1.0f;
-    // The object grid patch is applied once, and only after gta2.exe is up.
-
-    // Where our camera is looking, so the frame we draw can be compared against
-    // the span of sprites the game is willing to give us.
-    float lastTargetX_ = 0.0f, lastTargetZ_ = 0.0f;
     std::string dataDir_;
 
     float minX_ = 0.0f, minY_ = 0.0f, maxX_ = 0.0f, maxY_ = 0.0f;

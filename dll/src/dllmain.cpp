@@ -167,17 +167,9 @@ void LoadConfig() {
     // a ramp at an angle stands on a plane tilted both ways, so following it
     // whole rolls the body and lifts a corner - which a car on wheels does not
     // do. 0 keeps sprites level side to side, 1000 is the full fitted plane.
-    // How far beyond GTA2's own 4:3 viewport cars and pedestrians stay alive, in
-    // tenths of a tile. A 16:9 frame overhangs it by about a tile each side, so
-    // the default leaves a tile of slack past that; 0 restores stock behaviour.
-    gta2dx9::SetObjectMargin(
-        GetPrivateProfileIntA("renderer", "object_margin_tenths",
-                              static_cast<int>(gta2dx9::kDefaultObjectMargin * 10.0f + 0.5f), ini)
-        / 10.0f);
-
-    // Whether gta2.exe is patched at all to keep new cars and pedestrians out
-    // of the extra width a 16:9 frame has. 0 leaves the game exactly as it
-    // shipped, popping included.
+    // Whether gta2.exe's own view rectangle is widened to the frame we draw, so
+    // new cars and pedestrians stay out of the extra width a 16:9 frame has. 0
+    // leaves the game exactly as it shipped, popping included.
     gta2dx9::SetSpawnOffscreen(GetPrivateProfileIntA("renderer", "spawn_offscreen",
                                                      gta2dx9::kDefaultSpawnOffscreen ? 1 : 0, ini)
                                != 0);

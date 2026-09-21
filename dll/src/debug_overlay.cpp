@@ -979,36 +979,23 @@ void DrawSprites() {
 
     ImGui::SeparatorText("How much of the world GTA2 keeps");
 
-    // Cars and pedestrians in the margins of a wide frame come and go because
-    // GTA2 asks "can anything see this" against a rectangle sized for its own
-    // 4:3 screen - FUN_0045BBA0 -> FUN_0045AEA0, the viewport rectangle at
-    // +0x20..+0x2C. Our frame is wider, so that edge sits inside what we draw.
-    // This pads that rectangle; see WorldView::ExtendObjectVisibility.
+    // GTA2 sizes its own view rectangle 4:3 whatever the screen is, and every
+    // "is this on screen" question goes to it. See
+    // WorldView::MatchGameViewToFrame.
     bool offscreen = SpawnOffscreen();
-    if (ImGui::Checkbox("Spawn new objects off screen", &offscreen)) {
+    if (ImGui::Checkbox("Widen GTA2's view to the frame", &offscreen)) {
         SetSpawnOffscreen(offscreen);
         SettingsMarkDirty();
     }
     ImGui::SameLine();
     ImGui::TextColored(kDim, SpawnOffscreenActive() ? "gta2.exe patched" : "gta2.exe as shipped");
-    Help("GTA2 creates a car or a pedestrian at the first spot outside its own 4:3 viewport "
-         "rectangle, which in a 16:9 frame of the same height is about a tile inside our left or "
-         "right edge - so it appears out of nothing. This moves that boundary out past the frame "
-         "we really draw, by an amount worked out each frame from how much wider our frame is. "
-         "Turning it off puts gta2.exe back byte for byte, here and now, without a restart. "
-         "Persist it with spawn_offscreen under [renderer].");
-
-    float margin = ObjectMargin();
-    ImGui::SetNextItemWidth(S(300.0f));
-    if (ImGui::SliderFloat("Object margin", &margin, 0.0f, 16.0f, "%.1f tiles")) {
-        SetObjectMargin(margin);
-        SettingsMarkDirty();
-    }
-    Help("How far outside GTA2's own 4:3 viewport cars and pedestrians keep living. 0 is stock, "
-         "and is where they pop in and out along the edges of a 16:9 frame; the frame overhangs "
-         "that viewport by about a tile each side. Wind it up and fly the RTX Remix free camera "
-         "out past the normal frame - if it is working, there are cars and pedestrians out "
-         "there. Persist it with object_margin_tenths under [renderer].");
+    Help("GTA2 works out what is on screen as a 4:3 rectangle whatever the screen really is, and "
+         "creates and removes cars and pedestrians just outside it - which in a 16:9 frame of the "
+         "same height is inside our left and right edges, so they appear out of nothing. This "
+         "makes that rectangle the shape of the frame we draw, at the one place the game builds "
+         "it, so spawning, recycling and drawing all move out together. Turning it off puts "
+         "gta2.exe back byte for byte, here and now, without a restart. Persist it with "
+         "spawn_offscreen under [renderer].");
 
     ImGui::SeparatorText("Standing on the ground");
 

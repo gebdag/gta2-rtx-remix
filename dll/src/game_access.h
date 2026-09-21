@@ -102,229 +102,50 @@ inline bool VisibleExtent(ViewExtent* out) {
     return out->Valid();
 }
 
-// The viewports, and the rectangle each of them counts an object as inside.
+// Where GTA2 decides how much of the world is on screen, and the one place its
+// 4:3 assumption lives.
 //
-// gta2.exe!0x0045BD53 loads the manager as the `this` for the on-screen test:
+// FUN_0041E7A0 (sole caller FUN_0041F2F0, the per-frame camera update) builds
+// both rectangles a camera carries, from nothing but the camera's position and
+// zoom - the screen's pixel size is not an input:
 //
-//     manager     = *(void**)0x005EB4FC
-//     count       = *(uint8_t*)(manager + 0x23)
-//     viewport[i] = *(void**)(manager + 4 + i*4)
+//     half   = (DAT_005E3D18 + cam[0xA0]) * (DAT_005E3D64 / cam[0xA4])
+//              * DAT_005E3F54                              ; 0.5
+//     view.x = cam[0x98] -/+ half        -> cam+0x78, +0x7C   (clamped to the map)
+//     half  *= DAT_005E3F34                                ; 0.75  <- the 4:3
+//     view.y = cam[0x9C] -/+ half        -> cam+0x80, +0x84
+//     seen   = view padded by DAT_005E3D98 (0.75 tiles) -> cam+0x20..+0x2C
 //
-// FUN_0045AEA0 is the test - a point against that viewport's rectangle, widened
-// by a margin passed in:
+// Every spatial question the population asks goes to one of those two:
 //
-//     pos.x inside [ vp+0x20 - m , vp+0x24 + m ]
-//     pos.y inside [ vp+0x28 - m , vp+0x2C + m ]
+//   - traffic is created where FUN_0045AF40 says `seen` does not reach
+//     (FUN_004B34E0 -> FUN_0045BC90), and recycled by FUN_0045AEA0 on `seen`;
+//   - pedestrians are put on a ring around `view` by FUN_00440CC0 and rejected
+//     by FUN_0040CF60 against `view`;
+//   - FUN_00447390 walks the object grids over `view` to draw them.
 //
-// Six viewports exist for split screen; single player uses one. Reached through
-// FUN_0045BBA0, which is what the recycle test and several other systems ask
-// "can anything see this".
-// GTA2's hardcoded 4:3 aspect ratio, as 12288 = 0.75 in 16.14 fixed point.
+// So a frame wider than 4:3 shows ground the game believes is off screen, and
+// things are created and destroyed there in plain sight. The cure is to make the
+// rectangle the shape of the frame at its source. Both constants are static
+// Fixed objects built at startup (0x004FCD80 and 0x004FD0B0), and DAT_005E3F54
+// has other readers, so neither is written: the operand of each PUSH is
+// repointed at a Fixed the renderer owns. Scaling the first by w and the second
+// by 1/w widens x and leaves y exactly as it was.
 //
-// gta2.exe!SetupCameraView (0x00472110) builds the tile rectangle it walks, and
-// hands to gbh_SetCamera, like this:
-//
-//     halfW = (fixed(8 - storey) + camera[0xA0]) / camera[0xA4]
-//     halfH = halfW * kMapAspect                       <- this value
-//     minX  = (camera[0x98] - halfW / 2) >> 14         and so on for max, and Y
-//
-// So the vertical extent is derived from the horizontal one by multiplying by
-// 3/4. Scaling it is measurable and does work - logged at 294% the rectangle
-// went from 8 tiles tall to 22 - but it is the *map tile walk*, not what gates
-// objects: over that same range the span of sprites the game handed us grew by
-// two tiles and stopped. Kept because it identifies the constant, not because
-// it is a lever worth pulling. The lever is kVisibilityMarginPtr below.
-constexpr uintptr_t kMapAspectPtr = 0x006636C8;
-inline int32_t MapAspect() { return *reinterpret_cast<int32_t*>(kMapAspectPtr); }
-
-// How far outside a viewport an object still counts as visible, in 16.14 fixed
-// point - the margin FUN_0045AEA0 pads the rectangle with:
-//
-//     pos.x > viewport[0x20] - margin  &&  pos.x < viewport[0x24] + margin
-//     pos.y > viewport[0x28] - margin  &&  pos.y < viewport[0x2C] + margin
-//
-// Every visibility query in the game passes this one global as that margin -
-// FUN_0041F940, FUN_0041F960, and the per-viewport loop in FUN_00424090 - and
-// the only write to it, at 0x004FFAA5, copies a zero Fixed in at startup.
-// Nothing writes it again. So the margin is zero for the life of the process
-// and an object a step outside GTA2's 4:3 viewport is simply out of view: it
-// stops being drawn, its unseen-frame count at obj+0x76 climbs, and past 0x81
-// of them the recycler destroys it. That is the popping, and this is the one
-// number that moves the boundary for all of it at once.
-// How far the object grid is walked around the camera, and where to change it.
-//
-// This is what actually decides whether a car or a pedestrian is drawn. Per
-// frame, FUN_0045A5A0 calls FUN_00447390 three times - one grid each for
-// pedestrians, cars and objects - and each call sizes its rectangle like this
-// (gta2.exe 0x00447390, camera = *(0x005E3CC4)):
-//
-//     minCol = (camera[0x78] - DAT_005E672C) >> 14   clamped to 0..255
-//     maxCol = (camera[0x7C] + DAT_005E6944) >> 14
-//     minRow = (camera[0x80] - DAT_005E672C) >> 14
-//     maxRow = (camera[0x84] + DAT_005E6944) >> 14
-//     FUN_00446D60(minCol, maxCol, minRow, maxRow)
-//
-// FUN_00446D60 then walks exactly those grid cells and submits what it finds to
-// the draw tree. So the rectangle is the camera's own world-space box padded by
-// two globals - and **the same pair pads both axes**, with no aspect ratio
-// anywhere in it. It is a square box around a 4:3 camera, which is why a 16:9
-// frame pokes out of it at the left and right and nowhere else.
-//
-// Both globals are zero, so there is no padding at all. Neither is writable in
-// place: DAT_005E672C is a shared Fixed used elsewhere in the game, and writing
-// it would move far more than this rectangle. What is safe is to repoint the
-// four PUSH operands at Fixed values we own, which is what kObjectRangeSites
-// does - it changes only these three calls and leaves the game's own constants
-// untouched. camera+0x78..0x84 itself is not a lever: the game rebuilds that
-// box from the camera every frame, which is why writing it read as inert.
-constexpr uintptr_t kObjectRangeMinPad = 0x005E672C;
-constexpr uintptr_t kObjectRangeMaxPad = 0x005E6944;
+// What this replaced, for the record: a detour of FUN_0045AF40, a widened
+// pedestrian ring, padded grid-walk operands, a per-frame pad written into
+// `seen`, and DAT_005E4CB8 (FUN_0045AEA0's margin). Each moved one consumer
+// without the others, and a spawn point that is further out than the recycler's
+// idea of visible is destroyed before it walks in - the empty streets.
+constexpr uintptr_t kViewHalfScale = 0x005E3F54;
+constexpr uintptr_t kViewAspect = 0x005E3F34;
 // The operand of each PUSH, one past its 0x68 opcode.
-constexpr uintptr_t kObjectRangeSites[4] = {0x004473A6, 0x004473D6, 0x00447406,
-                                            0x00447439};
-
-constexpr uintptr_t kVisibilityMarginPtr = 0x005E4CB8;
-inline int32_t VisibilityMargin() {
-    return *reinterpret_cast<int32_t*>(kVisibilityMarginPtr);
-}
-inline void SetVisibilityMargin(int32_t fixed) {
-    *reinterpret_cast<int32_t*>(kVisibilityMarginPtr) = fixed;
-}
-
-// The test that decides where GTA2 is allowed to *create* something, and the
-// reason four widened rectangles changed nothing.
-//
-// Drawing is not gated. FUN_0045A5A0 walks three object grids (FUN_00447390 ->
-// FUN_00446D60), and the only per-object test on that path is FUN_00446950,
-// `obj[0x30] > 1` - not spatial. Everything in the walked cells reaches the draw
-// tree and is drawn. Measured too: over 330k car-frames, not one car alive
-// inside the camera's own view went undrawn.
-//
-// Creation is gated, and by a different rectangle test from the one every
-// earlier attempt moved:
-//
-//   FUN_0042A4C0  per-frame vehicle manager (destroy pass, then populate)
-//    -> FUN_004B4E60   for each viewport rectangle, gated on `skip_recycling`
-//     -> FUN_004B4A60  try each of the four edges
-//      -> FUN_004B34E0 the traffic spawner. At 0x004B47A0:
-//
-//              MOV  EAX, [ESI+0x4]        ; the candidate position
-//              MOV  ECX, [0x005EB4FC]     ; the viewport manager
-//              PUSH EAX
-//              CALL 0x0045BC90            ; can anything see it?
-//              TEST AL, AL
-//              JNZ  skip                  ; visible -> do not create
-//
-//   FUN_0045BC90 walks the viewports and calls FUN_0045AF40 on each rectangle,
-//   at viewport+0x90 and viewport+0x208.
-//
-// **FUN_0045AF40 takes no margin.** It is four plain Fixed comparisons against
-// rect+0x20..0x2C:
-//
-//     visible = pos.y <= maxY && pos.y >= minY && pos.x <= maxX && pos.x >= minX
-//
-// That is the whole spawn boundary. FUN_0045AEA0 - the *other* rectangle test,
-// the one that does take a margin and is where kVisibilityMarginPtr is read -
-// is never called on this path. So widening that global moved recycling and
-// nothing else, which is exactly what was observed.
-//
-// FUN_0045AF40 is called from FUN_0045BC90 alone, and FUN_0045BC90 only from
-// the three vehicle-creation gates (FUN_004B34E0, FUN_00427D60, FUN_00428540)
-// and the light cull at FUN_004690B0. Detouring it therefore moves where the
-// game is willing to put new objects and touches nothing else.
-constexpr uintptr_t kSpawnVisibleTest = 0x0045AF40;
-// SUB ESP,0xc / PUSH ESI / MOV ESI,ECX - the first five bytes, checked before
-// anything is written so a different build of gta2.exe is left alone.
-constexpr uint8_t kSpawnVisiblePrologue[5] = {0x83, 0xEC, 0x0C, 0x56, 0x8B};
-
-// Pedestrians are populated by their own spawner, and it wants a different
-// lever from the cars.
-//
-// FUN_00440CC0 is the only pedestrian creator - FUN_004404F0, which allocates
-// the ped and picks its type, has exactly one caller. It is handed a viewport
-// rectangle (FUN_004415E0 does MOV ECX,[0x005E5BC0], the population object, then
-// PUSH ESI, ESI coming from the FUN_0045A800/FUN_0045A850 rectangle iterator),
-// builds a ring around that rectangle's *second* bounds pair, walks the four
-// edges, and puts a pedestrian on the ring facing inwards:
-//
-//     00440CE1  PUSH 0x005E5E74        ; ring width
-//     00440CE7  LEA  ECX, [ESI+0x78]   ; rect2.minX, so viewport+0x108
-//     00440CEE  CALL 0x00401B40        ; minus -> the ring's left edge
-//     00440CFE / 00440D04   +0x7C, plus
-//     00440D1D / 00440D23   +0x80, minus
-//     00440D39 / 00440D41   +0x84, plus
-//
-//     004410E3  MOV  ECX, [0x005EB4FC] ; the viewport manager
-//     004410EA  CALL 0x0045BC10        ; is the point on screen?  (no margin)
-//     004410F1  JNZ  skip              ; yes -> do not create
-//
-// Two things follow, and both were learned by getting them wrong first.
-//
-// **Do not widen the test at 0x004410EA.** No pedestrians spawn at all: the
-// ring's inner edge *is* the rectangle the test rejects against, and the four
-// edge points are fixed rather than a search, so a widened test swallows every
-// candidate. The car spawner survives the same treatment only because it walks
-// further along the road and asks again.
-//
-// **Widen the ring, but only by what the frame actually overhangs, and only on
-// x.** A pedestrian spawned on the ring walks inwards from it, and the recycler
-// destroys anything unseen for 0x81 frames - so a ring pushed out by more than
-// the frame needs means they are killed on the way in and the pavements empty.
-// That is what "far fewer pedestrians" was. The frames match vertically, so the
-// two y operands are left exactly as the game had them and vertical population
-// is untouched; only the two x operands move.
-//
-// Each edge has its own PUSH, which is what makes the x/y split possible.
-// DAT_005E5E74 is a shared Fixed with forty-odd readers, so it is never written
-// - the operands are repointed, as kObjectRangeSites does.
-constexpr uintptr_t kPedRingWidth = 0x005E5E74;
-// The operand of each PUSH, one past its 0x68 opcode: minX, maxX, then minY,
-// maxY. The first two are the ones that move.
-constexpr uintptr_t kPedRingSitesX[2] = {0x00440CE2, 0x00440CFF};
-constexpr uintptr_t kPedRingSitesY[2] = {0x00440D1E, 0x00440D3A};
-
-// The second rectangle on the same object, the one FUN_0040CF60 tests and
-// FUN_00440CC0 builds its ring from - viewport+0x108..0x114 for the first rect
-// base. Not the +0x20..0x2C pair every other test reads.
-constexpr uintptr_t kRect2MinXOffset = 0x78;
-constexpr uintptr_t kRect2MaxXOffset = 0x7C;
-constexpr uintptr_t kRect2MinYOffset = 0x80;
-constexpr uintptr_t kRect2MaxYOffset = 0x84;
-
-constexpr uintptr_t kViewportManagerPtr = 0x005EB4FC;
-constexpr uintptr_t kViewportArrayOffset = 0x04;
-// Whether a viewport slot is in use. The game does not keep a count: every
-// visibility loop runs all six slots and tests this flag on each.
-constexpr uintptr_t kViewportEnabledOffset = 0x8E;
-
-// The rectangle every visibility test measures against, and the second one that
-// only counts while viewport[0x2D0] is set:
-//
-//     0045BBC8  LEA ECX, [ESI + 0x90]     <- FUN_0045AEA0's `this`
-//     0045BBE3  LEA ECX, [ESI + 0x208]    <- and again for the second
-//
-// FUN_0045AEA0 then reads +0x20/+0x24 (x) and +0x28/+0x2C (y) *from that*, so
-// the fields are at viewport+0xB0..0xBC and +0x228..0x234. Written down as
-// +0x20..+0x2C for most of this investigation, which is an unrelated zeroed
-// field - every reading taken of "the viewport rectangle", and the one attempt
-// at widening it, went to the wrong address and proved nothing.
-constexpr uintptr_t kViewportRectBases[2] = {0x90, 0x208};
-constexpr uintptr_t kViewportSecondRectFlag = 0x2D0;
-constexpr uintptr_t kRectMinXOffset = 0x20;
-constexpr uintptr_t kRectMaxXOffset = 0x24;
-constexpr uintptr_t kRectMinYOffset = 0x28;
-constexpr uintptr_t kRectMaxYOffset = 0x2C;
-constexpr int kMaxViewports = 6;
-
-inline uint8_t* ViewportManager() {
-    return *reinterpret_cast<uint8_t**>(kViewportManagerPtr);
-}
-
-inline uint8_t* Viewport(int index) {
-    uint8_t* manager = ViewportManager();
-    if (!manager || index < 0 || index >= kMaxViewports) return nullptr;
-    return *reinterpret_cast<uint8_t**>(manager + kViewportArrayOffset + index * 4);
-}
+constexpr uintptr_t kViewHalfScaleSite = 0x0041E7F0;
+constexpr uintptr_t kViewAspectSite = 0x0041E8E4;
+// What the game constructs those two as, in 16.14 fixed point.
+constexpr int32_t kViewHalfScaleStock = 0x2000;  // 0.5
+constexpr int32_t kViewAspectStock = 0x3000;     // 0.75
+constexpr float kViewAspectRatioStock = 4.0f / 3.0f;
 
 // Every vertex the game projects gets its **absolute** world position written
 // four slots further along the same array: FUN_0046bbf0 does it for map faces
