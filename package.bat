@@ -27,6 +27,10 @@ copy /y "%~dp0package\uninstall.reg" "%OUT%\" >nul || exit /b 1
 rem Not README.txt: GTA2 ships a readme.txt and Windows would treat the two as
 rem the same file, so unzipping would overwrite the game's.
 copy /y "%~dp0package\gta2dx9_README.txt" "%OUT%\" >nul || exit /b 1
+rem What passing the DLLs on requires: our own licence, and the notices of the
+rem code compiled into them. Prefixed for the same reason as the readme.
+copy /y "%~dp0LICENSE"                         "%OUT%\gta2dx9_LICENSE.txt" >nul || exit /b 1
+copy /y "%~dp0package\gta2dx9_THIRD_PARTY.txt" "%OUT%\"                    >nul || exit /b 1
 
 rem The particle-type bindings are hand-found - which id is fire, which is a
 rem muzzle flash - and a player cannot reasonably rediscover them, so the tuned

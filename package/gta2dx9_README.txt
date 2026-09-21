@@ -72,6 +72,7 @@ Run uninstall.reg, then delete the files this added:
 
     gta2dx9.dll  gta2dx9_vid.dll  gta2dx9.ini  gta2dx9_effects.ini
     gta2dx9_settings.ini  gta2dx9.log  gta2dx9_vid.log
+    gta2dx9_README.txt  gta2dx9_LICENSE.txt  gta2dx9_THIRD_PARTY.txt
 
 If you copied the optional d3ddll.dll, delete it and put GTA2's own back.
 
@@ -110,6 +111,8 @@ What the files are
     gta2dx9_effects.ini   which particle type is fire, sparks, gunfire and so on
     gta2dx9_settings.ini  light tuning; delete it for the built-in defaults
     gta2dx9_README.txt    this file
+    gta2dx9_LICENSE.txt   the licence this is shared under (MIT)
+    gta2dx9_THIRD_PARTY.txt  notices for the code built into gta2dx9.dll
     install.reg           points GTA2 at the two DLLs
     uninstall.reg         points it back at its own
     optional/d3ddll.dll   see above
