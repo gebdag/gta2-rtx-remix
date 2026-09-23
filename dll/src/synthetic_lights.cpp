@@ -172,6 +172,7 @@ void EnsureBinding() {
     fire.intensity = 0.7f;
     fire.radius = 2.5f;
     fire.heightOffset = 0.1f;
+    fire.flicker = 0.35f;
     // Fires come in clusters of dozens and each one is a bridge round trip, so
     // this ceiling matters more here than anywhere else.
     fire.maxLights = 16;
@@ -221,7 +222,34 @@ bool Room(int category) {
     return false;
 }
 
-void SubmitPoint(int category, const float* world, float extraIntensity) {
+// Brightness multiplier for a flickering light, 1 +/- amount.
+//
+// Three sines well apart in frequency read as a flame rather than a pulse; the
+// fastest is kept under half the 30 fps frame cap so it does not alias into a
+// slow beat. The phases come from the particle's own identity, so each light in
+// a cluster flickers on its own and they never pulse together, and a particle
+// keeps its phase for as long as it lives.
+float Flicker(uintptr_t seed, float amount) {
+    static LARGE_INTEGER frequency = {};
+    if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double t = static_cast<double>(now.QuadPart) / static_cast<double>(frequency.QuadPart);
+
+    uint32_t h = static_cast<uint32_t>(seed) * 2654435761u;
+    h ^= h >> 15;
+    constexpr double kTau = 6.283185307179586;
+    const double p1 = ((h >> 0) & 0xFF) / 255.0 * kTau;
+    const double p2 = ((h >> 8) & 0xFF) / 255.0 * kTau;
+    const double p3 = ((h >> 16) & 0xFF) / 255.0 * kTau;
+    const double wave = 0.55 * std::sin(kTau * 9.3 * t + p1) +
+                        0.30 * std::sin(kTau * 4.7 * t + p2) +
+                        0.15 * std::sin(kTau * 2.1 * t + p3);
+    const float f = 1.0f + amount * static_cast<float>(wave);
+    return f > 0.0f ? f : 0.0f;
+}
+
+void SubmitPoint(int category, const float* world, float extraIntensity, uintptr_t seed) {
     if (!Room(category)) return;
     const SyntheticCategorySettings& c = g_settings.category[category];
     const float daylight = DaylightGateFactor(c.gate);
@@ -234,6 +262,7 @@ void SubmitPoint(int category, const float* world, float extraIntensity) {
     d.rgb[1] = c.rgb[1];
     d.rgb[2] = c.rgb[2];
     d.intensity = c.intensity * extraIntensity * daylight;
+    if (c.flicker > 0.0f) d.intensity *= Flicker(seed, c.flicker);
     d.radius = c.radius;
     d.source = static_cast<uint8_t>(kLightSourceMuzzle + category);
     LightsSubmitExtra(d);
@@ -315,7 +344,7 @@ void WalkParticles() {
 
             const int category = g_binding[type];
             if (category >= 0 && g_settings.category[category].enabled) {
-                SubmitPoint(category, info.lastPos, 1.0f);
+                SubmitPoint(category, info.lastPos, 1.0f, reinterpret_cast<uintptr_t>(entry));
             }
         }
         entry = next;
@@ -957,6 +986,7 @@ void SyntheticLightsLoad(const char* path) {
         else if (_stricmp(key, "Intensity") == 0) c.intensity = static_cast<float>(atof(value));
         else if (_stricmp(key, "Radius") == 0) c.radius = static_cast<float>(atof(value));
         else if (_stricmp(key, "Height") == 0) c.heightOffset = static_cast<float>(atof(value));
+        else if (_stricmp(key, "Flicker") == 0) c.flicker = static_cast<float>(atof(value));
         else if (_stricmp(key, "MaxLights") == 0) c.maxLights = atoi(value);
         else if (_stricmp(key, "ConeAngle") == 0) c.coneAngleDeg = static_cast<float>(atof(value));
         else if (_stricmp(key, "Forward") == 0) c.forwardOffset = static_cast<float>(atof(value));
@@ -1010,6 +1040,7 @@ void SyntheticLightsSave() {
         fprintf(f, "Intensity=%.3f\n", c.intensity);
         fprintf(f, "Radius=%.3f\n", c.radius);
         fprintf(f, "Height=%.3f\n", c.heightOffset);
+        if (i != kSynthHeadlight) fprintf(f, "Flicker=%.3f\n", c.flicker);
         fprintf(f, "Daylight=%d %.2f %.2f\n", c.gate.enabled ? 1 : 0, c.gate.offAboveDeg,
                 c.gate.onBelowDeg);
         if (i == kSynthHeadlight) {

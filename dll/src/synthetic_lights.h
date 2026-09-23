@@ -52,6 +52,10 @@ struct SyntheticCategorySettings {
     float intensity = 1.0f;
     float radius = 2.0f;       // reach in tiles, fed to the same radiance curve
     float heightOffset = 0.0f; // tiles above the effect's own position
+    // How far brightness wanders around its setting, 0 for steady. A flame is
+    // never a constant light; each particle flickers on its own phase, so a
+    // cluster of them never pulses in step.
+    float flicker = 0.0f;
 
     // Every emitted light is a CreateLight across the 32-bit Remix bridge, and
     // some particle types come in bursts of dozens. Binding one of those without

@@ -615,6 +615,11 @@ void DrawCategory(int category) {
     changed |= ImGui::SliderFloat("Brightness", &c.intensity, 0.0f, 8.0f, "%.3f",
                                   ImGuiSliderFlags_Logarithmic);
     changed |= ImGui::SliderFloat("Reach (tiles)", &c.radius, 0.1f, 12.0f, "%.2f");
+    if (category != kSynthHeadlight) {
+        changed |= ImGui::SliderFloat("Flicker", &c.flicker, 0.0f, 1.0f, "%.2f");
+        ImGui::SetItemTooltip("How far brightness wanders, 0 for a steady light. Each light "
+                              "flickers on its own, so a fire never pulses in step.");
+    }
     changed |= DrawGate(c.gate, "burning");
 
     if (category == kSynthHeadlight) {
