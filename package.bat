@@ -34,6 +34,10 @@ rem it on, and no Remix release ships that file - so without this the renderer
 rem gets NOT_INITIALIZED and the city has no lights of its own.
 mkdir "%OUT%\.trex" || exit /b 1
 copy /y "%~dp0package\bridge.conf" "%OUT%\.trex\" >nul || exit /b 1
+rem The Remix settings GTA2 needs. Kept in package\ like everything else here:
+rem release\ is wiped at the top of this script, so a file only placed there
+rem does not survive the next build.
+copy /y "%~dp0package\rtx.conf" "%OUT%\" >nul || exit /b 1
 rem Not README.txt: GTA2 ships a readme.txt and Windows would treat the two as
 rem the same file, so unzipping would overwrite the game's.
 copy /y "%~dp0package\gta2dx9_README.txt" "%OUT%\" >nul || exit /b 1
