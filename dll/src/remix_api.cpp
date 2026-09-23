@@ -79,6 +79,16 @@ bool RemixApiInit() {
 
     remixapi_Interface candidate = {};
     const remixapi_ErrorCode rc = initialize(&info, &candidate);
+    // The bridge client answers NOT_INITIALIZED for one reason only: the API is
+    // switched off in .trex\bridge.conf, which it is by default. That is a
+    // setting, not a bridge still starting up, so asking again cannot help.
+    if (rc == REMIXAPI_ERROR_CODE_NOT_INITIALIZED) {
+        g_attempts = kMaxAttempts;
+        SetStatus("%s: Remix API is switched off - set exposeRemixApi = True in "
+                  ".trex\\bridge.conf", moduleName);
+        Log("remix: %s", g_status);
+        return false;
+    }
     if (rc != REMIXAPI_ERROR_CODE_SUCCESS) {
         SetStatus("%s: remixapi_InitializeLibrary failed (code %d)", moduleName,
                   static_cast<int>(rc));
@@ -89,6 +99,21 @@ bool RemixApiInit() {
     // A bridge that answered but left the light entry points empty would fault on
     // first use, so a partial table counts as unavailable rather than trusting
     // the success code alone.
+    //
+    // The bridge client does not check the version it is handed, so a bridge
+    // built for another API answers success with its table laid out its own way.
+    // Remix Plus 1.4.x (API 0.6) has SetCameraMediumMaterial at slot 7 where
+    // 0.1000 moved it to the end, so every slot from DrawInstance on is one out:
+    // read through this header, DrawInstance and DestroyLight come back empty
+    // (1.4.x never fills SetCameraMediumMaterial or CreateLightBatched) while
+    // CreateLight holds its DrawInstance. Say so, rather than calling it.
+    if (!candidate.DrawInstance && candidate.CreateLight && !candidate.DestroyLight) {
+        g_attempts = kMaxAttempts;
+        SetStatus("%s is built for an older Remix API (0.6, Remix Plus 1.4.x); this needs "
+                  "API 0.1000 (Remix Plus 1.5.0 or newer)", moduleName);
+        Log("remix: %s", g_status);
+        return false;
+    }
     if (!candidate.CreateLight || !candidate.DestroyLight || !candidate.DrawLightInstance) {
         g_attempts = kMaxAttempts;
         SetStatus("%s: Remix API is missing the light entry points", moduleName);

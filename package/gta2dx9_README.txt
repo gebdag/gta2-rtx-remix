@@ -14,7 +14,10 @@ What you need
 -------------
 
 * GTA2. The free v9.6 release is what this was built and tested against.
-* The RTX Remix runtime, installed into the GTA2 folder as its instructions say.
+* The RTX Remix runtime for x86 games, installed into the GTA2 folder as its
+  instructions say. It has to speak Remix API 0.1000: Remix Plus 1.5.0 or
+  newer. Remix Plus 1.4.x (API 0.6) runs, but the renderer cannot place a
+  single light through it, and says so in the F4 menu.
 * Windows 10 or 11, 64-bit.
 
 
@@ -105,6 +108,13 @@ what happened. A few things they tend to say:
 * "Remix API unavailable" in the F4 menu, and the game looks like plain GTA2 -
   Remix is not loading. Check step 3.
 
+* "Remix API is switched off" in the F4 menu - .trex\bridge.conf is missing or
+  does not say exposeRemixApi = True. The zip ships one; if you installed Remix
+  after this mod and it replaced the .trex folder, copy it back.
+
+* "built for an older Remix API" in the F4 menu - the Remix install is Remix
+  Plus 1.4.x or older. Install 1.5.0 or newer.
+
 * Nothing in the log at all - this renderer is not the one being loaded.
   Check that d3ddll.dll in the GTA2 folder is the one from this zip (it is
   about 900 KB; GTA2's own is 80 KB), or, if you went the install.reg way, run
@@ -139,6 +149,7 @@ What the files are
     gta2dx9_README.txt    this file
     gta2dx9_LICENSE.txt   the licence this is shared under (MIT)
     gta2dx9_THIRD_PARTY.txt  notices for the code built into gta2dx9.dll
+    .trex/bridge.conf     switches on the Remix API the lights go through
     install.reg           points GTA2 at gta2dx9.dll and gta2dx9_vid.dll
     uninstall.reg         points it back at its own names
 
