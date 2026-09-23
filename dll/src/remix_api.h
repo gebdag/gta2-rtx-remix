@@ -43,6 +43,11 @@ void RemixApiShutdown();
 
 bool RemixApiAvailable();
 
+// Whether the Remix behind the API has an atmospheric sky - rtx.atmosphere.* -
+// for the day/night clock to move. Remix Plus does; NVIDIA's own runtime does
+// not, and there the clock is switched off rather than left driving nothing.
+bool RemixApiHasAtmosphere();
+
 // Null until RemixApiInit has succeeded.
 const remixapi_Interface* RemixApi();
 

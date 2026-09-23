@@ -7,6 +7,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <initializer_list>
 
 namespace gta2dx9 {
 namespace {
@@ -18,6 +19,7 @@ namespace {
 const char* const kBridgeModules[] = {"d3d9_remix.dll", "d3d9.dll"};
 
 bool               g_available = false;
+bool               g_atmosphere = false;
 remixapi_Interface g_interface = {};
 char               g_status[160] = "not initialised";
 int                g_attempts = 0;
@@ -27,6 +29,50 @@ int                g_attempts = 0;
 // is not worth retrying forever either - a stock d3d9.dll will never grow the
 // export.
 const int kMaxAttempts = 600;
+
+// Which Remix API function table the bridge handed back.
+//
+// The bridge client never checks the version it is asked for: it answers
+// success and fills its own remixapi_Interface by field name, laid out however
+// the header it was compiled against lays it out. Three layouts are out there,
+// and read through the wrong one every call lands in a different function -
+// on stock NVIDIA Remix, SetConfigVariable runs dxvk_RegisterD3D9Device and
+// CreateLight runs DestroyLight with one argument too many, which unbalances
+// the __stdcall stack and takes the game down.
+//
+// The light structs themselves are compatible across all three: the fork only
+// appends isDynamic and ignoreViewModel to remixapi_LightInfo, which a stock
+// bridge does not serialise, and the sphere and distant extensions and their
+// sType values are identical. So what differs is only where the four entry
+// points this renderer calls sit, and that is recognisable: the bridge fills a
+// fixed set of slots and leaves the rest null, and the pattern of filled slots
+// 1..13 differs between every layout. Slot 0, Shutdown, is null in all of them.
+struct TableLayout {
+    const char* name;
+    unsigned filled;  // bit n set: slot n is filled by this layout's bridge
+    int createLight, destroyLight, drawLightInstance, setConfigVariable;
+    // Whether the runtime behind it has the rtx.atmosphere.* sky the day/night
+    // clock drives. Remix Plus does; NVIDIA's own renders no sky of its own.
+    bool atmosphere;
+};
+
+constexpr unsigned Slots(std::initializer_list<int> slots) {
+    unsigned mask = 0;
+    for (int slot : slots) mask |= 1u << slot;
+    return mask;
+}
+
+const TableLayout kLayouts[] = {
+    // This header: Remix Plus 1.5.0 and newer. Slots 4, 6, 9 are
+    // CreateMeshBatched, SetupCamera and CreateLightBatched, never filled.
+    {"Remix Plus 1.5+, API 0.1000", Slots({1, 2, 3, 5, 7, 8, 10, 11, 12}), 8, 10, 11, 12, true},
+    // NVIDIA's own, API 0.6.x: no batched entry points, SetupCamera at 5.
+    {"NVIDIA RTX Remix, API 0.6", Slots({1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12}), 7, 8, 9, 10,
+     false},
+    // Remix Plus 1.4.x, API 0.6.3: SetCameraMediumMaterial still at 7.
+    {"Remix Plus 1.4, API 0.6", Slots({1, 2, 3, 5, 8, 9, 11, 12, 13}), 9, 11, 12, 13, true},
+};
+constexpr int kProbedSlots = 14;
 
 void SetStatus(const char* format, ...) {
     va_list args;
@@ -77,8 +123,13 @@ bool RemixApiInit() {
         REMIXAPI_VERSION_MAKE(REMIXAPI_VERSION_MAJOR, REMIXAPI_VERSION_MINOR,
                               REMIXAPI_VERSION_PATCH)};
 
-    remixapi_Interface candidate = {};
-    const remixapi_ErrorCode rc = initialize(&info, &candidate);
+    // Room past the end of our own table: a bridge built against a longer one
+    // writes all of it, and that must land here rather than on the stack.
+    struct {
+        remixapi_Interface table;
+        void* spare[64];
+    } candidate = {};
+    const remixapi_ErrorCode rc = initialize(&info, &candidate.table);
     // The bridge client answers NOT_INITIALIZED for one reason only: the API is
     // switched off in .trex\bridge.conf, which it is by default. That is a
     // setting, not a bridge still starting up, so asking again cannot help.
@@ -96,35 +147,40 @@ bool RemixApiInit() {
         return false;
     }
 
-    // A bridge that answered but left the light entry points empty would fault on
-    // first use, so a partial table counts as unavailable rather than trusting
-    // the success code alone.
-    //
-    // The bridge client does not check the version it is handed, so a bridge
-    // built for another API answers success with its table laid out its own way.
-    // Remix Plus 1.4.x (API 0.6) has SetCameraMediumMaterial at slot 7 where
-    // 0.1000 moved it to the end, so every slot from DrawInstance on is one out:
-    // read through this header, DrawInstance and DestroyLight come back empty
-    // (1.4.x never fills SetCameraMediumMaterial or CreateLightBatched) while
-    // CreateLight holds its DrawInstance. Say so, rather than calling it.
-    if (!candidate.DrawInstance && candidate.CreateLight && !candidate.DestroyLight) {
-        g_attempts = kMaxAttempts;
-        SetStatus("%s is built for an older Remix API (0.6, Remix Plus 1.4.x); this needs "
-                  "API 0.1000 (Remix Plus 1.5.0 or newer)", moduleName);
-        Log("remix: %s", g_status);
-        return false;
+    // Work out whose table this is from the slots the bridge filled, and take
+    // the four entry points from where that layout keeps them. See kLayouts.
+    void* const* slots = reinterpret_cast<void* const*>(&candidate.table);
+    unsigned filled = 0;
+    for (int i = 1; i < kProbedSlots; ++i) {
+        if (slots[i]) filled |= 1u << i;
     }
-    if (!candidate.CreateLight || !candidate.DestroyLight || !candidate.DrawLightInstance) {
+    const TableLayout* layout = nullptr;
+    for (const TableLayout& known : kLayouts) {
+        if (known.filled == filled) layout = &known;
+    }
+    if (!layout) {
+        // A table we do not recognise is one whose every call might land in the
+        // wrong function. Run without lights rather than find out.
         g_attempts = kMaxAttempts;
-        SetStatus("%s: Remix API is missing the light entry points", moduleName);
+        SetStatus("%s: unrecognised Remix API table (slots %04X); lights off", moduleName,
+                  filled);
         Log("remix: %s", g_status);
         return false;
     }
 
-    g_interface = candidate;
+    remixapi_Interface mapped = {};
+    mapped.Shutdown = reinterpret_cast<PFN_remixapi_Shutdown>(slots[0]);
+    mapped.CreateLight = reinterpret_cast<PFN_remixapi_CreateLight>(slots[layout->createLight]);
+    mapped.DestroyLight = reinterpret_cast<PFN_remixapi_DestroyLight>(slots[layout->destroyLight]);
+    mapped.DrawLightInstance =
+        reinterpret_cast<PFN_remixapi_DrawLightInstance>(slots[layout->drawLightInstance]);
+    mapped.SetConfigVariable =
+        reinterpret_cast<PFN_remixapi_SetConfigVariable>(slots[layout->setConfigVariable]);
+
+    g_interface = mapped;
     g_available = true;
-    SetStatus("ready via %s (API %d.%d.%d)", moduleName, REMIXAPI_VERSION_MAJOR,
-              REMIXAPI_VERSION_MINOR, REMIXAPI_VERSION_PATCH);
+    g_atmosphere = layout->atmosphere;
+    SetStatus("ready via %s (%s)", moduleName, layout->name);
     Log("remix: %s", g_status);
     return true;
 }
@@ -137,6 +193,8 @@ void RemixApiShutdown() {
 }
 
 bool RemixApiAvailable() { return g_available; }
+
+bool RemixApiHasAtmosphere() { return g_available && g_atmosphere; }
 
 const remixapi_Interface* RemixApi() { return g_available ? &g_interface : nullptr; }
 

@@ -151,6 +151,11 @@ void TimeOfDayUpdate() {
         SetStatus("Remix API not available; the clock runs but the sky does not move");
         return;
     }
+    if (!RemixApiHasAtmosphere()) {
+        g_pushed = false;
+        SetStatus("off: this Remix has no atmospheric sky to move (needs Remix Plus)");
+        return;
+    }
 
     const double sincePush = Seconds(g_lastPush, now) * 1000.0;
     const bool due = sincePush >= g_settings.pushIntervalMs;
@@ -194,6 +199,10 @@ float DaylightGateFactorAt(const DaylightGate& gate, float sunElevationDeg) {
 
 float DaylightGateFactor(const DaylightGate& gate) {
     if (!gate.enabled || !g_settings.enabled) return 1.0f;
+    // No sky to follow the clock, so no daytime to switch lights off for: a
+    // street light dark at noon under a sky that never changed would just look
+    // broken.
+    if (RemixApiAvailable() && !RemixApiHasAtmosphere()) return 1.0f;
     return DaylightGateFactorAt(gate, g_elevation);
 }
 
