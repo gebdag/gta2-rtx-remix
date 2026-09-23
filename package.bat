@@ -38,6 +38,9 @@ rem The Remix settings GTA2 needs. Kept in package\ like everything else here:
 rem release\ is wiped at the top of this script, so a file only placed there
 rem does not survive the next build.
 copy /y "%~dp0package\rtx.conf" "%OUT%\" >nul || exit /b 1
+rem The Remix mod: emissive maps for the game's own textures, as one
+rem replacement layer (mod.usd) and the ingested masks beside it.
+xcopy "%~dp0package\rtx-remix" "%OUT%\rtx-remix\" /e /i /q /y >nul || exit /b 1
 rem Not README.txt: GTA2 ships a readme.txt and Windows would treat the two as
 rem the same file, so unzipping would overwrite the game's.
 copy /y "%~dp0package\gta2dx9_README.txt" "%OUT%\" >nul || exit /b 1

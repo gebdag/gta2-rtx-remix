@@ -8,14 +8,17 @@ Features:
 - generating new lights off of game events
 - dynamic time of day (Remix Plus required) 
 
+The mod also comes with emissive maps for some of the games textures.
 
 What you need
 -------------
 
 * GTA2 v9.6 - available for free online
 * RTX Remix for x86 games, installed in the GTA2 folder. Remix Plus 1.5 or newer
-  is recommended. NVIDIA's own Remix and Remix Plus 1.4 also work; with NVIDIA's
-  there is no day/night cycle.
+  is recommended - get Remix_Plus_v1.5.1_x86_games_release.zip from
+  https://github.com/RemixProjGroup/dxvk-remix/releases/tag/remix-plus-1.5.1
+  NVIDIA's own Remix and Remix Plus 1.4 also work; with NVIDIA's there is no
+  day/night cycle.
 * Windows 10 or 11, 64-bit.
 
 
@@ -42,8 +45,10 @@ change the resolution; run install.reg again when that happens.
 Uninstalling
 ------------
 
-Put your backed-up d3ddll.dll and Dmavideo.dll back, run uninstall.reg, and
-delete the gta2dx9* files.
+1. Put your backed-up d3ddll.dll and Dmavideo.dll back.
+2. Run uninstall.reg.
+3. Delete the gta2dx9* files and the rtx-remix\mods\gta2rtx folder.
+4. If you are removing RTX Remix as well, delete rtx.conf and .trex\bridge.conf.
 
 
 Troubleshooting
@@ -71,6 +76,7 @@ Files
     gta2dx9_settings.ini           light tuning, written by the F4 menu
     rtx.conf                       Remix settings for GTA2
     .trex\bridge.conf              turns on the Remix API
+    rtx-remix\mods\gta2rtx         the emissive maps
     install.reg, uninstall.reg     registry setup, see above
     gta2dx9_LICENSE.txt            MIT licence
     gta2dx9_THIRD_PARTY.txt        third-party notices
