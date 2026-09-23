@@ -182,6 +182,16 @@ bool RemixApiInit() {
     g_atmosphere = layout->atmosphere;
     SetStatus("ready via %s (%s)", moduleName, layout->name);
     Log("remix: %s", g_status);
+
+    // Turn the sky on, so rtx.conf does not have to name a sky mode that only
+    // some runtimes have. rtx.skyMode 1 is the atmosphere in both Remix Plus
+    // lines - PhysicalAtmosphere in 1.4, Numos from 1.5 - and it is what the
+    // day/night clock moves the sun across. GTA2 has no skybox for mode 0 to
+    // rasterise. NVIDIA's runtime has no such option and is left alone.
+    if (g_atmosphere) {
+        const bool sky = RemixSetConfig("rtx.skyMode", "1");
+        Log("remix: rtx.skyMode = 1 (atmospheric sky) %s", sky ? "set" : "refused");
+    }
     return true;
 }
 
