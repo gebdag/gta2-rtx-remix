@@ -1,7 +1,7 @@
 Third-party software in gta2dx9.dll
 ===================================
 
-gta2dx9.dll (and optional\d3ddll.dll, which is the same file) contains the
+gta2dx9.dll (and d3ddll.dll, which is the same file) contains the
 following third-party software. gta2dx9's own licence is in
 gta2dx9_LICENSE.txt.
 

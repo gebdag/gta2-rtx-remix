@@ -21,13 +21,32 @@ What you need
 Installing
 ----------
 
-1. Unzip everything in this folder into your GTA2 folder - the one with
-   gta2.exe. Nothing here shares a name with a GTA2 file, so nothing of the
-   game's is overwritten. (This file is gta2dx9_README.txt rather than
-   README.txt for exactly that reason - GTA2 has a readme.txt of its own.)
+1. Back up two files from your GTA2 folder - the one with gta2.exe:
 
-2. Run install.reg and accept the prompt. It needs administrator rights,
-   because GTA2 keeps its settings under HKEY_LOCAL_MACHINE.
+       d3ddll.dll     GTA2's Direct3D renderer
+       Dmavideo.dll   GTA2's video device
+
+   Copy them somewhere safe. Step 2 replaces both, and there is no other copy of
+   them short of reinstalling the game. You only need them to uninstall.
+
+2. Unzip everything in this folder into your GTA2 folder, and let it replace
+   d3ddll.dll and Dmavideo.dll when Windows asks. Nothing else here shares a name
+   with a GTA2 file. (This file is gta2dx9_README.txt rather than README.txt for
+   that reason - GTA2 has a readme.txt of its own.)
+
+   Those two are the whole install. They are this renderer and this video device
+   under the names GTA2 loads out of the box, so the game picks them up without
+   any setup - and keeps picking them up whatever the GTA2 manager or the
+   in-game options screen do to its settings, because those can only ever write
+   GTA2's own names back.
+
+   The video device is the one that matters. GTA2's own asks DirectDraw for
+   16-bit colour, which modern displays no longer offer, and refuses to start:
+
+       Videomode 16x16x16 is not available
+
+   This one never asks for a display mode at all, and needs nothing of the
+   original's.
 
 3. Rename Remix's d3d9.dll to d3d9_remix.dll.
 
@@ -46,39 +65,32 @@ frame cap, how sprites sit on the road. Tick "Advanced" in its title bar for the
 diagnostics.
 
 
-Optional: d3ddll.dll and Dmavideo.dll
--------------------------------------
+If you would rather not replace GTA2's files
+--------------------------------------------
 
-The GTA2 manager and the in-game options screen rewrite the renderer and video
-device settings whenever you touch the resolution, and they can only write names
-GTA2 has hardcoded. If that happens the mod stops loading - the renderer quietly,
-and the video device loudly: GTA2's own asks DirectDraw for 16-bit colour, which
-modern displays no longer offer, and the game will not start at all:
+Skip them in step 2 and run install.reg instead, accepting the prompt. It points
+GTA2 at gta2dx9.dll and gta2dx9_vid.dll, which are the same two files under names
+of their own. It needs administrator rights, because GTA2 keeps its settings
+under HKEY_LOCAL_MACHINE.
 
-    Videomode 16x16x16 is not available
-
-The two files in the "optional" folder guard against that. They are the same
-renderer and video device under the names GTA2 falls back to, so whatever the
-manager writes, the game still loads this mod and still boots. The video device
-does not need GTA2's own for anything, so replacing it costs nothing.
-
-Both OVERWRITE a GTA2 file. Back the originals up first - there is no other copy
-of them, and getting them back otherwise means reinstalling the game.
-
-If you skip them and the mod does stop loading after a visit to the manager,
-just run install.reg again.
+The catch is that the GTA2 manager and the in-game options screen write GTA2's
+own names back whenever you touch the resolution, and then the game stops at
+"Videomode 16x16x16 is not available" again. Run install.reg again when that
+happens.
 
 
 Uninstalling
 ------------
 
-Run uninstall.reg, then delete the files this added:
+Put your backed-up d3ddll.dll and Dmavideo.dll back, run uninstall.reg, then
+delete the files this added:
 
     gta2dx9.dll  gta2dx9_vid.dll  gta2dx9.ini  gta2dx9_effects.ini
     gta2dx9_settings.ini  gta2dx9.log  gta2dx9_vid.log
     gta2dx9_README.txt  gta2dx9_LICENSE.txt  gta2dx9_THIRD_PARTY.txt
 
-If you copied either optional file, delete it and put GTA2's own back.
+Without the two originals GTA2 still runs this mod, because the replacements are
+this mod. Reinstalling the game is the other way back.
 
 
 If it does not start
@@ -93,20 +105,21 @@ what happened. A few things they tend to say:
 * "Remix API unavailable" in the F4 menu, and the game looks like plain GTA2 -
   Remix is not loading. Check step 3.
 
-* Nothing in the log at all - the registry did not take. install.reg needs
-  administrator rights; check that rendername under
-  HKLM\SOFTWARE\WOW6432Node\DMA Design Ltd\GTA2\Screen really says gta2dx9.dll.
+* Nothing in the log at all - this renderer is not the one being loaded.
+  Check that d3ddll.dll in the GTA2 folder is the one from this zip (it is
+  about 900 KB; GTA2's own is 80 KB), or, if you went the install.reg way, run
+  it again.
 
 * "Videomode 16x16x16 is not available" - GTA2's own video device is loaded,
   not this one, and it wants a 16-bit display mode your display does not have.
-  Copy optional\Dmavideo.dll into the GTA2 folder (see "Optional" above), or run
-  install.reg again. gta2dx9_vid.log is not written in this case, because the
-  file that writes it was never loaded.
+  Dmavideo.dll in the GTA2 folder is still the game's (60 KB; this one is about
+  135 KB) - copy the one from this zip over it. gta2dx9_vid.log is not written
+  in this case, because the file that writes it was never loaded.
 
 * It worked, then you used the GTA2 manager or the in-game options screen, and
-  now it does not - or the game will not start at all. Those screens rewrite the
-  renderer and video device settings to GTA2's own. Run install.reg again, or
-  use the optional files.
+  now it does not. Those screens write GTA2's own renderer and video device
+  names back. With the two files from step 2 in place that is harmless; if you
+  went the install.reg way instead, run it again.
 
 * A previous install of dxwrapper (a ddraw.dll in the GTA2 folder) is not needed
   and gets in the way. Rename or delete it; the video device here does the job it
@@ -116,18 +129,18 @@ what happened. A few things they tend to say:
 What the files are
 ------------------
 
-    gta2dx9.dll           the renderer
-    gta2dx9_vid.dll       the video device shim
+    d3ddll.dll            the renderer, under the name GTA2 loads
+    Dmavideo.dll          the video device, under the name GTA2 loads
+    gta2dx9.dll           the renderer again, for install.reg
+    gta2dx9_vid.dll       the video device again, for install.reg
     gta2dx9.ini           settings, required, commented
     gta2dx9_effects.ini   which particle type is fire, sparks, gunfire and so on
     gta2dx9_settings.ini  light tuning; delete it for the built-in defaults
     gta2dx9_README.txt    this file
     gta2dx9_LICENSE.txt   the licence this is shared under (MIT)
     gta2dx9_THIRD_PARTY.txt  notices for the code built into gta2dx9.dll
-    install.reg           points GTA2 at the two DLLs
-    uninstall.reg         points it back at its own
-    optional/d3ddll.dll   see above
-    optional/Dmavideo.dll see above
+    install.reg           points GTA2 at gta2dx9.dll and gta2dx9_vid.dll
+    uninstall.reg         points it back at its own names
 
 The two ini files the F4 menu writes are yours to keep or delete - the Save
 button in the menu writes them, and nothing is lost by starting again without

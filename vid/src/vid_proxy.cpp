@@ -135,7 +135,7 @@
 //
 // Because of that, this file also works under the game's own name with no
 // original beside it - which is what lets the game boot whichever video device
-// the registry names. See package\optional.
+// the registry names: the release ships it as Dmavideo.dll too. See package.bat.
 //
 // own_screen=0 still forwards everything to the original, for comparison.
 //
