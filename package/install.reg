@@ -18,8 +18,8 @@ Windows Registry Editor Version 5.00
 ;                frame itself, and its cap is a real number - see fps_cap in
 ;                gta2dx9.ini.
 ;
-; Both hives are written. The GTA2 manager and the in-game options screen write
-; HKLM, and the game has been seen reading either.
+; Three keys are written. The GTA2 manager and the in-game options screen write
+; HKLM, the game has been seen reading HKCU, and the third is explained below.
 ;
 ; Your own resolution settings are deliberately not touched.
 
@@ -31,6 +31,17 @@ Windows Registry Editor Version 5.00
 "min_frame_rate"=dword:00000000
 
 [HKEY_CURRENT_USER\SOFTWARE\DMA Design Ltd\GTA2\Screen]
+"rendername"="gta2dx9.dll"
+"videoname"="gta2dx9_vid.dll"
+"lighting"=dword:00000001
+"max_frame_rate"=dword:00000000
+"min_frame_rate"=dword:00000000
+
+; gta2.exe has no manifest, so Windows virtualises its registry: a value under
+; this key shadows the HKLM one above for every read the game makes. The GTA2
+; manager, run without administrator rights, writes here - and then install.reg
+; appears to do nothing. Writing both keeps them in agreement.
+[HKEY_CURRENT_USER\Software\Classes\VirtualStore\MACHINE\SOFTWARE\WOW6432Node\DMA Design Ltd\GTA2\Screen]
 "rendername"="gta2dx9.dll"
 "videoname"="gta2dx9_vid.dll"
 "lighting"=dword:00000001

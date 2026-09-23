@@ -2,10 +2,10 @@ Windows Registry Editor Version 5.00
 
 ; Puts GTA2 back on its own renderer and video device.
 ;
-; This is the whole uninstall *if* you did not copy the optional d3ddll.dll.
-; If you did, that file is ours and this will load it again - delete it and put
-; GTA2's own d3ddll.dll back from the backup the readme asked you to make, or
-; reinstall the game.
+; This is the whole uninstall *if* you did not copy the optional d3ddll.dll or
+; Dmavideo.dll. If you did, those files are ours and this will load them again -
+; delete them and put GTA2's own back from the backup the readme asked you to
+; make, or reinstall the game.
 ;
 ; The mod's own files (gta2dx9.dll, gta2dx9_vid.dll, gta2dx9*.ini, gta2dx9*.log)
 ; can simply be deleted; nothing of the game's is under those names.
@@ -15,5 +15,10 @@ Windows Registry Editor Version 5.00
 "videoname"="dmavideo.dll"
 
 [HKEY_CURRENT_USER\SOFTWARE\DMA Design Ltd\GTA2\Screen]
+"rendername"="d3ddll.dll"
+"videoname"="dmavideo.dll"
+
+; gta2.exe reads this one ahead of HKLM - see install.reg.
+[HKEY_CURRENT_USER\Software\Classes\VirtualStore\MACHINE\SOFTWARE\WOW6432Node\DMA Design Ltd\GTA2\Screen]
 "rendername"="d3ddll.dll"
 "videoname"="dmavideo.dll"

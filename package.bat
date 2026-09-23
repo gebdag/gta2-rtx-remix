@@ -1,9 +1,9 @@
 @echo off
 rem Builds both DLLs and assembles release\ - exactly what a player unzips.
 rem
-rem Nothing in the release shares a name with a GTA2 file except the optional
-rem d3ddll.dll, which is the same renderer under the one name the GTA2 manager
-rem can be made to pick. See package\README.txt.
+rem Nothing in the release shares a name with a GTA2 file except the two in
+rem optional\, d3ddll.dll and Dmavideo.dll: the same renderer and video device
+rem under the names the GTA2 manager writes back. See package\gta2dx9_README.txt.
 setlocal
 cd /d "%~dp0" || exit /b 1
 
@@ -18,8 +18,11 @@ mkdir "%OUT%\optional" || exit /b 1
 copy /y "%~dp0dll\build\gta2dx9.dll"     "%OUT%\gta2dx9.dll"          >nul || exit /b 1
 copy /y "%~dp0vid\build\gta2dx9_vid.dll" "%OUT%\gta2dx9_vid.dll"      >nul || exit /b 1
 rem The same renderer again, under the name the manager can pick. Opt-in,
-rem because it is the only file here that overwrites one of GTA2's.
+rem because the two files in optional\ are the only ones that overwrite GTA2's.
 copy /y "%~dp0dll\build\gta2dx9.dll"     "%OUT%\optional\d3ddll.dll"  >nul || exit /b 1
+rem And the video device under the game's name, for the same reason. It needs
+rem nothing of the original's, so replacing Dmavideo.dll is safe.
+copy /y "%~dp0vid\build\gta2dx9_vid.dll" "%OUT%\optional\Dmavideo.dll" >nul || exit /b 1
 
 copy /y "%~dp0package\gta2dx9.ini"   "%OUT%\" >nul || exit /b 1
 copy /y "%~dp0package\install.reg"   "%OUT%\" >nul || exit /b 1

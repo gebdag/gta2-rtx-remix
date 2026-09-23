@@ -104,13 +104,40 @@
 // chose, which Vid_CheckMode already stored at ctx+0x08 and ctx+0x0C, and the
 // game sees exactly the screen size it always did.
 //
-// --- What this is for -------------------------------------------------------
+// --- Standing alone ----------------------------------------------------------
 //
-// Everything forwards, so the game behaves exactly as before except for the one
-// substitution, and every call is logged with its arguments. That log is the
-// specification for the standalone stub that comes next: of the 22 exports GTA2
-// only calls 13, and the mode enumeration - Vid_FindMode, Vid_FindFirstMode,
-// Vid_FindNextMode - it never calls at all.
+// Forwarding still left the game at the mercy of DirectDraw. Vid_Init_SYS in the
+// original enumerates DirectDraw's devices and modes, and what comes back
+// depends on the display, the driver, whatever ddraw.dll wrapper sits in the
+// game folder and which compatibility shims Windows applied.
+//
+// With own_screen the original has nothing left to do: no display mode is set,
+// no surface is created, and every call that matters is already answered here.
+// So own_screen=1 (the default) no longer loads the original at all. The device
+// below is what the game sees instead, rebuilt from Dmavideo.dll itself:
+//
+//   Vid_Init_SYS   allocates the 0x4C4-byte context and one device record - the
+//                  primary display, id 1, flags 0 - exactly as the original's
+//                  DirectDrawEnumerate callback (Dmavideo.dll+0x1450) builds it
+//   Vid_SetDevice  records the device at ctx+0x34
+//   Vid_FindDevice walks ctx+0x2C. gta2.exe reads the record's flags on
+//                  WM_ACTIVATEAPP (0x004D0B85), and the original's are 0, so
+//                  these are too
+//   Vid_CheckMode  accepts whatever size the game asks for, at any depth
+//   Vid_SetGamma   returns 1, which is what the original returns with no primary
+//                  surface - the only state it is ever in here
+//   Vid_WindowProc returns 0, as the original does unconditionally
+//
+// Nothing else reads the context: gta2.exe touches +0x04 (flags it ORs in),
+// +0x08..+0x10 and +0x48..+0x54 (see above), +0x40 (-2 is its windowed mode,
+// which it only picks on a 16-bit desktop), and the pixel format at +0x5C..+0x6C
+// and the primary at +0x134, which only the Bink intro reads.
+//
+// Because of that, this file also works under the game's own name with no
+// original beside it - which is what lets the game boot whichever video device
+// the registry names. See package\optional.
+//
+// own_screen=0 still forwards everything to the original, for comparison.
 //
 // Log goes to gta2dx9_vid.log beside gta2.exe.
 
@@ -238,6 +265,30 @@ bool OwnScreen() {
     return cached != 0;
 }
 
+// Whether this DLL is the video device rather than a proxy for one.
+//
+// own_screen means the original has nothing to do, so it is never loaded - which
+// is what takes DirectDraw, and with it the 16-bit mode list, out of the boot.
+// Without own_screen the original is needed; if it cannot be found (this file
+// installed under the game's own name with no Dmavideo_orig.dll beside it) the
+// game still boots, standalone, rather than stopping at "Videomode 16x16x16".
+bool Standalone() {
+    static int cached = -1;
+    if (cached >= 0) return cached != 0;
+    if (OwnScreen()) {
+        cached = 1;
+        Log("standalone: the original video device is not loaded; DirectDraw is never asked "
+            "for a mode");
+    } else if (!Original()) {
+        cached = 1;
+        Log("standalone: own_screen=0 asks for the original, but there is none to forward to - "
+            "running standalone so the game still boots");
+    } else {
+        cached = 0;
+    }
+    return cached != 0;
+}
+
 // The per-frame surface calls, split from own_screen deliberately.
 //
 // own_screen is what stops the monitor changing resolution and is not in doubt.
@@ -265,8 +316,8 @@ bool OwnSurface() {
     // no screen and no surfaces. Forwarding the per-frame calls into it then
     // hands it a screen it does not have, and the game goes down on startup.
     // Testing that path means turning both off together.
-    if (!cached && OwnScreen()) {
-        Log("own_surface=0 ignored: own_screen=1 means no screen was ever created, so there is "
+    if (!cached && Standalone()) {
+        Log("own_surface=0 ignored: the original video device is not in use, so there is "
             "nothing for the per-frame surface calls to forward into. Set own_screen=0 too if "
             "that is really what you want to test.");
         cached = 1;
@@ -307,9 +358,85 @@ void NoteScreenClear() {
     if (notify) notify();
 }
 
+// Nothing when standalone, so the original is never loaded behind our back by an
+// export resolving its forward target on first call.
 void* Entry(const char* name) {
+    if (Standalone()) return nullptr;
     HMODULE module = Original();
     return module ? reinterpret_cast<void*>(GetProcAddress(module, name)) : nullptr;
+}
+
+// --- The device, when there is no original ----------------------------------
+//
+// Layouts from Dmavideo.dll: Vid_Init_SYS (+0x15B0) for the context and the
+// DirectDrawEnumerate callback (+0x1450) for the device record.
+constexpr int kContextSize = 0x4C4;
+
+struct DeviceRecord {
+    int id;                   // +0x00, what Vid_SetDevice and Vid_FindDevice take
+    int flags;                // +0x04, gta2.exe tests bit 0; the original leaves it 0
+    const char* description;  // +0x08
+    const char* name;         // +0x0C
+    DeviceRecord* next;       // +0x10
+    const void* guid;         // +0x14, null for the primary display
+};
+
+// What Vid_InitDLL was handed. The original keeps both and copies them into
+// every context it creates; nothing reads them back, but the layout is kept.
+void* g_initModule = nullptr;
+void* g_initTable = nullptr;
+
+// Vid_GetVersion hands back a pointer to this in the original: a float version
+// and the device's name. gta2.exe resolves the export and never calls it.
+struct VersionBlock {
+    float version;
+    char name[60];
+};
+const VersionBlock g_version = {1.81f, "gta2dx9 video device (no DirectDraw)"};
+
+void* StandaloneInit(void* instance, int flags) {
+    char* context = static_cast<char*>(calloc(1, kContextSize));
+    DeviceRecord* primary = static_cast<DeviceRecord*>(calloc(1, sizeof(DeviceRecord)));
+    if (!context || !primary) {
+        free(context);
+        free(primary);
+        return nullptr;
+    }
+    primary->id = 1;
+    primary->description = "Primary Display Driver";
+    primary->name = "display";
+
+    *CtxField(context, 0x00) = 1;
+    *CtxField(context, 0x04) = (flags & 0x40) | 0x220;
+    *CtxField(context, 0x14) = 1;  // next mode id
+    *CtxField(context, 0x18) = 2;  // next device id
+    *CtxField(context, 0x20) = 1;  // devices enumerated
+    *reinterpret_cast<DeviceRecord**>(context + 0x2C) = primary;
+    *reinterpret_cast<DeviceRecord**>(context + 0x30) = primary;
+    *reinterpret_cast<void**>(context + 0x78) = instance;
+    *reinterpret_cast<void**>(context + 0x7C) = g_initModule;
+    *reinterpret_cast<void**>(context + 0x84) = g_initTable;
+    return context;
+}
+
+DeviceRecord* StandaloneFindDevice(void* context, int id) {
+    if (!context) return nullptr;
+    DeviceRecord* device = *reinterpret_cast<DeviceRecord**>(static_cast<char*>(context) + 0x2C);
+    for (; device; device = device->next) {
+        if (device->id == id) return device;
+    }
+    return nullptr;
+}
+
+void StandaloneShutDown(void* context) {
+    if (!context) return;
+    DeviceRecord* device = *reinterpret_cast<DeviceRecord**>(static_cast<char*>(context) + 0x2C);
+    while (device) {
+        DeviceRecord* next = device->next;
+        free(device);
+        device = next;
+    }
+    free(context);
 }
 
 // --- The mode list, read out of the original's own context ------------------
@@ -366,11 +493,15 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     return TRUE;
 }
 
-// Every export forwards. Argument counts are the originals', read off their
-// epilogues: a __stdcall callee cleans its own stack, so getting one wrong
+// Every export forwards when there is an original to forward to, and is
+// answered here when there is not. Argument counts are the originals', read off
+// their epilogues: a __stdcall callee cleans its own stack, so getting one wrong
 // corrupts the caller's rather than merely passing rubbish.
-#define FORWARD(name, ret, params, args, fmt, ...)                          \
+#define FORWARD(name, ret, params, args, alone, fmt, ...)                   \
     extern "C" __declspec(dllexport) ret __stdcall name params {            \
+        if (Standalone()) {                                                 \
+            alone;                                                          \
+        }                                                                   \
         using Fn = ret(__stdcall*) params;                                  \
         static Fn fn = reinterpret_cast<Fn>(Entry(#name));                  \
         if (!fn) {                                                          \
@@ -381,23 +512,69 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         return fn args;                                                     \
     }
 
-FORWARD(Vid_GetVersion, int, (), (), "Vid_GetVersion()%s", "")
-FORWARD(Vid_InitDLL, int, (void* a, void* b), (a, b), "Vid_InitDLL(%p, %p)", a, b)
-FORWARD(Vid_Init_SYS, int, (void* a, int b), (a, b), "Vid_Init_SYS(%p, %d)", a, b)
-FORWARD(Vid_ShutDown_SYS, int, (void* a), (a), "Vid_ShutDown_SYS(%p)", a)
-FORWARD(Vid_FindDevice, int, (void* a, int b), (a, b), "Vid_FindDevice(%p, %d)", a, b)
-FORWARD(Vid_SetDevice, int, (void* a, int b), (a, b), "Vid_SetDevice(%p, %d)", a, b)
-FORWARD(Vid_FindMode, int, (void* a, int b), (a, b), "Vid_FindMode(%p, %d)", a, b)
-FORWARD(Vid_FindFirstMode, int, (void* a, int b), (a, b), "Vid_FindFirstMode(%p, %d)", a, b)
-FORWARD(Vid_FindNextMode, int, (void* a), (a), "Vid_FindNextMode(%p)", a)
-FORWARD(Vid_GrabSurface, int, (void* a), (a), "Vid_GrabSurface(%p)", a)
-FORWARD(Vid_ReleaseSurface, int, (void* a), (a), "Vid_ReleaseSurface(%p)", a)
-FORWARD(Vid_EnableWrites, int, (void* a), (a), "Vid_EnableWrites(%p)", a)
-FORWARD(Vid_DisableWrites, int, (void* a), (a), "Vid_DisableWrites(%p)", a)
-FORWARD(Vid_SetGamma, int, (void* a, int b, int c, int d), (a, b, c, d),
+// The standalone answers, one per export, kept out of the macro's argument list
+// so they read as code.
+namespace {
+const void* AloneGetVersion() { return &g_version; }
+int AloneInitDLL(void* a, void* b) {
+    g_initModule = a;
+    g_initTable = b;
+    Log("Vid_InitDLL(%p, %p)", a, b);
+    return 0;
+}
+void* AloneInitSys(void* a, int b) {
+    void* context = StandaloneInit(a, b);
+    Log("Vid_Init_SYS(%p, %d) -> context %p, one device: the primary display", a, b, context);
+    return context;
+}
+int AloneShutDown(void* a) {
+    Log("Vid_ShutDown_SYS(%p)", a);
+    StandaloneShutDown(a);
+    return 0;
+}
+// Zero is success, as in the original; a device that is not in the list is the
+// one failure.
+int AloneSetDevice(void* a, int b) {
+    const bool known = StandaloneFindDevice(a, b) != nullptr;
+    if (known) *CtxField(a, 0x34) = b;
+    Log("Vid_SetDevice(%p, %d) -> %s", a, b, known ? "set" : "no such device");
+    return known ? 0 : 1;
+}
+}  // namespace
+
+FORWARD(Vid_GetVersion, const void*, (), (), return AloneGetVersion(),
+        "Vid_GetVersion()%s", "")
+FORWARD(Vid_InitDLL, int, (void* a, void* b), (a, b), return AloneInitDLL(a, b),
+        "Vid_InitDLL(%p, %p)", a, b)
+FORWARD(Vid_Init_SYS, void*, (void* a, int b), (a, b), return AloneInitSys(a, b),
+        "Vid_Init_SYS(%p, %d)", a, b)
+FORWARD(Vid_ShutDown_SYS, int, (void* a), (a), return AloneShutDown(a),
+        "Vid_ShutDown_SYS(%p)", a)
+FORWARD(Vid_FindDevice, void*, (void* a, int b), (a, b), return StandaloneFindDevice(a, b),
+        "Vid_FindDevice(%p, %d)", a, b)
+FORWARD(Vid_SetDevice, int, (void* a, int b), (a, b), return AloneSetDevice(a, b),
+        "Vid_SetDevice(%p, %d)", a, b)
+// There is no mode list to walk, and GTA2 never calls these three.
+FORWARD(Vid_FindMode, int, (void* a, int b), (a, b), return 0,
+        "Vid_FindMode(%p, %d)", a, b)
+FORWARD(Vid_FindFirstMode, int, (void* a, int b), (a, b), return 0,
+        "Vid_FindFirstMode(%p, %d)", a, b)
+FORWARD(Vid_FindNextMode, int, (void* a), (a), return 0,
+        "Vid_FindNextMode(%p)", a)
+FORWARD(Vid_GrabSurface, int, (void* a), (a), return 0,
+        "Vid_GrabSurface(%p)", a)
+FORWARD(Vid_ReleaseSurface, int, (void* a), (a), return 0,
+        "Vid_ReleaseSurface(%p)", a)
+FORWARD(Vid_EnableWrites, int, (void* a), (a), return 0,
+        "Vid_EnableWrites(%p)", a)
+FORWARD(Vid_DisableWrites, int, (void* a), (a), return 0,
+        "Vid_DisableWrites(%p)", a)
+// 1 is what the original answers when it has no primary surface to put a ramp
+// on, which standalone is always.
+FORWARD(Vid_SetGamma, int, (void* a, int b, int c, int d), (a, b, c, d), return 1,
         "Vid_SetGamma(%p, %d, %d, %d)", a, b, c, d)
 FORWARD(Vid_WindowProc, int, (void* a, void* b, unsigned c, unsigned d, long e), (a, b, c, d, e),
-        "Vid_WindowProc(%p, %p, msg 0x%X)", a, b, c)
+        return 0, "Vid_WindowProc(%p, %p, msg 0x%X)", a, b, c)
 
 #undef FORWARD
 
@@ -468,7 +645,7 @@ extern "C" __declspec(dllexport) int __stdcall Vid_ClearScreen(void* a, int b, i
 extern "C" __declspec(dllexport) int __stdcall Vid_SetMode(void* context, int window, int mode) {
     using Fn = int(__stdcall*)(void*, int, int);
     static Fn fn = reinterpret_cast<Fn>(Entry("Vid_SetMode"));
-    if (!OwnScreen()) {
+    if (!Standalone()) {
         Log("Vid_SetMode(%p, hwnd %08X, mode %d) -> forwarding", context, window, mode);
         return fn ? fn(context, window, mode) : 0;
     }
@@ -493,7 +670,7 @@ extern "C" __declspec(dllexport) int __stdcall Vid_SetMode(void* context, int wi
 extern "C" __declspec(dllexport) int __stdcall Vid_CloseScreen(void* context) {
     using Fn = int(__stdcall*)(void*);
     static Fn fn = reinterpret_cast<Fn>(Entry("Vid_CloseScreen"));
-    if (!OwnScreen()) return fn ? fn(context) : 0;
+    if (!Standalone()) return fn ? fn(context) : 0;
     Log("Vid_CloseScreen(%p) -> nothing to close", context);
     return 0;
 }
@@ -521,17 +698,40 @@ extern "C" __declspec(dllexport) int __stdcall Vid_FreeSurface(void* context) {
     return fn(context);
 }
 
-// The one export that does not simply forward.
+// The export the whole error is about.
 //
-// GTA2 asks for 16-bit colour and only 16-bit colour. Whether the original can
-// answer depends on a Windows compatibility shim, DWM8And16BitMitigation, which
-// is registered per executable path under AppCompatFlags\Layers: with it the
-// mode list here came back 93 entries deep with 31 at 16 bpp, and without it 31
-// entries with none. When the answer is no, ask again for 32 and return that.
-// The id handed back is a real entry in the original's own list, so Vid_SetMode
-// recognises it and the context's width/height/bpp are a mode the display has.
+// GTA2 asks for 16-bit colour and only 16-bit colour, at the size in
+// full_width/full_height, and gives up with "Videomode 16x16x16 is not
+// available" if the answer is no (gta2.exe 0x004CB583..0x004CB5EF).
+//
+// Standalone there is no display mode to set, so there is nothing for a mode
+// list to be right about. Write the three fields the original would have written
+// from the mode that matched - Vid_SetMode reads width and height back from them
+// - and hand back an id that only has to be non-zero: its one consumer is
+// Vid_SetMode, which sets nothing. Vid_FindMode, the one call that could look an
+// id up again, GTA2 never makes.
+//
+// Forwarding, the answer has to be a real entry in the original's list, because
+// the original's Vid_SetMode will look it up. Whether 16 bpp is in that list
+// depends on a Windows compatibility shim, DWM8And16BitMitigation: with it the
+// list here came back 93 entries deep with 31 at 16 bpp, without it 31 with
+// none. When the answer is no, ask again for 32 and return that real id.
 extern "C" __declspec(dllexport) int __stdcall Vid_CheckMode(void* context, int width, int height,
                                                              int bpp) {
+    if (Standalone()) {
+        if (!context || width <= 0 || height <= 0) {
+            Log("Vid_CheckMode(%p, %dx%d, %d bpp) -> refused, not a mode", context, width, height,
+                bpp);
+            return 0;
+        }
+        *CtxField(context, 0x08) = width;
+        *CtxField(context, 0x0C) = height;
+        *CtxField(context, 0x10) = bpp;
+        Log("Vid_CheckMode(%dx%d, %d bpp) -> accepted (no display mode is ever set)", width,
+            height, bpp);
+        return kSyntheticMode;
+    }
+
     using Fn = int(__stdcall*)(void*, int, int, int);
     static Fn fn = reinterpret_cast<Fn>(Entry("Vid_CheckMode"));
     if (!fn) {
@@ -562,26 +762,7 @@ extern "C" __declspec(dllexport) int __stdcall Vid_CheckMode(void* context, int 
         }
     }
 
-    // Nothing in the display's list matches, at any depth. That used to be the
-    // end of it - error 0xBBB - and it is why a monitor with no 640x480 mode
-    // could not boot the game even though 640x480 is only ever the size of a
-    // back buffer nobody looks at.
-    //
-    // With own_screen there is no display mode to set, so there is nothing left
-    // for the list to be right about. Answer the question ourselves: write the
-    // three fields the original would have written and hand back an id that only
-    // has to be non-zero, because the only consumer is Vid_SetMode and that no
-    // longer does anything with it. Vid_FindMode, which is the one call that
-    // could look an id up again, GTA2 never makes.
-    if (OwnScreen() && context && width > 0 && height > 0) {
-        *CtxField(context, 0x08) = width;
-        *CtxField(context, 0x0C) = height;
-        *CtxField(context, 0x10) = bpp;
-        Log("Vid_CheckMode(%dx%d, %d bpp) -> not in the display's list; accepted anyway "
-            "(no display mode is being set)", width, height, bpp);
-        return kSyntheticMode;
-    }
-
-    Log("Vid_CheckMode(%dx%d, %d bpp) -> none", width, height, bpp);
+    Log("Vid_CheckMode(%dx%d, %d bpp) -> none; the display has no such mode at any depth. "
+        "own_screen=1 does not need one.", width, height, bpp);
     return 0;
 }
