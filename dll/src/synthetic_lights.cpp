@@ -129,6 +129,11 @@ void EnsureBinding() {
     g_binding[0x24] = kSynthFire;
     g_binding[0x03] = kSynthFire;
     g_binding[0x16] = kSynthFire;
+    // 0x04 is a burning car. 0x24 and 0x03 only flash when it catches; what
+    // stays on screen for as long as it burns is 0x04 - the one type still
+    // spawning, at ground level and drifting up, long after every other had
+    // stopped. Unbound, a burning wreck lit nothing.
+    g_binding[0x04] = kSynthFire;
     // 0x26 and 0x2B were bound to bullet and fire on the strength of the profile
     // and both were wrong - each emitted thousands of lights on the wrong sprite.
     // They stay unbound rather than plausibly wrong: an unbound category says so
