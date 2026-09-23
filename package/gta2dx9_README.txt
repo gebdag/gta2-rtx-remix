@@ -17,8 +17,9 @@ What you need
 * RTX Remix for x86 games, installed in the GTA2 folder. Remix Plus 1.5 or newer
   is recommended - get Remix_Plus_v1.5.1_x86_games_release.zip from
   https://github.com/RemixProjGroup/dxvk-remix/releases/tag/remix-plus-1.5.1
-  NVIDIA's own Remix and Remix Plus 1.4 also work; with NVIDIA's there is no
-  day/night cycle.
+  NVIDIA's own Remix and Remix Plus 1.4 also work, with limits: NVIDIA's has
+  no day/night cycle, and on any version other than Remix Plus 1.5.1 the menus
+  and HUD may not display correctly.
 * Windows 10 or 11, 64-bit.
 
 
@@ -64,6 +65,7 @@ gta2dx9.log and gta2dx9_vid.log beside gta2.exe say what happened.
   Copy it back from this zip.
 * "unrecognised Remix API table" in the F4 menu: this Remix build is not
   supported. The game runs without street lights. Use Remix Plus 1.5 or newer.
+* Menus or HUD missing or drawn wrong: use Remix Plus 1.5.1.
 
 
 Files
