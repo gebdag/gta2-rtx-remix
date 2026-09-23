@@ -267,6 +267,21 @@ LRESULT CALLBACK ClosingWndProc(HWND window, UINT message, WPARAM wparam, LPARAM
 
 void HookWindowClose(HWND window) {
     if (g_originalWndProc || !window) return;
+    // Pinned first: once a window procedure of ours is installed, this DLL must
+    // outlive the window. GTA2 quits from inside the close message - WM_CLOSE
+    // reaches ClosingWndProc, CallWindowProc runs the game's own handler, and
+    // that tears the game down and FreeLibrary's the renderer while
+    // ClosingWndProc is still on the stack waiting for it to return. Unloaded,
+    // the return lands in freed memory: the access violation at d3ddll.dll+0x20C0
+    // on every quit. Unhooking cannot help with a frame already on the stack;
+    // keeping the code mapped until the process ends does.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                            reinterpret_cast<LPCSTR>(&ClosingWndProc), &pinned)) {
+        Log("could not pin the renderer (error %lu); not hooking the window close",
+            GetLastError());
+        return;
+    }
     g_originalWndProc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ClosingWndProc)));
 }
