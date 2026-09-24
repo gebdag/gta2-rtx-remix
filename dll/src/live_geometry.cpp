@@ -566,6 +566,10 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     bool tilted = false;
     float baseY = cy;
     float clearance = g_spriteLift;
+    // The real floor under the corners and the middle, kept for the guard after
+    // smoothing. A sample with no floor under it is left out.
+    float guardX[5], guardZ[5], guardFloor[5];
+    int guardSamples = 0;
 
     // A quad standing on its edge has no floor under it in any useful sense.
     // Nothing on this path should be one, but the guard is a line and the
@@ -579,6 +583,19 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         const float zs[5] = {out[0].z, out[1].z, out[2].z, out[3].z, cz};
         const gta2dx9::GroundPlane plane =
             ground_->Fit(xs, zs, corners + 1, cy + GroundSampler::kCeilingHeadroom, cx, cz);
+        if (plane.valid) {
+            for (int i = 0; i < corners + 1; ++i) {
+                float floorHere = 0.0f;
+                if (!ground_->SurfaceAt(xs[i], zs[i], cy + GroundSampler::kCeilingHeadroom,
+                                        &floorHere)) {
+                    continue;
+                }
+                guardX[guardSamples] = xs[i];
+                guardZ[guardSamples] = zs[i];
+                guardFloor[guardSamples] = floorHere;
+                ++guardSamples;
+            }
+        }
         if (!plane.valid) {
             ++conform_.noGround;
         } else {
@@ -713,6 +730,30 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
             groundUp = {eased.x / length, eased.y / length, eased.z / length};
             tilted = std::fabs(groundUp.x) > 1e-5f || std::fabs(groundUp.z) > 1e-5f;
         }
+    }
+
+    // The floor guard, after the smoothing and against what is actually drawn.
+    //
+    // Clearance above is worked out for the tilt and height the sprite is
+    // heading for, but both are then eased there over a few frames. Driving onto
+    // a ramp that lag is the clip: the target tips the nose up and adds the
+    // clearance the kink needs, the eased sprite is still nearly level and
+    // nearly as low, and for a few frames the front corner is inside the slope.
+    // So measure the real floor at the corners and the middle against the tilt
+    // this frame really has, and if any of them would be under it, raise the
+    // sprite to just clear it - now, not eased. Only ever up, and only as far as
+    // the floor demands, so nothing already clear moves: easing still decides
+    // everything else, and lowering stays smooth.
+    if (guardSamples > 0 && groundUp.y > 1e-3f) {
+        const float gx = -groundUp.x / groundUp.y;
+        const float gz = -groundUp.z / groundUp.y;
+        float least = offset;
+        for (int i = 0; i < guardSamples; ++i) {
+            const float under = baseY + gx * (guardX[i] - cx) + gz * (guardZ[i] - cz);
+            const float need = (guardFloor[i] + kConformClearance - under) / groundUp.y;
+            if (need > least) least = need;
+        }
+        offset = least;
     }
     tracksNext_.push_back({texture, cx, cz, offset, groundUp.x, groundUp.y, groundUp.z});
 
