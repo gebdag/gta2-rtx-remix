@@ -9,35 +9,26 @@ A Direct3D 9 renderer for GTA2, built for RTX Remix.
 <img width="1920" height="1080" alt="Grand_Theft_Auto_2_Screenshot_2026 09 23_-_17 18 43 07" src="https://github.com/user-attachments/assets/a8848200-f95c-4827-9b54-4ce4013b5357" />
 
 
-
-GTA2 draws in software or through 3dfx, and neither gives Remix anything to path trace.
-This replaces the game's renderer DLL with one that runs inside `gta2.exe` and builds the
-city as real 3D world-space geometry from the game's live map, and replaces its video
-device with a shim that stops DirectDraw taking over the display.
-
 ## Features
 
-- World-space map geometry, including slopes, partial and corner blocks
-- Cars, pedestrians and objects as 3D quads with per-sprite transforms, so Remix gets
-  stable geometry and motion vectors
-- HUD and menus drawn as a 2D pass on top
-- GTA2's own map, vehicle and effect lights injected through the Remix API
-- Day/night cycle driving Remix's sun, with lights that switch on at dusk
-- Additive fire and explosion sprites
-- Frame rate cap (GTA2 advances one simulation step per frame, so this also sets game speed)
-- F4 settings panel
+- Full RTX Remix compatible rendering of the game
+- Translation of the games lights plus generating of lights from game events such as explosions, fires, gunfire
+- Dynamic time of day (Remix Plus only)
+- Emissive maps for some of the game's textures, shipped as a Remix mod
+- Full 16:9: cars and pedestrians no longer pop in and out at the sides of the screen
+- 60fps possible via FG
+- F4 in game settings panel for adjusting lighting and time of day
 
 ## Requirements
 
-- GTA2 (built and tested against the free v9.6 release)
+- GTA2 (built and tested against the freely available v9.6 release)
 - RTX Remix runtime
 - Windows 10 or 11, 64-bit
 
 ## Installing
 
 Download a release and follow `gta2dx9_README.txt` inside it. In short: unzip into the
-GTA2 folder, run `install.reg`, rename Remix's `d3d9.dll` to `d3d9_remix.dll`, and start
-`gta2.exe`.
+GTA2 folder, run `install.reg` and start `gta2.exe`.
 
 ## Building
 
