@@ -7,6 +7,7 @@ Features:
 - translation of game lights
 - generating new lights off of game events
 - dynamic time of day (Remix Plus required) 
+- blood pools under bodies, which the original game hides behind a debug flag
 
 The mod also comes with emissive maps for some of the games textures.
 

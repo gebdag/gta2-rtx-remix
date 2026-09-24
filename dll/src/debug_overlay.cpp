@@ -1002,6 +1002,15 @@ void DrawSprites() {
          "gta2.exe back byte for byte, here and now, without a restart. Persist it with "
          "spawn_offscreen under [renderer].");
 
+    bool blood = Blood();
+    if (ImGui::Checkbox("Blood pools", &blood)) {
+        SetBlood(blood);
+        SettingsMarkDirty();
+    }
+    Help("GTA2 puts a pool of blood under a body, but only with a debug flag the retail game "
+         "leaves off. This turns the flag on. Off hands it back to whatever the game had. "
+         "Persist it with blood under [renderer].");
+
     ImGui::SeparatorText("Standing on the ground");
 
     // GTA2 puts all four corners of a sprite's quad at the single level of the

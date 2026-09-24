@@ -30,6 +30,12 @@ bool SpawnOffscreen();
 // Whether the patches are in force right now, for the menu to show.
 bool SpawnOffscreenActive();
 
+// Whether pedestrians leave blood pools, which GTA2 has but keeps behind a debug
+// flag. See game::kDoBloodFlag. Off hands the flag back to whatever the game had.
+constexpr bool kDefaultBlood = true;
+void SetBlood(bool on);
+bool Blood();
+
 // Where the renderer presents. GTA2 loads a *video* device alongside the render
 // device, and that is what owns the screen; these are the ways of getting out
 // from under it. own_window in gta2dx9.ini selects one.
@@ -78,6 +84,7 @@ public:
 
     void BeginFrame() {
         MatchGameViewToFrame();
+        ApplyBlood();
         overlay_.BeginFrame();
         live_.BeginFrame();
     }
@@ -111,6 +118,8 @@ private:
 
     // Widen GTA2's own view rectangle to the frame's aspect. See the .cpp.
     void MatchGameViewToFrame();
+    // Keep GTA2's blood flag set while the blood setting is on.
+    void ApplyBlood();
 
     gta2::Renderer renderer_;
     Overlay overlay_;

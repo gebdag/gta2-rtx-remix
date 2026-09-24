@@ -52,6 +52,15 @@ inline bool LightingEnabled() {
     return *reinterpret_cast<const uint8_t*>(kLightingEnabledFlag) != 0;
 }
 
+// GTA2's blood switch, one of the thirty-odd debug flags FUN_00451930 reads at
+// startup. The ped death handler, FUN_004411b0, ends by putting a blood pool
+// under the body (FUN_0048cc50, a particle-manager object that grows through
+// code_obj 497-502) - but only while this byte is set, and the retail game sets
+// it only if a value named do_blood exists under
+// HKLM\SOFTWARE\DMA Design Ltd\GTA2\Debug, or through a pair of debug cheats in
+// FUN_004590f0. So out of the box nobody bleeds. Plain .data, writable as is.
+constexpr uintptr_t kDoBloodFlag = 0x005EAD51;
+
 struct ViewExtent {
     float minX, maxX, minY, maxY;
     float Width() const { return maxX - minX; }

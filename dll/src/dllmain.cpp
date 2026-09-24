@@ -174,6 +174,10 @@ void LoadConfig() {
                                                      gta2dx9::kDefaultSpawnOffscreen ? 1 : 0, ini)
                                != 0);
 
+    // Blood pools under bodies, which GTA2 keeps behind a debug flag.
+    gta2dx9::SetBlood(
+        GetPrivateProfileIntA("renderer", "blood", gta2dx9::kDefaultBlood ? 1 : 0, ini) != 0);
+
     gta2dx9::SetSpriteRoll(
         GetPrivateProfileIntA("renderer", "sprite_roll_thousandths",
                               static_cast<int>(gta2dx9::kDefaultSpriteRoll * 1000.0f + 0.5f), ini)

@@ -175,6 +175,7 @@ void SettingsSaveAll() {
     // Things that live outside a settings struct.
     fprintf(out, "\n[render]\n");
     fprintf(out, "SpawnOffscreen=%d\n", SpawnOffscreen() ? 1 : 0);
+    fprintf(out, "Blood=%d\n", Blood() ? 1 : 0);
     fprintf(out, "SpriteConform=%d\n", SpriteConform() ? 1 : 0);
     fprintf(out, "SpriteHeight=%.4f\n", SpriteHeight());
     fprintf(out, "SpriteRoll=%.4f\n", SpriteRoll());
@@ -257,6 +258,8 @@ void SettingsLoadAll() {
 
         if (!_stricmp(key, "SpawnOffscreen")) {
             SetSpawnOffscreen(atoi(value) != 0);
+        } else if (!_stricmp(key, "Blood")) {
+            SetBlood(atoi(value) != 0);
         } else if (!_stricmp(key, "SpriteRoll")) {
             SetSpriteRoll(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "SpriteHeight")) {

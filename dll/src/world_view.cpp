@@ -395,6 +395,31 @@ HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow m
 
 }  // namespace
 
+bool g_blood = kDefaultBlood;
+bool g_bloodForced = false;     // whether we are the ones holding the flag up
+uint8_t g_bloodGameValue = 0;   // what the game had before we did
+
+void SetBlood(bool on) { g_blood = on; }
+bool Blood() { return g_blood; }
+
+// Written every frame rather than once: a demo replay restores the flag from the
+// recording, and the debug cheat toggles it, and either would otherwise turn
+// blood off behind the setting's back. Turning the setting off hands back the
+// value the game had, so a do_blood the player set in the registry survives.
+void WorldView::ApplyBlood() {
+    uint8_t* flag = reinterpret_cast<uint8_t*>(game::kDoBloodFlag);
+    if (g_blood) {
+        if (!g_bloodForced) {
+            g_bloodGameValue = *flag;
+            g_bloodForced = true;
+        }
+        *flag = 1;
+    } else if (g_bloodForced) {
+        *flag = g_bloodGameValue;
+        g_bloodForced = false;
+    }
+}
+
 void SetSpawnOffscreen(bool on) { g_spawnOffscreen = on; }
 bool SpawnOffscreen() { return g_spawnOffscreen; }
 bool SpawnOffscreenActive() { return g_spawnOffscreenActive; }
