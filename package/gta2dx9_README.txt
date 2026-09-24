@@ -9,7 +9,8 @@ Features:
 - dynamic time of day (Remix Plus required) 
 - blood pools under bodies, which the original game hides behind a debug flag
 
-The mod also comes with emissive maps for some of the games textures.
+The mod also comes with emissive maps for some of the games textures,
+including every animation frame of the weapon, vehicle and token pickups.
 
 What you need
 -------------
