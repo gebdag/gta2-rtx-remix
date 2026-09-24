@@ -156,6 +156,16 @@ void RebuildDeviceTextures();
 // sprites from tiles and from the HUD.
 void NoteSpriteTexture(const void* record);
 
+// Artwork that lies on the road rather than standing on it: skid marks and the
+// blood trails drawn from the same strips. Registered by content - the sprite's
+// palette indices - because the game draws those strips in whatever colour the
+// moment needs, grey for rubber and red for blood, so neither the palette nor
+// the texture record identifies them. See LiveGeometry::AddSprite.
+void ClearGroundDecalArtwork();
+void AddGroundDecalArtwork(int width, int height, const uint8_t* indices, int stride);
+int GroundDecalArtworkCount();
+bool IsGroundDecal(const void* record);
+
 // Writes the CSV and returns how many rows it held. Called on shutdown and from
 // the menu button.
 int WriteTextureReport();

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <set>
 #include <vector>
 
 #include "game_access.h"
@@ -284,6 +285,35 @@ uint64_t FrameKey(const TextureRecord* record) {
     return h;
 }
 
+// The artwork without its colour: size and palette indices only. Two draws of
+// the same strip in different palettes get the same key, which is the point.
+uint64_t IndexKey(int width, int height, const uint8_t* indices, int stride) {
+    uint64_t h = 0xCBF29CE484222325ULL;
+    auto mix = [&h](uint64_t v) {
+        h ^= v;
+        h *= 0x100000001B3ULL;
+    };
+    mix(static_cast<uint64_t>(width));
+    mix(static_cast<uint64_t>(height));
+    for (int y = 0; y < height; ++y) {
+        const uint8_t* row = indices + static_cast<size_t>(y) * stride;
+        for (int x = 0; x < width; ++x) mix(row[x]);
+    }
+    return h;
+}
+
+std::set<uint64_t> g_decalKeys;
+int g_decalMaxSide = 0;
+
+// Per record, re-decided only when the record is pointed at other artwork.
+struct DecalVerdict {
+    const void* pixels = nullptr;
+    uint16_t revision = 0xFFFF;
+    uint16_t width = 0, height = 0;
+    bool decal = false;
+};
+std::map<const void*, DecalVerdict> g_decalVerdicts;
+
 // A hash that turned out not to be stable would otherwise grow this without
 // limit and exhaust video memory in a long session.
 const size_t kMaxFrames = 4096;
@@ -478,6 +508,41 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     ++g_trouble.built;
     if (effect) *effect = isEffect;
     return cached.texture;
+}
+
+void ClearGroundDecalArtwork() {
+    g_decalKeys.clear();
+    g_decalMaxSide = 0;
+    g_decalVerdicts.clear();
+}
+
+void AddGroundDecalArtwork(int width, int height, const uint8_t* indices, int stride) {
+    if (!indices || width <= 0 || height <= 0) return;
+    g_decalKeys.insert(IndexKey(width, height, indices, stride));
+    g_decalMaxSide = (std::max)(g_decalMaxSide, (std::max)(width, height));
+    g_decalVerdicts.clear();
+}
+
+int GroundDecalArtworkCount() { return static_cast<int>(g_decalKeys.size()); }
+
+bool IsGroundDecal(const void* handle) {
+    const TextureRecord* record = static_cast<const TextureRecord*>(handle);
+    if (!record || !record->pixels || g_decalKeys.empty()) return false;
+    // Decals are a handful of tiny strips; anything bigger is not one, and not
+    // worth hashing to find out.
+    if (record->width > g_decalMaxSide || record->height > g_decalMaxSide) return false;
+    DecalVerdict& v = g_decalVerdicts[handle];
+    if (v.pixels != record->pixels || v.revision != record->revision ||
+        v.width != record->width || v.height != record->height) {
+        v.pixels = record->pixels;
+        v.revision = record->revision;
+        v.width = record->width;
+        v.height = record->height;
+        v.decal = g_decalKeys.count(IndexKey(record->width, record->height,
+                                             static_cast<const uint8_t*>(record->pixels),
+                                             kPageStride)) != 0;
+    }
+    return v.decal;
 }
 
 void NoteSpriteTexture(const void* handle) {

@@ -643,6 +643,27 @@ bool WorldView::EnsureWorldLoaded() {
         LightsSetScene(district.c_str());
     }
 
+    // What lies on the road rather than standing on it, so the sprite pass can
+    // lay it flat instead of lifting it like a car. By code_obj number, which
+    // every shipped district shares:
+    //   497-502  a blood pool, growing in six steps
+    //   515      a pair of drops
+    //   516-527  trail strips, 4 wide at three lengths (24, 36, 16), each
+    //            fading from solid to sparse - skid marks in grey (palette 257
+    //            in game) and blood trails in red, the same artwork either way
+    //   528-531  the dots at the end of a trail
+    ClearGroundDecalArtwork();
+    const int kDecalRanges[][2] = {{497, 502}, {515, 531}};
+    for (const auto& range : kDecalRanges) {
+        for (int sprite = range[0]; sprite <= range[1]; ++sprite) {
+            gta2::SpriteIndices art;
+            if (style.SpriteArtwork(gta2::SpriteBase::CodeObj, sprite, &art)) {
+                AddGroundDecalArtwork(art.width, art.height, art.indices.data(), art.width);
+            }
+        }
+    }
+    Log("ground decals: %d skid, trail and blood sprites registered", GroundDecalArtworkCount());
+
     // Prefer the game's own artwork over our parse of the style file: the game
     // resolves tile numbers through a remap table, so indexing the file directly
     // yields the right set of textures in the wrong order.

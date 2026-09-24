@@ -52,6 +52,9 @@ bool Style::Load(const std::string& path, std::string* error) {
     }
 
     size_t tileOff = 0, tileSize = 0, palOff = 0, palxOff = 0, palxSize = 0;
+    sprites_.clear();
+    spriteGraphics_.clear();
+    memset(spriteBases_, 0, sizeof(spriteBases_));
     size_t offset = 6;
     while (offset + 8 <= data.size()) {
         char tag[5] = {};
@@ -68,6 +71,14 @@ bool Style::Load(const std::string& path, std::string* error) {
         } else if (!strcmp(tag, "PALX")) {
             palxOff = body;
             palxSize = size;
+        } else if (!strcmp(tag, "SPRG")) {
+            spriteGraphics_.assign(data.begin() + body, data.begin() + body + size);
+        } else if (!strcmp(tag, "SPRX")) {
+            for (size_t at = body; at + 8 <= body + size; at += 8) {
+                sprites_.push_back({ReadU32(&data[at]), data[at + 4], data[at + 5]});
+            }
+        } else if (!strcmp(tag, "SPRB") && size >= sizeof(spriteBases_)) {
+            for (int i = 0; i < 6; ++i) spriteBases_[i] = ReadU16(&data[body + i * 2]);
         }
         offset = body + size;
     }
@@ -78,6 +89,31 @@ bool Style::Load(const std::string& path, std::string* error) {
     }
 
     DecodeTiles(data.data(), tileOff, tileSize, palOff, palxOff, palxSize);
+    return true;
+}
+
+bool Style::SpriteArtwork(SpriteBase base, int index, SpriteIndices* out) const {
+    const int which = static_cast<int>(base);
+    if (!out || index < 0 || index >= spriteBases_[which]) return false;
+    int first = 0;
+    for (int i = 0; i < which; ++i) first += spriteBases_[i];
+    const size_t n = static_cast<size_t>(first + index);
+    if (n >= sprites_.size()) return false;
+    const SpriteEntry& e = sprites_[n];
+    const size_t page = e.offset / kPageBytes;
+    const size_t x = e.offset % kPageStride;
+    const size_t y = (e.offset % kPageBytes) / kPageStride;
+    if (x + e.width > kPageStride || y + e.height > kPageStride ||
+        (page + 1) * kPageBytes > spriteGraphics_.size()) {
+        return false;
+    }
+    out->width = e.width;
+    out->height = e.height;
+    out->indices.resize(static_cast<size_t>(e.width) * e.height);
+    for (int row = 0; row < e.height; ++row) {
+        memcpy(&out->indices[static_cast<size_t>(row) * e.width],
+               &spriteGraphics_[page * kPageBytes + (y + row) * kPageStride + x], e.width);
+    }
     return true;
 }
 

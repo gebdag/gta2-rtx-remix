@@ -14,6 +14,17 @@ namespace gta2 {
 constexpr int kTileSize = 64;
 constexpr int kTilePixels = kTileSize * kTileSize;
 
+// A sprite's palette indices as the style file stores them, row by row, before
+// any palette is applied. Index 0 is the transparency key.
+struct SpriteIndices {
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> indices;  // width * height
+};
+
+// The sprite bases, in the order SPRB lists them.
+enum class SpriteBase { Car, Ped, CodeObj, MapObj, User, Font };
+
 // Palette entry 0 is the transparency key for every tile.
 struct Tile {
     std::vector<uint32_t> pixels;  // kTilePixels, A8R8G8B8
@@ -32,11 +43,23 @@ public:
     // remap table, so a direct index into the style file can disagree.
     void OverrideTile(int index, const uint32_t* pixels);
 
+    // A sprite's artwork by base and number within the base, from the SPRX,
+    // SPRB and SPRG chunks. False when the style has none, or no such sprite.
+    bool SpriteArtwork(SpriteBase base, int index, SpriteIndices* out) const;
+
 private:
     void DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
                      size_t palOffset, size_t palIndexOffset, size_t palIndexSize);
 
     std::vector<Tile> tiles_;
+
+    struct SpriteEntry {
+        uint32_t offset;   // into spriteGraphics_, which is 256-wide pages
+        uint8_t width, height;
+    };
+    std::vector<SpriteEntry> sprites_;
+    std::vector<uint8_t> spriteGraphics_;
+    uint16_t spriteBases_[6] = {};
 };
 
 }  // namespace gta2

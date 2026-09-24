@@ -227,6 +227,7 @@ private:
     // One entry per sprite already placed this frame, for spotting a stack.
     struct Stack {
         float x, z;
+        float area;   // of the quad's footprint, in square blocks
         int layer;
     };
     std::vector<Stack> stacks_;
@@ -258,7 +259,7 @@ private:
     // Nearest match from last frame, or null.
     const Track* FindTrack(const void* texture, float x, float z) const;
 
-    int StackLayerFor(float cx, float cz);
+    int StackLayerFor(float cx, float cz, float area);
 
     bool ReadCorners(const float* vertices, int corners, const void* texture, uintptr_t shadowBase,
                      Vertex* out) const;

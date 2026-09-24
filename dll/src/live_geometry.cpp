@@ -254,19 +254,34 @@ const LiveGeometry::Track* LiveGeometry::FindTrack(const void* texture, float x,
 // search is linear over the sprites already taken this frame, which is tens of
 // entries - a car's worth of parts, a few pedestrians - so it costs nothing
 // worth indexing away.
-int LiveGeometry::StackLayerFor(float cx, float cz) {
+//
+// Only a sprite that is not much smaller counts as something to stack on. The
+// stack is for a car's lights, logo and roof light, which are drawn after the
+// body and are its own size or smaller, so they still climb onto it. It is not
+// for the burst of exhaust smoke a car puffs out under itself as it pulls away:
+// six small particles drawn *before* the body counted as a pile six deep and
+// lifted the car by six steps, three times its ride height, which in Remix
+// tears its shadow off - and then it eased back down as the smoke died. That
+// was the hop when a car starts from standstill, and whatever small thing sat
+// under a parked car held it up the same way.
+int LiveGeometry::StackLayerFor(float cx, float cz, float area) {
     const float kSameSpot = 0.33f * 0.33f;
+    // A quarter of the area: a car's roof light still counts against a car,
+    // a smoke puff or a pedestrian does not.
+    const float kComparable = 0.25f;
     int layer = 0;
     for (const Stack& s : stacks_) {
         const float dx = s.x - cx, dz = s.z - cz;
-        if (dx * dx + dz * dz <= kSameSpot && s.layer >= layer) layer = s.layer + 1;
+        if (dx * dx + dz * dz > kSameSpot || s.layer < layer) continue;
+        if (s.area < area * kComparable) continue;
+        layer = s.layer + 1;
     }
     // A car with a light and a logo is three deep; anything claiming more than
     // this is sprites that happen to share a spot rather than a real stack, and
     // letting it climb would float them.
     const int kMaxLayers = 6;
     if (layer > kMaxLayers) layer = kMaxLayers;
-    stacks_.push_back({cx, cz, layer});
+    stacks_.push_back({cx, cz, area, layer});
     return layer;
 }
 
@@ -528,9 +543,21 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // The stack layer is decided from where the sprite sits, before it is
     // lifted, so a car's lights and logo land on the body rather than on each
     // other's raised copies.
-    const float stacked = g_spriteStackStep > 0.0f
-                              ? StackLayerFor(cx, cz) * g_spriteStackStep
-                              : 0.0f;
+    // A quad's corners go round its edge in order, so two adjacent sides give
+    // its footprint.
+    const float sideAx = out[1].x - out[0].x, sideAz = out[1].z - out[0].z;
+    const float sideBx = out[2].x - out[1].x, sideBz = out[2].z - out[1].z;
+    const float area = std::sqrt(sideAx * sideAx + sideAz * sideAz) *
+                       std::sqrt(sideBx * sideBx + sideBz * sideBz);
+    // Skid marks, blood trails and blood pools lie on the road rather than
+    // standing on it: no ride height, and none of the clearance a car is given.
+    // They still follow the ground's tilt, keep the quarter-texel gap that
+    // breaks coplanarity with the road, and stack against each other - but by
+    // a sliver per layer, because a trail is dozens of overlapping strips and a
+    // car's worth of stack step each piled them into the air.
+    const bool decal = IsGroundDecal(texture);
+    const float stackStep = decal ? kConformClearance * 0.25f : g_spriteStackStep;
+    const float stacked = stackStep > 0.0f ? StackLayerFor(cx, cz, area) * stackStep : 0.0f;
 
     // Stand it on the floor the map says is under it. See the note on
     // g_spriteConform: the quad itself is not touched, only the frame it is
@@ -620,15 +647,44 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
             // with, not the one the ground has - so everything given away above,
             // to the roll damping, the trust and the cap, comes back here as
             // height instead of as a sprite cutting into the road.
-            float shortfall = 0.0f;
-            for (int i = 0; i < corners; ++i) {
-                const float dx = out[i].x - cx;
-                const float dz = out[i].z - cz;
-                const float floorHere = plane.y + rawGx * dx + rawGz * dz;
-                const float quadHere = baseY + gx * dx + gz * dz;
-                if (floorHere - quadHere > shortfall) shortfall = floorHere - quadHere;
+            float needed = 0.0f;
+            if (gap > kConformClearance) {
+                // The game has it above the plane fitted under it, and that
+                // plane is then not the floor. The case is a car on the upper
+                // of two floors with part of its footprint over the lower one -
+                // a kerb, a block edge: the fit runs a slope between the two,
+                // and its residual measures the step, not anything under the
+                // car. Adding that back as clearance floated the car by up to
+                // half a block, and eased it up over a few frames as it started
+                // to move onto an edge - the hop - or held it up while it stood
+                // there and dropped it as it drove off.
+                //
+                // The samples themselves say what is actually under it: clear
+                // whatever real floor rises above the quad, and nothing else.
+                // The lower floor it overhangs contributes nothing, and the one
+                // it stands on only what its own tilt dips into.
+                const float ceiling = cy + GroundSampler::kCeilingHeadroom;
+                for (int i = 0; i < corners + 1; ++i) {
+                    float floorHere = 0.0f;
+                    if (!ground_->SurfaceAt(xs[i], zs[i], ceiling, &floorHere)) continue;
+                    const float quadHere = baseY + gx * (xs[i] - cx) + gz * (zs[i] - cz);
+                    if (floorHere - quadHere > needed) needed = floorHere - quadHere;
+                }
+            } else {
+                // On the fitted floor. The residual is how far the highest sample
+                // pokes above the plane, so the quad has to clear that plus
+                // whatever the plane itself rises above the quad at a corner -
+                // which is where the gap between two flat things is widest.
+                float worst = 0.0f;
+                for (int i = 0; i < corners; ++i) {
+                    const float dx = out[i].x - cx;
+                    const float dz = out[i].z - cz;
+                    const float floorHere = plane.y + rawGx * dx + rawGz * dz;
+                    const float quadHere = baseY + gx * dx + gz * dz;
+                    if (floorHere - quadHere > worst) worst = floorHere - quadHere;
+                }
+                needed = worst + plane.residual;
             }
-            const float needed = shortfall + plane.residual;
             const float owed = (needed - g_spriteHeight * groundUp.y) / groundUp.y;
             const float extra = owed > 0.0f ? (std::min)(owed, kMaxExtraClearance) : 0.0f;
             clearance = kConformClearance + extra;
@@ -645,7 +701,7 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // and the tilt are smoothed: baseY follows the ground directly, because a car
     // driving up a ramp *should* rise with it and lagging that would be the
     // strange movement rather than the fix for it. See the Track note.
-    float offset = g_spriteHeight + clearance + stacked;
+    float offset = decal ? kConformClearance + stacked : g_spriteHeight + clearance + stacked;
     if (const Track* previous = FindTrack(texture, cx, cz)) {
         offset = previous->offset + (offset - previous->offset) * kSmoothing;
         Vec3 eased{previous->nx + (groundUp.x - previous->nx) * kSmoothing,
