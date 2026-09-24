@@ -2,6 +2,14 @@
 
 A Direct3D 9 renderer for GTA2, built for RTX Remix.
 
+<img width="1920" height="1080" alt="Grand_Theft_Auto_2_Screenshot_2026 09 23_-_16 50 32 95" src="https://github.com/user-attachments/assets/7b79266b-ea32-4c36-9f7f-27b3fe5c1b00" />
+<img width="1920" height="1080" alt="Grand Theft Auto 2 Screenshot 2026 09 24 - 11 43 30 47" src="https://github.com/user-attachments/assets/3383eb7b-310b-4c80-b5ed-2532902d1fb6" />
+<img width="1920" height="1080" alt="Grand_Theft_Auto_2_Screenshot_2026 09 23_-_17 15 53 02" src="https://github.com/user-attachments/assets/85a7703d-f0af-4046-a4b4-790039f1cd68" />
+<img width="1920" height="1080" alt="Grand_Theft_Auto_2_Screenshot_2026 09 23_-_17 07 52 11" src="https://github.com/user-attachments/assets/02661354-ce62-465c-9067-1e131fc70fe3" />
+<img width="1920" height="1080" alt="Grand_Theft_Auto_2_Screenshot_2026 09 23_-_17 18 43 07" src="https://github.com/user-attachments/assets/a8848200-f95c-4827-9b54-4ce4013b5357" />
+
+
+
 GTA2 draws in software or through 3dfx, and neither gives Remix anything to path trace.
 This replaces the game's renderer DLL with one that runs inside `gta2.exe` and builds the
 city as real 3D world-space geometry from the game's live map, and replaces its video
