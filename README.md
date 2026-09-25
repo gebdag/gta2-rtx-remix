@@ -1,5 +1,9 @@
 # GTA2 RTX Remix
 
+<p align="center">
+<img width="1920" alt="GTA2_RTX_logo" src="https://github.com/user-attachments/assets/6c8b00d6-1f01-4eb0-a44e-089d7aca9ed0" />
+</p>
+
 A Direct3D 9 renderer for GTA2, built for RTX Remix.
 
 <img width="1920" height="1080" alt="Grand_Theft_Auto_2_Screenshot_2026 09 23_-_16 50 32 95" src="https://github.com/user-attachments/assets/7b79266b-ea32-4c36-9f7f-27b3fe5c1b00" />
