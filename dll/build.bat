@@ -27,6 +27,7 @@ cl /nologo /std:c++17 /EHsc /O2 /W3 /MT /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS ^
    src\dllmain.cpp src\world_view.cpp src\log.cpp src\texture_store.cpp src\overlay.cpp ^
    src\live_geometry.cpp src\ground.cpp src\remix_api.cpp src\remix_lights.cpp src\debug_overlay.cpp ^
    src\synthetic_lights.cpp src\settings.cpp src\frame_limiter.cpp src\time_of_day.cpp ^
+   src\intro_movie.cpp ^
    deps\imgui\imgui.cpp deps\imgui\imgui_draw.cpp deps\imgui\imgui_tables.cpp ^
    deps\imgui\imgui_widgets.cpp deps\imgui\backends\imgui_impl_dx9.cpp ^
    deps\imgui\backends\imgui_impl_win32.cpp ^

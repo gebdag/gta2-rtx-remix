@@ -131,7 +131,10 @@
 // Nothing else reads the context: gta2.exe touches +0x04 (flags it ORs in),
 // +0x08..+0x10 and +0x48..+0x54 (see above), +0x40 (-2 is its windowed mode,
 // which it only picks on a 16-bit desktop), and the pixel format at +0x5C..+0x6C
-// and the primary at +0x134, which only the Bink intro reads.
+// and the primary at +0x134, which only the Bink intro reads. The renderer keeps
+// the intro off Bink's DirectDraw path, the one that wants the primary, and
+// lends +0x50/+0x54 a buffer of its own while a frame is copied - see
+// dll/src/intro_movie.cpp.
 //
 // Because of that, this file also works under the game's own name with no
 // original beside it - which is what lets the game boot whichever video device

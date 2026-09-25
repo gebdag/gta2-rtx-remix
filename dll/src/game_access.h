@@ -61,6 +61,43 @@ inline bool LightingEnabled() {
 // FUN_004590f0. So out of the box nobody bleeds. Plain .data, writable as is.
 constexpr uintptr_t kDoBloodFlag = 0x005EAD51;
 
+// The intro movie, data\movie\intro.bik, played by movie.cpp through binkw32.
+// See intro_movie.cpp for what goes wrong with it and what is changed.
+//
+// Whether it plays is do_play_movie under ...\GTA2\Screen, read through the
+// game's registry helper FUN_004b5660 - a __thiscall on the registry object at
+// 0x0066C6B4 taking (name, default) and ending in `ret 8`. Two call sites read
+// it: startup (0x004D144D) and the front end (0x00459690).
+constexpr uintptr_t kReadRegistryInt = 0x004B5660;
+constexpr uintptr_t kPlayMovieReadStartup = 0x004D144D;
+constexpr uintptr_t kPlayMovieReadFrontEnd = 0x00459690;
+
+// FUN_00481df0: `[0x673580] == 2`, the renderer being 3dfx.dll. Only the movie
+// asks, at open (0x00481F5A) and on every frame (0x00481E21). True means Bink
+// decodes into the game's own video surface; false means Bink opens a DirectDraw
+// buffer of its own on the game window and blits to it.
+constexpr uintptr_t kMovieUsesGameSurface = 0x00481DF0;
+
+// On the video-surface path each frame is: lock (FUN_004caec0 - Vid_GetSurface,
+// MakeScreenTable, gbh_SetWindow), BinkCopyToBuffer into the context's surface,
+// unlock (FUN_004caf50 - Vid_FreeSurface), Vid_FlipBuffers, Vid_ClearScreen.
+constexpr uintptr_t kMovieLockCall = 0x00481E2A;
+constexpr uintptr_t kMovieUnlockCall = 0x00481E5E;
+constexpr uintptr_t kLockScreen = 0x004CAEC0;
+constexpr uintptr_t kUnlockScreen = 0x004CAF50;
+
+// The video device's context, and the surface fields in it the copy reads.
+constexpr uintptr_t kVideoContextPtr = 0x00673D20;
+constexpr uintptr_t kVideoSurfaceOffset = 0x50;   // pixels
+constexpr uintptr_t kVideoPitchOffset = 0x54;     // bytes per row
+
+// The open Bink movie (width at +0, height at +4) and the BinkCopyToBuffer
+// surface type the frame copy passes. This binkw32.dll's types, decoded off a
+// frame of intro.bik: 0 is 24-bit, 1 is 32-bit B,G,R,X, 2 to 5 are 16-bit.
+constexpr uintptr_t kBinkMoviePtr = 0x00664FF4;
+constexpr uintptr_t kBinkSurfaceType = 0x00664FF8;
+constexpr int32_t kBinkSurface32 = 1;
+
 struct ViewExtent {
     float minX, maxX, minY, maxY;
     float Width() const { return maxX - minX; }

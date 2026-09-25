@@ -22,6 +22,7 @@
 
 #include "frame_limiter.h"
 #include "game_access.h"
+#include "intro_movie.h"
 #include "live_geometry.h"
 #include "log.h"
 #include "remix_lights.h"
@@ -43,6 +44,7 @@ char g_backendName[MAX_PATH] = "3dfx.dll";
 HMODULE g_backend = nullptr;
 void* g_system = nullptr;
 gta2dx9::WorldView g_world;
+bool g_intro = gta2dx9::kDefaultIntro;
 
 // gbh_GetGlobals hands the game a counter block; the original exposes polys and
 // texture swaps drawn this frame.
@@ -178,6 +180,11 @@ void LoadConfig() {
     gta2dx9::SetBlood(
         GetPrivateProfileIntA("renderer", "blood", gta2dx9::kDefaultBlood ? 1 : 0, ini) != 0);
 
+    // Whether the intro movie plays. Decided here rather than by GTA2's own
+    // do_play_movie, and either way it never goes near DirectDraw.
+    g_intro =
+        GetPrivateProfileIntA("renderer", "intro", gta2dx9::kDefaultIntro ? 1 : 0, ini) != 0;
+
     gta2dx9::SetSpriteRoll(
         GetPrivateProfileIntA("renderer", "sprite_roll_thousandths",
                               static_cast<int>(gta2dx9::kDefaultSpriteRoll * 1000.0f + 0.5f), ini)
@@ -249,6 +256,10 @@ bool BindBackend() {
 }
 
 bool Proxying() { return g_mode == Mode::Proxy; }
+
+void PresentMovieFrame(const void* pixels, int width, int height, int pitch) {
+    g_world.ShowMovieFrame(pixels, width, height, pitch);
+}
 
 template <typename Fn>
 Fn Backend(void* slot) { return reinterpret_cast<Fn>(slot); }
@@ -328,6 +339,9 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         Log("proxy live");
     } else {
         Log("takeover mode: the original renderer is not loaded");
+        // Before anything else the game does: its startup decides whether to play
+        // the intro straight after loading us.
+        gta2dx9::IntroInstall(g_intro, &PresentMovieFrame);
         char path[MAX_PATH];
         PathBesideGame("gta2dx9_lights.ini", path, sizeof(path));
         gta2dx9::LightsInit(path);

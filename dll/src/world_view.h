@@ -83,12 +83,29 @@ public:
     void NoteScreenClear() { renderer_.NoteScreenClear(); }
 
     void BeginFrame() {
+        // The first scene after the intro starts on a clean 2D layer: the menu
+        // only paints what it changes, and would otherwise leave the movie's last
+        // frame showing through wherever it does not paint.
+        if (movieShown_) {
+            movieShown_ = false;
+            overlay_.EndMovie();
+            NoteScreenClear();
+        }
         MatchGameViewToFrame();
         ApplyBlood();
         overlay_.BeginFrame();
         live_.BeginFrame();
     }
     void RenderFrame();
+
+    // One frame of the intro movie, which the game plays without a scene of its
+    // own: drawn over the screen and presented here. See intro_movie.cpp.
+    void ShowMovieFrame(const void* pixels, int width, int height, int pitch) {
+        overlay_.BeginFrame();
+        overlay_.MovieFrame(pixels, width, height, pitch);
+        movieShown_ = true;
+        RenderFrame();
+    }
 
     // The HUD and menus arrive as screen-space draws and are replayed on top of
     // the world rather than dropped.
@@ -123,6 +140,7 @@ private:
 
     gta2::Renderer renderer_;
     Overlay overlay_;
+    bool movieShown_ = false;
     LiveGeometry live_;
     gta2::Camera camera_;
     gta2::Map map_;

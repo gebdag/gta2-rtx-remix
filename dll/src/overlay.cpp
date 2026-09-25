@@ -23,6 +23,9 @@ constexpr int kPageStride = 256;
 
 constexpr DWORD kOverlayFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
 
+// Draw::image for the movie frame, which is not in the image table.
+constexpr int kMovieImage = -2;
+
 HudFitMode g_fit = HudFitMode::Fit;
 
 uint32_t GreyFromShade(uint8_t shade) {
@@ -334,6 +337,79 @@ IDirect3DTexture9* Overlay::ResolveImage(IDirect3DDevice9* device, int index) {
     return image.texture;
 }
 
+void Overlay::MovieFrame(const void* pixels, int width, int height, int pitch) {
+    if (!pixels || width <= 0 || height <= 0 || width > 4096 || height > 4096 ||
+        pitch < width * 4) {
+        return;
+    }
+    if (width != movie_.width || height != movie_.height) {
+        if (movie_.texture) movie_.texture->Release();
+        movie_.texture = nullptr;
+        movie_.width = width;
+        movie_.height = height;
+    }
+    // X8R8G8B8 as Bink writes it, but the fourth byte is whatever was there and
+    // this pass blends on alpha, so it is made opaque on the way in.
+    movie_.pixels.resize(static_cast<size_t>(width) * height);
+    for (int y = 0; y < height; ++y) {
+        const uint32_t* row = reinterpret_cast<const uint32_t*>(
+            static_cast<const uint8_t*>(pixels) + static_cast<size_t>(y) * pitch);
+        uint32_t* out = &movie_.pixels[static_cast<size_t>(y) * width];
+        for (int x = 0; x < width; ++x) out[x] = row[x] | 0xFF000000u;
+    }
+    movieChanged_ = true;
+
+    // The whole of the game's screen, which is 4:3 like the movie; the fit at
+    // flush time then puts it in the middle of the display.
+    const float w = static_cast<float>(gameWidth_);
+    const float h = static_cast<float>(gameHeight_);
+    const float u = static_cast<float>(width);
+    const float v = static_cast<float>(height);
+    const float xy[4][2] = {{0.0f, 0.0f}, {w, 0.0f}, {w, h}, {0.0f, h}};
+    const float uv[4][2] = {{0.0f, 0.0f}, {u, 0.0f}, {u, v}, {0.0f, v}};
+    Vertex corners[4] = {};
+    for (int i = 0; i < 4; ++i) {
+        corners[i].x = xy[i][0];
+        corners[i].y = xy[i][1];
+        corners[i].u = uv[i][0];
+        corners[i].v = uv[i][1];
+        corners[i].colour = 0xFFFFFFFFu;
+    }
+    PushTriangleFan(corners, 4, nullptr, kMovieImage, false);
+}
+
+void Overlay::EndMovie() {
+    if (movie_.texture) movie_.texture->Release();
+    movie_ = Image{};
+    movieChanged_ = false;
+}
+
+// One texture, rewritten whenever a new frame has arrived.
+IDirect3DTexture9* Overlay::ResolveMovie(IDirect3DDevice9* device) {
+    if (!movie_.width) return nullptr;
+    if (!movie_.texture) {
+        if (FAILED(device->CreateTexture(movie_.width, movie_.height, 1, 0, D3DFMT_A8R8G8B8,
+                                         D3DPOOL_MANAGED, &movie_.texture, nullptr))) {
+            movie_.texture = nullptr;
+            return nullptr;
+        }
+        movieChanged_ = true;
+    }
+    if (movieChanged_) {
+        D3DLOCKED_RECT locked;
+        if (SUCCEEDED(movie_.texture->LockRect(0, &locked, nullptr, 0))) {
+            for (int y = 0; y < movie_.height; ++y) {
+                memcpy(static_cast<uint8_t*>(locked.pBits) + y * locked.Pitch,
+                       &movie_.pixels[static_cast<size_t>(y) * movie_.width],
+                       static_cast<size_t>(movie_.width) * 4);
+            }
+            movie_.texture->UnlockRect(0);
+            movieChanged_ = false;
+        }
+    }
+    return movie_.texture;
+}
+
 void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight) {
     if (!device || draws_.empty()) return;
 
@@ -379,8 +455,13 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
         float invV = 1.0f;
         // Whether this draw asked for artwork at all. FlatRect and Line do not;
         // everything the game blits does.
-        const bool wantsArtwork = draw.image >= 0 || draw.texture != nullptr;
-        if (draw.image >= 0 && static_cast<size_t>(draw.image) < images_.size()) {
+        const bool movie = draw.image == kMovieImage;
+        const bool wantsArtwork = draw.image >= 0 || movie || draw.texture != nullptr;
+        if (movie) {
+            texture = ResolveMovie(device);
+            invU = movie_.width ? 1.0f / movie_.width : 1.0f;
+            invV = movie_.height ? 1.0f / movie_.height : 1.0f;
+        } else if (draw.image >= 0 && static_cast<size_t>(draw.image) < images_.size()) {
             texture = ResolveImage(device, draw.image);
             const Image& image = images_[draw.image];
             invU = image.width ? 1.0f / image.width : 1.0f;
@@ -414,7 +495,10 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
             // has to be printed at the moment it could not be resolved.
             if (missingLogged_ < 120) {
                 ++missingLogged_;
-                if (draw.image >= 0) {
+                if (movie) {
+                    Log("overlay drop: movie frame %dx%d, no texture", movie_.width,
+                        movie_.height);
+                } else if (draw.image >= 0) {
                     Log("overlay drop: blit image=%d, table holds %zu", draw.image, images_.size());
                 } else {
                     const TextureRecord* r = static_cast<const TextureRecord*>(draw.texture);
@@ -443,6 +527,11 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
         }
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
         device->SetRenderState(D3DRS_ALPHATESTENABLE, draw.alphaTest && texture ? TRUE : FALSE);
+        // The movie is a photograph scaled up to the display, which point sampling
+        // turns into blocks; the UI artwork keeps its hard pixels.
+        const D3DTEXTUREFILTERTYPE filter = movie ? D3DTEXF_LINEAR : D3DTEXF_POINT;
+        device->SetSamplerState(0, D3DSAMP_MAGFILTER, filter);
+        device->SetSamplerState(0, D3DSAMP_MINFILTER, filter);
 
         // UVs arrive in texels, exactly as the original received them; it
         // scaled them by 1/size before handing them to Direct3D.
@@ -536,7 +625,9 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
                 x1 = (std::max)(x1, vertex.x);
                 y1 = (std::max)(y1, vertex.y);
             }
-            const char* kind = draw.image >= 0 ? "blit" : (draw.texture ? "quad" : "flatrect");
+            const char* kind = draw.image == kMovieImage
+                                   ? "movie"
+                                   : draw.image >= 0 ? "blit" : (draw.texture ? "quad" : "flatrect");
             Log("  %-8s image=%-4d tex=%p colour=%08X  (%.0f,%.0f)-(%.0f,%.0f)", kind, draw.image,
                 draw.texture, vertices_[draw.first].colour, x0, y0, x1, y1);
         }
@@ -557,6 +648,7 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
 
 void Overlay::ReleaseResources() {
     FreeImageTable();
+    EndMovie();
     vertices_.clear();
     draws_.clear();
 }

@@ -80,6 +80,11 @@ public:
     int LoadImage(const void* tga);
     void BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, int dstX, int dstY);
 
+    // A frame of the intro movie, 32-bit B,G,R,X rows, drawn over the whole of the
+    // game's screen. See intro_movie.cpp. EndMovie lets the last frame go.
+    void MovieFrame(const void* pixels, int width, int height, int pitch);
+    void EndMovie();
+
     void Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight);
     void ReleaseResources();
 
@@ -109,12 +114,17 @@ private:
     void PushTriangleFan(const Vertex* corners, int count, const void* texture, int image,
                          bool alphaTest);
     IDirect3DTexture9* ResolveImage(IDirect3DDevice9* device, int image);
+    IDirect3DTexture9* ResolveMovie(IDirect3DDevice9* device);
     // gbh_ConvertColour returns 5:6:5; this expands it. See FlatRect.
     static uint32_t PanelColour(uint32_t colour);
 
     std::vector<Vertex> vertices_;
     std::vector<Draw> draws_;
     std::vector<Image> images_;
+    // The movie frame, kept out of the image table: the game frees and resizes
+    // that table itself.
+    Image movie_;
+    bool movieChanged_ = false;
 
     int gameWidth_ = 640;
     int gameHeight_ = 480;
