@@ -40,11 +40,16 @@ enum class HudFitMode {
 void SetHudFit(HudFitMode mode);
 HudFitMode HudFit();
 
-// Flag bits the original renderer acts on, from d3ddll.dll!FUN_00e02cc0.
+// Flag bits the original renderer acts on, from d3ddll.dll!FUN_00e02cc0 and the
+// blend setup it calls, FUN_00e02960. gta2.exe builds them in FUN_004cb050 from
+// a draw mode: 0 plain (0x80), 1 translucent (0x2180, with the alpha in the
+// vertex colours), 2 additive (0x2280).
 namespace quad_flags {
 constexpr unsigned kVertexColour = 0x2000;   // diffuse is already in the vertices
 constexpr unsigned kExpandFromTexture = 0x10000;  // only vertex 0 is filled in
 constexpr unsigned kOpaque = 0x300;          // no colour key on this texture
+constexpr unsigned kAdditive = 0x200;        // ONE, ONE
+constexpr unsigned kPointSample = 0x20000;   // nearest; everything else is bilinear
 }  // namespace quad_flags
 
 class Overlay {
@@ -103,7 +108,17 @@ private:
         uint32_t first;        // index into vertices_
         uint32_t count;        // 3 or 6
         bool alphaTest;
+        bool additive;         // quad_flags::kAdditive
+        bool pointSample;      // quad_flags::kPointSample or kExpandFromTexture
     };
+
+    // How a draw blends and samples, from the game's flags. See quad_flags.
+    struct Style {
+        bool alphaTest = false;
+        bool additive = false;
+        bool pointSample = true;
+    };
+    static Style StyleFor(unsigned flags);
 
     struct Image {
         IDirect3DTexture9* texture = nullptr;
@@ -112,7 +127,7 @@ private:
     };
 
     void PushTriangleFan(const Vertex* corners, int count, const void* texture, int image,
-                         bool alphaTest);
+                         const Style& style);
     IDirect3DTexture9* ResolveImage(IDirect3DDevice9* device, int image);
     IDirect3DTexture9* ResolveMovie(IDirect3DDevice9* device);
     // gbh_ConvertColour returns 5:6:5; this expands it. See FlatRect.

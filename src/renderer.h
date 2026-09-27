@@ -86,6 +86,18 @@ public:
     void NoteScreenClear() { uiClearPending_ = true; }
     bool HasUiLayer() const { return uiTexture_ != nullptr; }
 
+    // How RTX Remix tells UI from world, on NVIDIA's runtime and Remix Plus alike
+    // (d3d9_rtx.cpp, isRenderingUI): a fixed-function draw with an orthographic
+    // projection - D3DTS_PROJECTION[3][3] == 1 - and Z writes off. The first such
+    // draw of a frame is where the path traced image is put down; everything
+    // after it is rasterized on top, with our own blend and texture states.
+    //
+    // Pre-transformed vertices ignore the projection entirely, so this changes
+    // what Remix concludes and nothing about what is drawn. Screen: the draws
+    // that follow are the frame's UI. Layer: they are not, whatever the target.
+    void MarkDrawsAsScreenUi();
+    void MarkDrawsAsNotUi();
+
     int Width() const { return width_; }
     int Height() const { return height_; }
 

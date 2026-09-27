@@ -367,8 +367,36 @@ void Renderer::ApplyFixedFunctionState() {
     device_->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
 }
 
+void Renderer::MarkDrawsAsScreenUi() {
+    if (!device_) return;
+    D3DMATRIX identity = {};
+    identity._11 = identity._22 = identity._33 = identity._44 = 1.0f;
+    device_->SetTransform(D3DTS_PROJECTION, &identity);
+    device_->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+}
+
+void Renderer::MarkDrawsAsNotUi() {
+    if (!device_) return;
+    // A perspective shape - w taken from z, nothing left in [3][3] - so this can
+    // never read as orthographic, whatever the projection was before. In the
+    // front end no world has set one, and D3D's default is the identity, which
+    // with the overlay's Z writes off would have made every menu draw "UI".
+    D3DMATRIX perspective = {};
+    perspective._11 = perspective._22 = perspective._33 = 1.0f;
+    perspective._34 = 1.0f;
+    perspective._44 = 0.0f;
+    device_->SetTransform(D3DTS_PROJECTION, &perspective);
+}
+
 // The 2D layer the game believes it is painting into. See the note in the
 // header for why it is kept rather than cleared.
+//
+// Everything drawn into it must not look like UI to RTX Remix. The layer is the
+// size of the back buffer, which makes it a "primary" target in Remix's eyes,
+// and the first UI draw into a primary target is where Remix pastes the whole
+// path traced frame - into our layer, over whatever the menu had kept in it.
+// With the UI texture list and the pre-transformed switch gone from rtx.conf,
+// the projection is the only thing left that could say UI, so it is pinned here.
 bool Renderer::BeginUiLayer(bool clearNow) {
     if (!device_) return false;
     if (!uiTexture_) {
@@ -395,6 +423,7 @@ bool Renderer::BeginUiLayer(bool clearNow) {
         savedTarget_ = nullptr;
         return false;
     }
+    MarkDrawsAsNotUi();
     // Transparent, not black: the world is drawn underneath this, so everywhere
     // the game has not painted has to let it through. The game's own clear is
     // opaque black because in its model there is nothing underneath.
@@ -429,9 +458,18 @@ void Renderer::EndUiLayer() {
     device_->SetRenderState(D3DRS_LIGHTING, FALSE);
     device_->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
     device_->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    // The layer is premultiplied (see Overlay::Flush): its colour is added as it
+    // is, and its alpha says how much of the frame underneath to keep.
     device_->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    device_->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    device_->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, FALSE);
+    device_->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
     device_->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    // And this quad is the frame's UI: the first draw Remix takes for UI, so the
+    // path traced image goes down on the back buffer here and the layer is laid
+    // over it. Without this the composite is just another pre-transformed draw,
+    // which NVIDIA's 1.5.2 rasterizes before the path traced image and then
+    // covers with it at Present - the UI that came and went.
+    MarkDrawsAsScreenUi();
     device_->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
     device_->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
     device_->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);

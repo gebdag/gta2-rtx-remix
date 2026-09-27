@@ -1014,6 +1014,9 @@ void WorldView::RenderFrame() {
             overlay_.Flush(renderer_.Device(), renderer_.Width(), renderer_.Height());
             renderer_.EndUiLayer();
         } else {
+            // Straight onto the back buffer, so these draws are the frame's UI
+            // themselves. See Renderer::MarkDrawsAsScreenUi.
+            renderer_.MarkDrawsAsScreenUi();
             overlay_.Flush(renderer_.Device(), renderer_.Width(), renderer_.Height());
         }
         // ImGui issues ordinary D3D9 draws, so it belongs inside the scene.

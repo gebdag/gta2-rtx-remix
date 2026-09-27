@@ -97,13 +97,29 @@ void Overlay::BeginFrame() {
     missingArtwork_ = 0;
 }
 
+// The original's reading of the flags (d3ddll.dll!FUN_00e02960 and FUN_00e02cc0):
+// 0x200 is additive and 0x100/0x80 alpha-blended, the texture alpha multiplied by
+// the vertex alpha either way; a texture drawn without 0x300 is colour keyed, which
+// is the alpha test here; and it is sampled nearest only for 0x20000 - or 0x10000,
+// which the original turns into 0x20000 - and bilinear otherwise. Text always has
+// 0x20000 (gta2.exe!0x004CC0AB); the rest of the HUD does not.
+Overlay::Style Overlay::StyleFor(unsigned flags) {
+    Style style;
+    style.alphaTest = (flags & quad_flags::kOpaque) == 0;
+    style.additive = (flags & quad_flags::kAdditive) != 0;
+    style.pointSample = (flags & (quad_flags::kPointSample | quad_flags::kExpandFromTexture)) != 0;
+    return style;
+}
+
 void Overlay::PushTriangleFan(const Vertex* corners, int count, const void* texture, int image,
-                              bool alphaTest) {
+                              const Style& style) {
     if (count < 3) return;
     Draw draw;
     draw.texture = texture;
     draw.image = image;
-    draw.alphaTest = alphaTest;
+    draw.alphaTest = style.alphaTest;
+    draw.additive = style.additive;
+    draw.pointSample = style.pointSample;
     draw.first = static_cast<uint32_t>(vertices_.size());
     // A fan of `count` corners is count-2 triangles; the renderer only ever
     // gets 3 or 4, matching the original's DrawPrimitive(D3DPT_TRIANGLEFAN, 4).
@@ -156,7 +172,7 @@ void Overlay::Quad(unsigned flags, const void* texture, const float* v, uint8_t 
                 vertexColour ? *reinterpret_cast<const uint32_t*>(&src[kDiffuse]) : flat;
         }
     }
-    PushTriangleFan(corners, 4, texture, -1, (flags & quad_flags::kOpaque) == 0);
+    PushTriangleFan(corners, 4, texture, -1, StyleFor(flags));
 }
 
 void Overlay::Triangle(unsigned flags, const void* texture, const float* v, uint8_t shade) {
@@ -173,7 +189,7 @@ void Overlay::Triangle(unsigned flags, const void* texture, const float* v, uint
         corners[i].v = src[kUvV];
         corners[i].colour = vertexColour ? *reinterpret_cast<const uint32_t*>(&src[kDiffuse]) : flat;
     }
-    PushTriangleFan(corners, 3, texture, -1, (flags & quad_flags::kOpaque) == 0);
+    PushTriangleFan(corners, 3, texture, -1, StyleFor(flags));
 }
 
 // The colour is whatever gbh_ConvertColour handed the game, and that returns
@@ -200,7 +216,7 @@ void Overlay::FlatRect(const float* v, uint32_t colour) {
         corners[i].y = src[1];
         corners[i].colour = PanelColour(colour);
     }
-    PushTriangleFan(corners, 4, nullptr, -1, false);
+    PushTriangleFan(corners, 4, nullptr, -1, Style{});
 }
 
 void Overlay::Line(int x1, int y1, int x2, int y2, uint32_t colour) {
@@ -221,7 +237,7 @@ void Overlay::Line(int x1, int y1, int x2, int y2, uint32_t colour) {
         corners[i].y = py[i];
         corners[i].colour = colour | 0xFF000000u;
     }
-    PushTriangleFan(corners, 4, nullptr, -1, false);
+    PushTriangleFan(corners, 4, nullptr, -1, Style{});
 }
 
 void Overlay::InitImageTable(int count) {
@@ -310,8 +326,9 @@ void Overlay::BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, i
         corners[i].v = uv[i][1];
         corners[i].colour = 0xFFFFFFFFu;
     }
-    // A blit is a straight surface copy in the original: fully opaque.
-    PushTriangleFan(corners, 4, nullptr, image, false);
+    // A blit is a straight surface copy in the original: fully opaque, and it
+    // keeps its hard pixels.
+    PushTriangleFan(corners, 4, nullptr, image, Style{});
 }
 
 IDirect3DTexture9* Overlay::ResolveImage(IDirect3DDevice9* device, int index) {
@@ -375,7 +392,10 @@ void Overlay::MovieFrame(const void* pixels, int width, int height, int pitch) {
         corners[i].v = uv[i][1];
         corners[i].colour = 0xFFFFFFFFu;
     }
-    PushTriangleFan(corners, 4, nullptr, kMovieImage, false);
+    // A photograph scaled up to the display: bilinear.
+    Style movie;
+    movie.pointSample = false;
+    PushTriangleFan(corners, 4, nullptr, kMovieImage, movie);
 }
 
 void Overlay::EndMovie() {
@@ -436,8 +456,13 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
     device->SetRenderState(D3DRS_LIGHTING, FALSE);
     device->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    // Colour and alpha blend separately so the layer ends up premultiplied: its
+    // colour is what the UI adds, its alpha how much of the world it hides. That
+    // is what lets the renderer put it over the path traced frame in one blend
+    // with the translucency intact - blending alpha like colour would leave a
+    // translucent panel at alpha squared, half as see-through again as the game
+    // drew it. See Renderer::EndUiLayer.
+    device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
     device->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
     device->SetRenderState(D3DRS_ALPHAREF, 1);
 
@@ -511,13 +536,42 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
             continue;
         }
 
+        if (draw.additive) {
+            // ONE, ONE, as the original: light added to what is there, and
+            // nothing hidden, so the layer's alpha is left alone.
+            device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+            device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+            device->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO);
+            device->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE);
+        } else {
+            device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+            device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+            device->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE);
+            device->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA);
+        }
+        const D3DTEXTUREFILTERTYPE filter = draw.pointSample ? D3DTEXF_POINT : D3DTEXF_LINEAR;
+        device->SetSamplerState(0, D3DSAMP_MAGFILTER, filter);
+        device->SetSamplerState(0, D3DSAMP_MINFILTER, filter);
+
         if (texture) {
             device->SetTexture(0, texture);
             device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
             device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
             device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-            device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
-            device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+            if (draw.additive) {
+                // The texture's own alpha only, and tested: the transparent texels
+                // carry bled colour (see BleedTransparentEdges) that ONE, ONE
+                // would otherwise add as a square halo. The original's were black.
+                device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+                device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+            } else {
+                // Texture alpha times vertex alpha - the original's MODULATEALPHA.
+                // The vertex alpha is how the game makes the HUD see-through: mode 1
+                // in FUN_004cb050 puts it there. Dropping it drew the HUD solid.
+                device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+                device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+                device->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+            }
         } else {
             device->SetTexture(0, nullptr);
             device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
@@ -526,12 +580,8 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
             device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
         }
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-        device->SetRenderState(D3DRS_ALPHATESTENABLE, draw.alphaTest && texture ? TRUE : FALSE);
-        // The movie is a photograph scaled up to the display, which point sampling
-        // turns into blocks; the UI artwork keeps its hard pixels.
-        const D3DTEXTUREFILTERTYPE filter = movie ? D3DTEXF_LINEAR : D3DTEXF_POINT;
-        device->SetSamplerState(0, D3DSAMP_MAGFILTER, filter);
-        device->SetSamplerState(0, D3DSAMP_MINFILTER, filter);
+        device->SetRenderState(D3DRS_ALPHATESTENABLE,
+                               (draw.alphaTest || draw.additive) && texture ? TRUE : FALSE);
 
         // UVs arrive in texels, exactly as the original received them; it
         // scaled them by 1/size before handing them to Direct3D.
@@ -642,6 +692,7 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
     device->SetTexture(0, nullptr);
     device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, FALSE);
     device->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
     device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 }
