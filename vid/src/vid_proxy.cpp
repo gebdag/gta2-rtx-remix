@@ -157,6 +157,10 @@ namespace {
 // not setting one anyway. Only ever tested against zero.
 const int kSyntheticMode = 0x7FFF;
 
+// The mode Vid_SetMode is handed for a windowed screen, and what the context
+// holds at +0x40 while one is up.
+const int kWindowedMode = -2;
+
 const char kBackslash = 92;  // written by code point: escaping it has bitten twice
 
 // What to forward to, decided by the name we were loaded under.
@@ -656,8 +660,29 @@ extern "C" __declspec(dllexport) int __stdcall Vid_SetMode(void* context, int wi
         // The screen size the game reads back and hands to gbh_SetWindow. Taken
         // from the mode it just chose rather than invented, so the front end is
         // laid out exactly as it was when DirectDraw really did set the mode.
-        const int width = *CtxField(context, 0x08);
-        const int height = *CtxField(context, 0x0C);
+        int width = *CtxField(context, 0x08);
+        int height = *CtxField(context, 0x0C);
+        if (mode == kWindowedMode) {
+            // Windowed, which gta2.exe 9.6 only picks on a 16-bit desktop but the
+            // 11.44 build picks on any (it reports every desktop as 16-bit, and
+            // installs with start_mode=0). There is no Vid_CheckMode first
+            // (0x004CB858), so the size is the window's own, and the mode goes in
+            // +0x40 where the game looks for it - exactly what the original does
+            // (Dmavideo.dll+0x2614: GetClientRect into +0x48/+0x4C, mode into
+            // +0x40).
+            RECT client = {};
+            HWND hwnd = reinterpret_cast<HWND>(static_cast<uintptr_t>(window));
+            if (hwnd && GetClientRect(hwnd, &client) && client.right > client.left &&
+                client.bottom > client.top) {
+                width = client.right - client.left;
+                height = client.bottom - client.top;
+            }
+            *CtxField(context, 0x40) = kWindowedMode;
+        } else if (*CtxField(context, 0x40) == kWindowedMode) {
+            // Back to a full screen after a windowed one. Never true on 9.6 with
+            // this device, which leaves +0x40 at zero otherwise.
+            *CtxField(context, 0x40) = 0;
+        }
         *CtxField(context, 0x48) = width;
         *CtxField(context, 0x4C) = height;
         // The surface itself. Only MakeScreenTable is ever handed these, and in
@@ -674,6 +699,9 @@ extern "C" __declspec(dllexport) int __stdcall Vid_CloseScreen(void* context) {
     using Fn = int(__stdcall*)(void*);
     static Fn fn = reinterpret_cast<Fn>(Entry("Vid_CloseScreen"));
     if (!Standalone()) return fn ? fn(context) : 0;
+    // The original clears the mode here (Dmavideo.dll+0x1B46). Only a windowed
+    // screen ever sets it on this device, so a full screen one is untouched.
+    if (context && *CtxField(context, 0x40) == kWindowedMode) *CtxField(context, 0x40) = 0;
     Log("Vid_CloseScreen(%p) -> nothing to close", context);
     return 0;
 }
