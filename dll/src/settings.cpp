@@ -184,7 +184,9 @@ void SettingsSaveAll() {
     fprintf(out, "SpriteFeather=%.4f\n", SpriteFeather());
     fprintf(out, "AlphaMode=%s\n", gta2::GetAlphaMode() == gta2::AlphaMode::Blend ? "blend" : "test");
     fprintf(out, "AlphaRef=%d\n", gta2::GetAlphaRef());
-    fprintf(out, "HudFit=%s\n", HudFit() == HudFitMode::Stretch ? "stretch" : "fit");
+    fprintf(out, "HudFit=%s\n", HudFit() == HudFitMode::Stretch      ? "stretch"
+                                 : HudFit() == HudFitMode::Widescreen ? "widescreen"
+                                                                      : "fit");
     fprintf(out, "FpsCap=%.4f\n", FrameLimitFps());
     fprintf(out, "DumpTextures=%d\n", TextureDumping() ? 1 : 0);
     fprintf(out, "CloseHoles=%d\n", CloseHoles() ? 1 : 0);
@@ -278,7 +280,9 @@ void SettingsLoadAll() {
         } else if (!_stricmp(key, "AlphaRef")) {
             gta2::SetAlphaRef(atoi(value));
         } else if (!_stricmp(key, "HudFit")) {
-            SetHudFit(!_stricmp(value, "stretch") ? HudFitMode::Stretch : HudFitMode::Fit);
+            SetHudFit(!_stricmp(value, "stretch")      ? HudFitMode::Stretch
+                      : !_stricmp(value, "widescreen") ? HudFitMode::Widescreen
+                                                       : HudFitMode::Fit);
         } else if (!_stricmp(key, "FpsCap")) {
             FrameLimitSet(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "DumpTextures")) {

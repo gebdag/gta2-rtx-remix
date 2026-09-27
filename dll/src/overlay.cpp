@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "log.h"
+#include "hud_pass.h"
 #include "texture_store.h"
 
 namespace gta2dx9 {
@@ -26,7 +27,9 @@ constexpr DWORD kOverlayFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
 // Draw::image for the movie frame, which is not in the image table.
 constexpr int kMovieImage = -2;
 
-HudFitMode g_fit = HudFitMode::Fit;
+// The HUD against the edges of a wide display, the menus and everything tied to
+// the world centred and in shape.
+HudFitMode g_fit = HudFitMode::Widescreen;
 
 uint32_t GreyFromShade(uint8_t shade) {
     return 0xFF000000u | (static_cast<uint32_t>(shade) << 16) |
@@ -120,6 +123,7 @@ void Overlay::PushTriangleFan(const Vertex* corners, int count, const void* text
     draw.alphaTest = style.alphaTest;
     draw.additive = style.additive;
     draw.pointSample = style.pointSample;
+    draw.hud = HudPassActive();
     draw.first = static_cast<uint32_t>(vertices_.size());
     // A fan of `count` corners is count-2 triangles; the renderer only ever
     // gets 3 or 4, matching the original's DrawPrimitive(D3DPT_TRIANGLEFAN, 4).
@@ -430,6 +434,85 @@ IDirect3DTexture9* Overlay::ResolveMovie(IDirect3DDevice9* device) {
     return movie_.texture;
 }
 
+// The HUD on a wide screen.
+//
+// GTA2 lays its HUD out on a 640-wide canvas and scales that by width/640
+// (FUN_0041eb70), so on a display wider than 4:3 there is no layout to be had
+// from the game: the score sits a quarter of the way in from the right edge of a
+// 16:9 frame, not against it. So the canvas stays 4:3 - one scale for both axes,
+// nothing stretched - and each element of the HUD is slid sideways to the edge
+// it was drawn against: left third stays with the left edge, right third goes
+// with the right edge, anything reaching across the middle stays centred.
+//
+// An element is not a draw. A line of text is one quad per glyph, and the pager
+// is a frame with text inside it; moved one quad at a time, a line straddling a
+// third would tear in two. So consecutive HUD draws that touch or overlap are
+// one element, decided and moved together.
+//
+// Only the HUD moves. Screen-space draws tied to the world - money over a
+// pedestrian, text over an object - keep the centred placement, which is the one
+// that lines up with the world under them; the menus keep it too.
+std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const {
+    std::vector<float> out(draws_.size(), centred);
+    if (g_fit != HudFitMode::Widescreen || centred < 1.0f || scale <= 0.0f) return out;
+
+    struct Box {
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    };
+    auto boxOf = [this](const Draw& draw) {
+        Box b;
+        for (uint32_t i = 0; i < draw.count; ++i) {
+            const Vertex& v = vertices_[draw.first + i];
+            b.x0 = (std::min)(b.x0, v.x);
+            b.x1 = (std::max)(b.x1, v.x);
+            b.y0 = (std::min)(b.y0, v.y);
+            b.y1 = (std::max)(b.y1, v.y);
+        }
+        return b;
+    };
+
+    const float third = static_cast<float>(gameWidth_) / 3.0f;
+    const float left = 0.0f;            // the 4:3 canvas against the left edge
+    const float right = centred * 2.0f; // against the right edge
+    size_t start = 0;
+    Box group;
+    bool open = false;
+    auto close = [&](size_t end) {
+        if (!open) return;
+        const float offset = group.x1 <= third                ? left
+                             : group.x0 >= 2.0f * third        ? right
+                                                               : centred;
+        for (size_t i = start; i < end; ++i) out[i] = offset;
+        open = false;
+    };
+    for (size_t i = 0; i < draws_.size(); ++i) {
+        const Draw& draw = draws_[i];
+        if (!draw.hud) {
+            close(i);
+            continue;
+        }
+        const Box b = boxOf(draw);
+        // Touching: overlapping rows, and no more than most of a glyph apart -
+        // the gap between words, not the gap between the score and the lives.
+        const float gap = (std::max)(4.0f, (b.y1 - b.y0) * 0.75f);
+        const bool joins = open && b.y0 < group.y1 && b.y1 > group.y0 &&
+                           b.x0 <= group.x1 + gap && b.x1 >= group.x0 - gap;
+        if (!joins) {
+            close(i);
+            start = i;
+            group = b;
+            open = true;
+        } else {
+            group.x0 = (std::min)(group.x0, b.x0);
+            group.x1 = (std::max)(group.x1, b.x1);
+            group.y0 = (std::min)(group.y0, b.y0);
+            group.y1 = (std::max)(group.y1, b.y1);
+        }
+    }
+    close(draws_.size());
+    return out;
+}
+
 void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight) {
     if (!device || draws_.empty()) return;
 
@@ -439,7 +522,7 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
     float scaleY = static_cast<float>(targetHeight) / static_cast<float>(gameHeight_);
     float offsetX = 0.0f;
     float offsetY = 0.0f;
-    if (g_fit == HudFitMode::Fit && scaleX != scaleY) {
+    if (g_fit != HudFitMode::Stretch && scaleX != scaleY) {
         // The smaller scale, so all of the game's screen is on screen, and the
         // slack split evenly - the front end is a full-screen image and belongs
         // in the middle of the display rather than against one edge.
@@ -474,7 +557,9 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
 
     device->SetFVF(kOverlayFvf);
 
-    for (const Draw& draw : draws_) {
+    const std::vector<float> placeX = HorizontalOffsets(scaleX, offsetX);
+    for (size_t drawIndex = 0; drawIndex < draws_.size(); ++drawIndex) {
+        const Draw& draw = draws_[drawIndex];
         IDirect3DTexture9* texture = nullptr;
         float invU = 1.0f;
         float invV = 1.0f;
@@ -590,7 +675,7 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
         for (Vertex& vertex : batch) {
             // The half pixel is the usual Direct3D 9 texel-to-pixel offset, and
             // it is subtracted after the fit so that centring cannot shift it.
-            vertex.x = vertex.x * scaleX + offsetX - 0.5f;
+            vertex.x = vertex.x * scaleX + placeX[drawIndex] - 0.5f;
             vertex.y = vertex.y * scaleY + offsetY - 0.5f;
             vertex.z = 0.0f;
             vertex.rhw = 1.0f;

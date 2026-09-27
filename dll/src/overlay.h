@@ -33,8 +33,9 @@ namespace gta2dx9 {
 // 16:9 screen by a third, which is subtle on text and obvious on anything round:
 // the ring on the front-end photograph comes out a clear ellipse.
 enum class HudFitMode {
-    Fit,       // one scale for both axes, centred - a circle stays a circle
-    Stretch,   // fill the back buffer, which is what the original renderer did
+    Fit,         // one scale for both axes, centred - a circle stays a circle
+    Stretch,     // fill the back buffer, which is what the original renderer did
+    Widescreen,  // Fit, but the HUD's elements go out to the edges they belong to
 };
 
 void SetHudFit(HudFitMode mode);
@@ -110,7 +111,13 @@ private:
         bool alphaTest;
         bool additive;         // quad_flags::kAdditive
         bool pointSample;      // quad_flags::kPointSample or kExpandFromTexture
+        bool hud;              // drawn from the game's HUD pass, see hud_pass.h
     };
+
+    // Where each draw goes across the screen, as an offset added after scaling.
+    // Everything is centred, except in HudFitMode::Widescreen, where the HUD's
+    // elements are moved out to the edge they sit against. See the .cpp.
+    std::vector<float> HorizontalOffsets(float scale, float centred) const;
 
     // How a draw blends and samples, from the game's flags. See quad_flags.
     struct Style {

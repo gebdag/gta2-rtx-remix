@@ -450,10 +450,16 @@ void DrawGeneral() {
     // give: either the artwork keeps its shape and the display is wider than it,
     // or it is stretched a third wider than it was drawn. Which of those looks
     // right is taste, not correctness, so it is a switch rather than a decision
-    // made here.
+    // made here. The third way, and the default, keeps the shape and moves the
+    // HUD's elements out to the display's edges; see Overlay::HorizontalOffsets.
     const char* aspect = DisplayAspect();
-    int fit = HudFit() == HudFitMode::Stretch ? 1 : 0;
+    int fit = HudFit() == HudFitMode::Stretch ? 1 : HudFit() == HudFitMode::Widescreen ? 2 : 0;
     const int wasFit = fit;
+    ImGui::RadioButton("Widescreen HUD", &fit, 2);
+    ImGui::SetItemTooltip("The HUD goes out to the edges of the display - score and lives in the "
+                          "corners, not a quarter of the way in - keeping its shape. Menus stay "
+                          "4:3 and centred.");
+    ImGui::SameLine();
     ImGui::RadioButton("4:3 (original)", &fit, 0);
     ImGui::SetItemTooltip("The shape GTA2 drew its menus and HUD in, centred on the display. A "
                           "circle on screen is a circle.");
@@ -466,11 +472,13 @@ void DrawGeneral() {
                           "screen it makes the 4:3 artwork a third too wide -- which plenty of "
                           "people prefer to bars down the sides.");
     if (fit != wasFit) {
-        SetHudFit(fit ? HudFitMode::Stretch : HudFitMode::Fit);
+        SetHudFit(fit == 1 ? HudFitMode::Stretch
+                  : fit == 2 ? HudFitMode::Widescreen
+                             : HudFitMode::Fit);
         SettingsMarkDirty();
     }
     if (aspect[0] && !strcmp(aspect, "4:3")) {
-        ImGui::TextColored(kDim, "This display is 4:3 already, so the two are the same.");
+        ImGui::TextColored(kDim, "This display is 4:3 already, so the three are the same.");
     }
 
     ImGui::SeparatorText("Menu size");

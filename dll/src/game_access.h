@@ -91,6 +91,16 @@ constexpr uintptr_t kVideoContextPtr = 0x00673D20;
 constexpr uintptr_t kVideoSurfaceOffset = 0x50;   // pixels
 constexpr uintptr_t kVideoPitchOffset = 0x54;     // bytes per row
 
+// The HUD. FUN_004ca440 (a __thiscall) draws all of it - score, wanted level,
+// pager, messages, zone names - and it is called once a frame, from here in the
+// frame render FUN_0045a5a0. It lays everything out on a 640-wide canvas scaled
+// by width/640 (the camera's +0xA8, set by FUN_0041eb70), so nothing in it
+// knows about a wider screen. Screen-space draws that are not HUD - money
+// popping up over a pedestrian, text over an object - come from elsewhere
+// (FUN_004b98b0, the object draw FUN_004be060) and must stay where the world is.
+constexpr uintptr_t kHudDrawCall = 0x0045A61F;
+constexpr uintptr_t kHudDraw = 0x004CA440;
+
 // The open Bink movie (width at +0, height at +4) and the BinkCopyToBuffer
 // surface type the frame copy passes. This binkw32.dll's types, decoded off a
 // frame of intro.bik: 0 is 24-bit, 1 is 32-bit B,G,R,X, 2 to 5 are 16-bit.

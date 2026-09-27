@@ -22,6 +22,7 @@
 
 #include "frame_limiter.h"
 #include "game_access.h"
+#include "hud_pass.h"
 #include "intro_movie.h"
 #include "live_geometry.h"
 #include "log.h"
@@ -362,6 +363,9 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         // Before anything else the game does: its startup decides whether to play
         // the intro straight after loading us.
         gta2dx9::IntroInstall(g_intro, &PresentMovieFrame);
+        // So the overlay can tell the HUD from screen-space draws tied to the
+        // world, and move only the HUD out to the edges of a wide display.
+        gta2dx9::HudPassInstall();
         char path[MAX_PATH];
         PathBesideGame("gta2dx9_lights.ini", path, sizeof(path));
         gta2dx9::LightsInit(path);
