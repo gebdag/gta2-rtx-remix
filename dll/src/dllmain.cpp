@@ -319,12 +319,32 @@ void LogGraphicsModules() {
         if (!GetModuleFileNameA(modules[i], path, MAX_PATH)) continue;
         const char* leaf = strrchr(path, '\\');
         leaf = leaf ? leaf + 1 : path;
+        // The video device too, and anything that could stand in for one: on a
+        // machine where the game's own DirectDraw device was loaded instead of
+        // ours, this is the line that says which file it was.
+        char lower[MAX_PATH];
+        strncpy(lower, leaf, sizeof(lower) - 1);
+        lower[sizeof(lower) - 1] = '\0';
+        _strlwr(lower);
         if (_stricmp(leaf, "d3d9.dll") == 0 || _stricmp(leaf, "ddraw.dll") == 0 ||
             _stricmp(leaf, "dxgi.dll") == 0 || _stricmp(leaf, "d3d9_remix.dll") == 0 ||
-            _stricmp(leaf, "dciman32.dll") == 0) {
+            _stricmp(leaf, "dciman32.dll") == 0 || strstr(lower, "video") ||
+            strstr(lower, "dma") || strstr(lower, "glide") || strstr(lower, "gta2dx9")) {
             Log("already loaded: %s", path);
         }
     }
+    // Which file the game is actually calling for its video device: the module
+    // that holds the Vid_Init_SYS it resolved (gta2.exe's table at 0x00595020).
+    const void* vidInit = *reinterpret_cast<void* const*>(0x00595020);
+    HMODULE owner = nullptr;
+    char ownerPath[MAX_PATH] = "(none)";
+    if (vidInit &&
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(vidInit), &owner)) {
+        GetModuleFileNameA(owner, ownerPath, MAX_PATH);
+    }
+    Log("video device in use: %s (Vid_Init_SYS at %p)", ownerPath, vidInit);
 }
 
 __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {

@@ -1,10 +1,10 @@
 @echo off
 rem Builds both DLLs and assembles release\ - exactly what a player unzips.
 rem
-rem Two files in the release share a name with a GTA2 file, deliberately:
-rem d3ddll.dll and Dmavideo.dll, the renderer and video device under the names
-rem GTA2 loads out of the box. Unzipping is then the whole install, and nothing
-rem the GTA2 manager writes to the registry can undo it. See
+rem Three files in the release share a name with a GTA2 file, deliberately:
+rem d3ddll.dll, Dmavideo.dll and DMAGlide.dll, the renderer and the video device
+rem under the names GTA2 loads out of the box. Unzipping is then the whole
+rem install, and nothing the GTA2 manager writes to the registry can undo it. See
 rem package\gta2dx9_README.txt.
 setlocal
 cd /d "%~dp0" || exit /b 1
@@ -25,6 +25,13 @@ rem or runs the GTA2 manager afterwards - gets "Videomode 16x16x16 is not
 rem available" from the game's own video device.
 copy /y "%~dp0dll\build\gta2dx9.dll"     "%OUT%\d3ddll.dll"          >nul || exit /b 1
 copy /y "%~dp0vid\build\gta2dx9_vid.dll" "%OUT%\Dmavideo.dll"        >nul || exit /b 1
+rem And the video device once more, as the game's Glide one. The 11.44 GTA2
+rem manager picks DMAGlide.dll whenever it finds a glide2x.dll, which any Glide
+rem wrapper provides; the wrapper then draws through Direct3D 9, so Remix gets a
+rem second full-screen device beside ours - a hang, or tearing and a flickering
+rem image with frame generation on. Ours under that name too leaves one device
+rem whatever the manager chose.
+copy /y "%~dp0vid\build\gta2dx9_vid.dll" "%OUT%\DMAGlide.dll"        >nul || exit /b 1
 
 copy /y "%~dp0package\gta2dx9.ini"   "%OUT%\" >nul || exit /b 1
 copy /y "%~dp0package\install.reg"   "%OUT%\" >nul || exit /b 1

@@ -2,8 +2,8 @@ Windows Registry Editor Version 5.00
 
 ; Puts GTA2 back on its own renderer and video device.
 ;
-; Put GTA2's own d3ddll.dll and Dmavideo.dll back first, from the backup the
-; readme asked you to make. The ones the zip installed are ours, and GTA2 loads
+; Put GTA2's own d3ddll.dll, Dmavideo.dll and DMAGlide.dll back first, from the
+; backup the readme asked you to make. The ones the zip installed are ours, and GTA2 loads
 ; them under exactly the names this sets.
 ;
 ; The mod's own files (gta2dx9.dll, gta2dx9_vid.dll, gta2dx9*.ini, gta2dx9*.log)

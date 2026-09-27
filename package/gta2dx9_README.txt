@@ -28,11 +28,11 @@ What you need
 Installing
 ----------
 
-1. Back up d3ddll.dll and Dmavideo.dll from your GTA2 folder. The next step
-   replaces them, and you need the originals to uninstall.
+1. Back up d3ddll.dll, Dmavideo.dll and DMAGlide.dll from your GTA2 folder.
+   The next step replaces them, and you need the originals to uninstall.
 
 2. Unzip everything into your GTA2 folder (the one with gta2.exe) and let it
-   replace those two files.
+   replace those three files.
 
 3. Start gta2.exe. Press F4 in game for the settings panel.
 
@@ -40,7 +40,7 @@ Installing
 Without replacing GTA2's files
 ------------------------------
 
-Skip the two files in step 2 and run install.reg instead (needs administrator
+Skip the three files in step 2 and run install.reg instead (needs administrator
 rights). The GTA2 manager and the in-game options screen undo this whenever you
 change the resolution; run install.reg again when that happens.
 
@@ -48,7 +48,7 @@ change the resolution; run install.reg again when that happens.
 Uninstalling
 ------------
 
-1. Put your backed-up d3ddll.dll and Dmavideo.dll back.
+1. Put your backed-up d3ddll.dll, Dmavideo.dll and DMAGlide.dll back.
 2. Run uninstall.reg.
 3. Delete the gta2dx9* files and the rtx-remix\mods\gta2rtx folder.
 4. If you are removing RTX Remix as well, delete rtx.conf and .trex\bridge.conf.
@@ -75,7 +75,8 @@ Files
 -----
 
     d3ddll.dll, gta2dx9.dll        the renderer
-    Dmavideo.dll, gta2dx9_vid.dll  the video device
+    Dmavideo.dll, DMAGlide.dll,    the video device
+      gta2dx9_vid.dll
     gta2dx9.ini                    settings (required)
     gta2dx9_effects.ini            particle effect lights
     gta2dx9_settings.ini           light tuning, written by the F4 menu
