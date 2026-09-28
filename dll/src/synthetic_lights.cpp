@@ -64,7 +64,8 @@ const int kMaxWalk = 4096;
 const float kWorldMargin = 8.0f;
 
 const char* const kCategoryNames[kSynthCategoryCount] = {
-    "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights", "Brake lights"};
+    "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights", "Brake lights",
+    "Electricity"};
 
 // Per car sprite, from the district's style. See SyntheticSetBrakeLamps.
 std::vector<BrakeLamp> g_brakeLamps;
@@ -137,6 +138,10 @@ void EnsureBinding() {
     // spawning, at ground level and drifting up, long after every other had
     // stopped. Unbound, a burning wreck lit nothing.
     g_binding[0x04] = kSynthFire;
+    // 0x25 is the electro gun's bolt. FUN_004CCBD0 draws it as a chain of these
+    // between the gun and each target - FUN_0048DDC0, one of code_obj 480-483 at
+    // random per link - and nothing else in the game creates the type.
+    g_binding[0x25] = kSynthElectric;
     // 0x26 and 0x2B were bound to bullet and fire on the strength of the profile
     // and both were wrong - each emitted thousands of lights on the wrong sprite.
     // They stay unbound rather than plausibly wrong: an unbound category says so
@@ -211,6 +216,17 @@ void EnsureBinding() {
     brake.forwardOffset = 0.08f;
     brake.heightOffset = 0.12f;
     brake.maxLights = 40;
+
+    // The bolt is a chain of short links, dozens along a long one, so it is
+    // capped well below that: a handful of lights along it reads as the arc
+    // lighting the street, and it crackles rather than burns.
+    SyntheticCategorySettings& electric = g_settings.category[kSynthElectric];
+    electric.rgb[0] = 0.55f; electric.rgb[1] = 0.68f; electric.rgb[2] = 1.0f;
+    electric.intensity = 1.0f;
+    electric.radius = 2.0f;
+    electric.heightOffset = 0.1f;
+    electric.flicker = 0.6f;
+    electric.maxLights = 10;
 }
 
 ParticleTypeInfo& TypeSlot(int type) {

@@ -39,6 +39,7 @@ enum SyntheticCategory {
     kSynthHeadlight,
     // Last, so the category numbers in existing Bind= lines keep their meaning.
     kSynthBrake,
+    kSynthElectric,
     kSynthCategoryCount
 };
 
