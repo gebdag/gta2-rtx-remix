@@ -17,7 +17,8 @@ including every animation frame of the weapon, vehicle and token pickups.
 What you need
 -------------
 
-* GTA2 v9.6 - available for free online
+* GTA2 v9.6 - available for free online. v11.44 should work too: start it with
+  gta2.exe rather than through the GTA2 manager.
 * RTX Remix for x86 games, installed in the GTA2 folder. Remix Plus 1.5 or newer
   is recommended - get Remix_Plus_v1.5.1_x86_games_release.zip from
   https://github.com/RemixProjGroup/dxvk-remix/releases/tag/remix-plus-1.5.1

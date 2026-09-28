@@ -25,7 +25,7 @@ A Direct3D 9 renderer for GTA2, built for RTX Remix.
 
 ## Requirements
 
-- GTA2 (built and tested against the freely available v9.6 release)
+- GTA2 (built and tested against the freely available v9.6 release; v11.44 should work too, started with gta2.exe)
 - RTX Remix runtime
 - Windows 10 or 11, 64-bit
 
