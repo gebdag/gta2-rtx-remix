@@ -40,6 +40,7 @@ enum SyntheticCategory {
     // Last, so the category numbers in existing Bind= lines keep their meaning.
     kSynthBrake,
     kSynthElectric,
+    kSynthCarLamp,
     kSynthCategoryCount
 };
 
@@ -150,7 +151,12 @@ struct CarLamp {
     bool valid = false;
     float along = 0.0f;  // tiles along the car's heading from its centre; negative is behind
     float side = 0.0f;   // tiles to its right; the other lamp is the mirror image
+    float rgb[3] = {1.0f, 1.0f, 1.0f};   // the delta's own colour, 0..1
 };
+
+// Whether the car lamp category is on: the game's lamp quads are then left out
+// and each lit lamp is a light instead. See kSynthCarLamp.
+bool SyntheticCarLampsReplaceQuads();
 
 // One entry per car sprite for one lamp delta, set when a district's style is
 // loaded. GTA2 draws a car's lamps as deltas patched onto its sprite - delta 5

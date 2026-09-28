@@ -695,9 +695,7 @@ bool WorldView::EnsureWorldLoaded() {
     // pixels a tile, is where the light goes relative to the car.
     {
         const int cars = style.SpriteCount(gta2::SpriteBase::Car);
-        const int deltas[3] = {game::kBrakeLightDelta, game::kHeadlightDelta,
-                               game::kHeadlightAltDelta};
-        for (const int delta : deltas) {
+        for (const int delta : game::kCarLampDeltas) {
             std::vector<CarLamp> lamps(cars > 0 ? cars : 0);
             int found = 0;
             for (int sprite = 0; sprite < cars; ++sprite) {
@@ -710,6 +708,7 @@ bool WorldView::EnsureWorldLoaded() {
                 lamps[sprite].valid = true;
                 lamps[sprite].along = (y - art.height * 0.5f) / 64.0f;
                 lamps[sprite].side = (x - art.width * 0.5f) / 64.0f;
+                style.SpriteDeltaColour(gta2::SpriteBase::Car, sprite, delta, lamps[sprite].rgb);
                 ++found;
             }
             SyntheticSetCarLamps(delta, std::move(lamps));

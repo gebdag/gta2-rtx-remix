@@ -572,6 +572,9 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // a sliver per layer, because a trail is dozens of overlapping strips and a
     // car's worth of stack step each piled them into the air.
     const bool decal = IsGroundDecal(texture);
+    // A limb lies on the road rather than standing on it like a pedestrian, but
+    // it is not flat paint either: a third of a sprite's ride height.
+    const bool limb = scale != 1.0f;
     const float stackStep = decal ? kConformClearance * 0.25f : g_spriteStackStep;
     const float stacked = stackStep > 0.0f ? StackLayerFor(cx, cz, area) * stackStep : 0.0f;
 
@@ -734,7 +737,9 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // and the tilt are smoothed: baseY follows the ground directly, because a car
     // driving up a ramp *should* rise with it and lagging that would be the
     // strange movement rather than the fix for it. See the Track note.
-    float offset = decal ? kConformClearance + stacked : g_spriteHeight + clearance + stacked;
+    float offset = decal  ? kConformClearance + stacked
+                 : limb   ? kConformClearance + g_spriteHeight * 0.33f + stacked
+                          : g_spriteHeight + clearance + stacked;
     if (const Track* previous = FindTrack(texture, cx, cz)) {
         offset = previous->offset + (offset - previous->offset) * kSmoothing;
         Vec3 eased{previous->nx + (groundUp.x - previous->nx) * kSmoothing,

@@ -356,6 +356,14 @@ void GibsUpdate() {
         if (*reinterpret_cast<const int16_t*>(p + game::kParticleLife) <= 2) {
             if (g_gibs) {
                 *reinterpret_cast<int32_t*>(p + game::kParticleType) = kRestingType;
+                // Gone when the blood is: the pool under a body lasts 800 frames
+                // from the death (FUN_0048CC50), and this limb has already spent
+                // its flight of it. The update counts the life down whatever the
+                // type, so it is the clock.
+                const int16_t flown =
+                    *reinterpret_cast<const int16_t*>(p + game::kParticleLifeStart);
+                *reinterpret_cast<int16_t*>(p + game::kParticleLife) =
+                    static_cast<int16_t>(game::kBloodPoolLife - flown);
                 g_resting.push_back(p);
             }
             g_flying[i] = g_flying.back();
@@ -365,10 +373,17 @@ void GibsUpdate() {
         ++i;
     }
 
-    // Drop any that are no longer ours, then retire the oldest past the cap - or
-    // all of them, once the option is off.
+    // Drop any that are no longer ours, clear the ones whose blood has gone, then
+    // retire the oldest past the cap - or all of them, once the option is off.
     for (auto it = g_resting.begin(); it != g_resting.end();) {
-        it = (IsParticle(*it) && ParticleType(*it) == kRestingType) ? it + 1 : g_resting.erase(it);
+        if (!IsParticle(*it) || ParticleType(*it) != kRestingType) {
+            it = g_resting.erase(it);
+        } else if (*reinterpret_cast<const int16_t*>(*it + game::kParticleLife) <= 2) {
+            EndParticle(*it);
+            it = g_resting.erase(it);
+        } else {
+            ++it;
+        }
     }
     const size_t keep = g_gibs ? kMaxResting : 0;
     while (g_resting.size() > keep) {

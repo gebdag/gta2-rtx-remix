@@ -57,6 +57,10 @@ public:
     // the DELX index and the DELS store. False when the sprite has no such delta.
     bool SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, float* y) const;
 
+    // The average colour of the pixels a delta paints, in the sprite's own
+    // palette, 0..1. False when the sprite has no such delta.
+    bool SpriteDeltaColour(SpriteBase base, int index, int delta, float* rgb) const;
+
 private:
     void DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
                      size_t palOffset, size_t palIndexOffset, size_t palIndexSize);
@@ -78,6 +82,20 @@ private:
     };
     std::vector<std::pair<int, DeltaSet>> deltas_;   // by sprite number, in DELX order
     std::vector<uint8_t> deltaStore_;
+
+    // Palettes, for sprite colours: PPAL as stored, PALX mapping a palette slot
+    // to a physical palette, and how many slots the tiles take before the
+    // sprites' own begin (PALB's first entry).
+    std::vector<uint8_t> palettes_;
+    std::vector<uint16_t> paletteIndex_;
+    uint16_t tilePalettes_ = 0;
+
+    // The delta's pixels, as sprite-relative positions and palette indices.
+    struct DeltaPixel {
+        int x, y;
+        uint8_t index;
+    };
+    bool DeltaPixels(SpriteBase base, int index, int delta, std::vector<DeltaPixel>* out) const;
     uint16_t spriteBases_[6] = {};
 };
 

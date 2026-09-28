@@ -592,6 +592,12 @@ __declspec(dllexport) void __stdcall gbh_DrawQuad(unsigned flags, void* texture,
         return;
     }
     if (game::IsObjectDraw(_ReturnAddress())) {
+        // A car's lamps, drawn apart from its body. Lights take their place when
+        // the car lamp category is on. See kSynthCarLamp.
+        if (reinterpret_cast<uintptr_t>(_ReturnAddress()) == game::kObjectDrawLampsReturn &&
+            gta2dx9::SyntheticCarLampsReplaceQuads()) {
+            return;
+        }
         g_world.Live().AddSprite(flags, texture, vertices, 4);
         return;
     }
@@ -608,6 +614,12 @@ __declspec(dllexport) void __stdcall gbh_DrawQuadClipped(unsigned flags, void* t
         return;
     }
     if (game::IsObjectDraw(_ReturnAddress())) {
+        // A car's lamps, drawn apart from its body. Lights take their place when
+        // the car lamp category is on. See kSynthCarLamp.
+        if (reinterpret_cast<uintptr_t>(_ReturnAddress()) == game::kObjectDrawLampsReturn &&
+            gta2dx9::SyntheticCarLampsReplaceQuads()) {
+            return;
+        }
         g_world.Live().AddSprite(flags, texture, vertices, 4);
         return;
     }

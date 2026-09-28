@@ -624,7 +624,7 @@ void DrawCategory(int category) {
     changed |= ImGui::SliderFloat("Brightness", &c.intensity, 0.0f, 8.0f, "%.3f",
                                   ImGuiSliderFlags_Logarithmic);
     changed |= ImGui::SliderFloat("Reach (tiles)", &c.radius, 0.1f, 12.0f, "%.2f");
-    if (category != kSynthHeadlight && category != kSynthBrake) {
+    if (category != kSynthHeadlight && category != kSynthBrake && category != kSynthCarLamp) {
         changed |= ImGui::SliderFloat("Flicker", &c.flicker, 0.0f, 1.0f, "%.2f");
         ImGui::SetItemTooltip("How far brightness wanders, 0 for a steady light. Each light "
                               "flickers on its own, so a fire never pulses in step.");
@@ -635,12 +635,14 @@ void DrawCategory(int category) {
         changed |= ImGui::SliderFloat("Beam angle", &c.coneAngleDeg, 5.0f, 90.0f, "%.1f deg");
         changed |= ImGui::SliderFloat("Beam pitch", &c.pitchDegrees, 0.0f, 45.0f, "%.1f deg");
     }
-    if (category == kSynthBrake) {
+    if (category == kSynthBrake || category == kSynthCarLamp) {
         changed |= ImGui::SliderFloat("Bulb size", &c.bulbSize, 0.0f, 0.3f, "%.3f");
         ImGui::SetItemTooltip("The glowing sphere itself, in tiles. Reach only sets how "
                               "bright it is; this is what can poke into the car or the road. "
                               "0 uses the global emitter radius.");
-        changed |= ImGui::SliderFloat("Behind the tail", &c.forwardOffset, 0.0f, 0.5f, "%.3f");
+        if (category == kSynthBrake) {
+            changed |= ImGui::SliderFloat("Behind the tail", &c.forwardOffset, 0.0f, 0.5f, "%.3f");
+        }
         changed |= ImGui::SliderFloat("Height", &c.heightOffset, 0.0f, 0.5f, "%.3f");
     }
 
@@ -766,6 +768,10 @@ void DrawExtraLights() {
                     }
                 }
                 if (changed) SyntheticLightsMarkDirty();
+            } else if (i == kSynthCarLamp) {
+                ImGui::TextColored(kDim, "Every lamp a car shows, as a bulb of the lamp's own "
+                                         "colour. On, GTA2's lamp quads are left out; off, "
+                                         "they are drawn as before.");
             } else if (i == kSynthBrake) {
                 ImGui::TextColored(kDim, "Lit whenever a car shows its brake-light delta, at "
                                          "the lamps' place in the car's own artwork.");
@@ -1569,7 +1575,7 @@ void DrawParticleTypes() {
 
         const int bound = SyntheticTypeBinding(info.type);
         for (int i = 0; i < kSynthCategoryCount; ++i) {
-            if (i == kSynthHeadlight || i == kSynthBrake) continue;   // vehicles, not particles
+            if (i == kSynthHeadlight || i == kSynthBrake || i == kSynthCarLamp) continue;
             if (i) ImGui::SameLine();
             const bool on = bound == i;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.55f, 0.25f, 1.0f));

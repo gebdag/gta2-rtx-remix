@@ -333,6 +333,8 @@ constexpr uintptr_t kParticleLiveHead = 0x04;
 constexpr uintptr_t kParticleNext = 0x3C;
 constexpr uintptr_t kParticleLife = 0x2C;  // int16, frames remaining
 constexpr uintptr_t kParticleLifeStart = 0x2E;  // int16, what the life started at
+// How long the blood pool under a body lasts, in frames (FUN_0048CC50).
+constexpr int16_t kBloodPoolLife = 800;
 // Movement per frame along the ground, x then y, 16.14 fixed (FUN_0048C930 stores
 // them; FUN_0048C270 adds them to the position at +0x08 each frame).
 constexpr uintptr_t kParticleVelocity = 0x14;
@@ -420,6 +422,18 @@ constexpr uint32_t kHeadlightAltDeltaA = 1u << 11;
 constexpr uint32_t kHeadlightAltDeltaB = 1u << 28;
 constexpr int kHeadlightDelta = 6;
 constexpr int kHeadlightAltDelta = 11;
+// How FUN_0044AEA0 reads the whole mask when it builds a car's sprite: bit n
+// below 22 is delta n, and bit n from 22 up is delta n - 17 drawn mirrored. So
+// 22 and 23 are 5 and 6 on the other side, 28 is 11. The lamps are the deltas
+// in the masks at 0x00591E90..98 - 5, 6, 15, 16, 17 and 18 - plus the
+// alternative headlight, 11.
+constexpr int kMirroredDeltaFirstBit = 22;
+constexpr int kMirroredDeltaOffset = 17;
+constexpr int kCarLampDeltas[] = {5, 6, 11, 15, 16, 17, 18};
+// With lighting on, FUN_004BE060 draws the car without its lamp deltas and then
+// the lamps alone as a second quad, from the gbh_DrawQuad call at 0x004BE50B.
+// This is where that call returns to.
+constexpr uintptr_t kObjectDrawLampsReturn = 0x004BE511;
 // The object the vehicle's placement pointer names is its sprite: the sprite
 // number within its base at +0x22, and the base at +0x30, 2 for cars
 // (FUN_004ba230, FUN_004bf2a0).

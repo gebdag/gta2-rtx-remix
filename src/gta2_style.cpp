@@ -56,6 +56,9 @@ bool Style::Load(const std::string& path, std::string* error) {
     spriteGraphics_.clear();
     deltas_.clear();
     deltaStore_.clear();
+    palettes_.clear();
+    paletteIndex_.clear();
+    tilePalettes_ = 0;
     size_t delxOff = 0, delxSize = 0;
     memset(spriteBases_, 0, sizeof(spriteBases_));
     size_t offset = 6;
@@ -71,9 +74,15 @@ bool Style::Load(const std::string& path, std::string* error) {
             tileSize = size;
         } else if (!strcmp(tag, "PPAL")) {
             palOff = body;
+            palettes_.assign(data.begin() + body, data.begin() + body + size);
         } else if (!strcmp(tag, "PALX")) {
             palxOff = body;
             palxSize = size;
+            for (size_t at = body; at + 2 <= body + size; at += 2) {
+                paletteIndex_.push_back(ReadU16(&data[at]));
+            }
+        } else if (!strcmp(tag, "PALB") && size >= 2) {
+            tilePalettes_ = ReadU16(&data[body]);
         } else if (!strcmp(tag, "SPRG")) {
             spriteGraphics_.assign(data.begin() + body, data.begin() + body + size);
         } else if (!strcmp(tag, "SPRX")) {
@@ -122,7 +131,7 @@ bool Style::Load(const std::string& path, std::string* error) {
 // A delta is a list of runs: a 16-bit skip from where the last run ended, a
 // length, and that many palette indices. Positions are in the sprite's page, so
 // a row is 256 bytes whatever the sprite's own width.
-bool Style::SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, float* y) const {
+bool Style::DeltaPixels(SpriteBase base, int index, int delta, std::vector<DeltaPixel>* out) const {
     const int which = static_cast<int>(base);
     if (index < 0 || index >= spriteBases_[which] || delta < 0) return false;
     int first = 0;
@@ -135,28 +144,67 @@ bool Style::SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, f
         const size_t begin = set.offsets[delta];
         const size_t end = begin + set.sizes[delta];
         if (end > deltaStore_.size()) return false;
-        double sumX = 0.0, sumY = 0.0;
-        int pixels = 0;
+        out->clear();
         uint32_t position = 0;
         for (size_t at = begin; at + 3 <= end;) {
             position += ReadU16(&deltaStore_[at]);
             const int length = deltaStore_[at + 2];
             at += 3;
-            for (int i = 0; i < length; ++i) {
-                sumX += (position + i) % kPageStride;
-                sumY += (position + i) / kPageStride;
+            for (int i = 0; i < length && at + i < end; ++i) {
+                out->push_back({static_cast<int>((position + i) % kPageStride),
+                                static_cast<int>((position + i) / kPageStride),
+                                deltaStore_[at + i]});
             }
-            pixels += length;
             position += length;
             at += length;
         }
-        if (!pixels) return false;
-        // Pixel centres, so a one-pixel delta at column 0 is at 0.5.
-        *x = static_cast<float>(sumX / pixels) + 0.5f;
-        *y = static_cast<float>(sumY / pixels) + 0.5f;
-        return true;
+        return !out->empty();
     }
     return false;
+}
+
+bool Style::SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, float* y) const {
+    std::vector<DeltaPixel> pixels;
+    if (!DeltaPixels(base, index, delta, &pixels)) return false;
+    double sumX = 0.0, sumY = 0.0;
+    for (const DeltaPixel& p : pixels) {
+        sumX += p.x;
+        sumY += p.y;
+    }
+    // Pixel centres, so a one-pixel delta at column 0 is at 0.5.
+    *x = static_cast<float>(sumX / pixels.size()) + 0.5f;
+    *y = static_cast<float>(sumY / pixels.size()) + 0.5f;
+    return true;
+}
+
+// PPAL keeps 64 palettes to a 64K page, interleaved: entry i of palette p is the
+// dword at (p / 64) * 64K + i * 256 + (p % 64) * 4, as B, G, R. A sprite's own
+// palette is the PALX slot after the tiles' ones, at its number across all bases.
+bool Style::SpriteDeltaColour(SpriteBase base, int index, int delta, float* rgb) const {
+    std::vector<DeltaPixel> pixels;
+    if (!DeltaPixels(base, index, delta, &pixels)) return false;
+    const int which = static_cast<int>(base);
+    int first = 0;
+    for (int i = 0; i < which; ++i) first += spriteBases_[i];
+    const size_t slot = static_cast<size_t>(tilePalettes_) + first + index;
+    if (slot >= paletteIndex_.size()) return false;
+    const uint16_t palette = paletteIndex_[slot];
+    const size_t paletteBase = static_cast<size_t>(palette / kPalettesPerPage) * kPalettePageBytes +
+                               static_cast<size_t>(palette % kPalettesPerPage) * 4;
+    double sum[3] = {};
+    int counted = 0;
+    for (const DeltaPixel& p : pixels) {
+        if (p.index == 0) continue;
+        const size_t at = paletteBase + static_cast<size_t>(p.index) * 256;
+        if (at + 3 > palettes_.size()) continue;
+        sum[0] += palettes_[at + 2];
+        sum[1] += palettes_[at + 1];
+        sum[2] += palettes_[at];
+        ++counted;
+    }
+    if (!counted) return false;
+    for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(sum[c] / counted / 255.0);
+    return true;
 }
 
 bool Style::SpriteArtwork(SpriteBase base, int index, SpriteIndices* out) const {
