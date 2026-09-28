@@ -32,6 +32,11 @@ const void* GameObjectBeingDrawn();
 // for a limb, 1 for everything else.
 float GibsCurrentScale();
 
+// Whether the sprite being drawn is a limb that has landed. It was frozen where
+// its arc had got to on its last frames, which can be a little above the road,
+// so it is put on the floor under it rather than left at the game's height.
+bool GibsCurrentIsResting();
+
 // Whether the sprite being drawn is a pedestrian lying on the ground: dead, or
 // knocked down and not up yet.
 bool GameObjectIsCorpse();

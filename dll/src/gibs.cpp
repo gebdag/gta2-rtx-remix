@@ -488,6 +488,18 @@ bool GameObjectIsPowerUp() {
            number < game::kPowerUpSpriteFirst + game::kPowerUpSpriteCount;
 }
 
+bool GibsCurrentIsResting() {
+    const void* drawing = g_drawing;
+    if (!drawing) return false;
+    for (const Limb& limb : g_resting) {
+        if (!IsParticle(limb.particle)) continue;
+        if (*reinterpret_cast<void* const*>(limb.particle + game::kParticlePlacementPtr) == drawing) {
+            return true;
+        }
+    }
+    return false;
+}
+
 float GibsCurrentScale() {
     const uint8_t* object = static_cast<const uint8_t*>(g_drawing);
     if (!object) return 1.0f;

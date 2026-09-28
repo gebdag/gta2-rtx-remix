@@ -688,6 +688,9 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // pedestrian, but it is not flat paint either: a third of a sprite's ride
     // height.
     const bool lying = scale != 1.0f || GameObjectIsCorpse();
+    // A limb that has landed goes on the floor, whatever height the game left it
+    // at. See GibsCurrentIsResting.
+    const bool resting = scale != 1.0f && GibsCurrentIsResting();
     const float stackStep = decal ? kConformClearance * 0.25f : g_spriteStackStep;
     const float stacked = stackStep > 0.0f ? StackLayerFor(cx, cz, area) * stackStep : 0.0f;
 
@@ -731,11 +734,12 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         if (!plane.valid) {
             ++conform_.noGround;
         } else {
-            const float gap = cy - plane.y;
+            const float gap = resting ? 0.0f : cy - plane.y;
             if (gap > conform_.maxGap) conform_.maxGap = gap;
             if (plane.residual > conform_.maxResidual) conform_.maxResidual = plane.residual;
 
-            // Never downward: above its floor, the game's own height wins.
+            // Never downward: above its floor, the game's own height wins -
+            // except for a limb at rest, whose gap is taken as none.
             baseY = gap > 0.0f ? cy : plane.y;
 
             // The gradient the ground actually has. Working in gradient rather
