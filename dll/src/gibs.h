@@ -32,6 +32,9 @@ const void* GameObjectBeingDrawn();
 // for a limb, 1 for everything else.
 float GibsCurrentScale();
 
+// Whether the sprite being drawn is a dead pedestrian's.
+bool GameObjectIsCorpse();
+
 // Routes GTA2's ped death handler through us, so a death can be looked at before
 // the game handles it. Leaves a gta2.exe that is not the build these addresses
 // came from alone. The setting is read on every death, so this goes in whether

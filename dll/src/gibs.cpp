@@ -419,6 +419,20 @@ void GibsReset() {
 
 const void* GameObjectBeingDrawn() { return g_drawing; }
 
+bool GameObjectIsCorpse() {
+    const uint8_t* object = static_cast<const uint8_t*>(g_drawing);
+    if (!object) return false;
+    if (*reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase) != game::kSpriteBasePed) {
+        return false;
+    }
+    const uint8_t* physics = *reinterpret_cast<const uint8_t* const*>(object + game::kSpriteObjectOwner);
+    if (!game::PlausiblePointer(physics)) return false;
+    const uint8_t* ped = *reinterpret_cast<const uint8_t* const*>(physics + game::kPhysicsPed);
+    if (!game::PlausiblePointer(ped)) return false;
+    return *reinterpret_cast<const int32_t*>(ped + game::kPedState) == game::kPedStateDead ||
+           *reinterpret_cast<const int32_t*>(ped + game::kPedStatePending) == game::kPedStateDead;
+}
+
 float GibsCurrentScale() {
     const uint8_t* object = static_cast<const uint8_t*>(g_drawing);
     if (!object) return 1.0f;

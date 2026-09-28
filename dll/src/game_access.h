@@ -452,6 +452,10 @@ constexpr uintptr_t kSpriteObjectBase = 0x30;
 constexpr int32_t kSpriteBaseCar = 2;
 // What particles set with FUN_004206F0(8): the code_obj base.
 constexpr int32_t kSpriteBaseCodeObj = 8;
+// A pedestrian's sprite object has base 3, and its +0x08 is the ped's physics
+// object (FUN_0040FEA0), whose +0x7C is the ped.
+constexpr int32_t kSpriteBasePed = 3;
+constexpr uintptr_t kPhysicsPed = 0x7C;
 // The occupant. Found by the structure probe correlating pointer fields against
 // which cars actually moved: this one is a pointer on 100% of moving cars and on
 // 0% of parked ones, and it points into the entity heap rather than the
