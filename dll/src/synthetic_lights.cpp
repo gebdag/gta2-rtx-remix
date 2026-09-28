@@ -263,6 +263,9 @@ void EnsureBinding() {
     flame.heightOffset = 0.1f;
     flame.flicker = 0.35f;
     flame.maxLights = 8;
+    // Under the height, so the sphere stays clear of the road it runs along. The
+    // global emitter radius is 0.15, which at this height reached into it.
+    flame.bulbSize = 0.05f;
 
     SyntheticCategorySettings& lamp = g_settings.category[kSynthCarLamp];
     lamp.enabled = false;

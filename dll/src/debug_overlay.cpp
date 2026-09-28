@@ -618,11 +618,13 @@ void DrawCategory(int category) {
         changed |= ImGui::SliderFloat("Beam angle", &c.coneAngleDeg, 5.0f, 90.0f, "%.1f deg");
         changed |= ImGui::SliderFloat("Beam pitch", &c.pitchDegrees, 0.0f, 45.0f, "%.1f deg");
     }
+    // Every category: the sphere is what clips into the road, whatever the light.
+    changed |= ImGui::SliderFloat("Bulb size", &c.bulbSize, 0.0f, 0.3f, "%.3f");
+    ImGui::SetItemTooltip("The glowing sphere itself, in tiles. Reach only sets how "
+                          "bright it is; this is what can poke into the car or the road. "
+                          "Keep it under the height, or it reaches the ground. "
+                          "0 uses the global emitter radius.");
     if (category == kSynthBrake || category == kSynthCarLamp) {
-        changed |= ImGui::SliderFloat("Bulb size", &c.bulbSize, 0.0f, 0.3f, "%.3f");
-        ImGui::SetItemTooltip("The glowing sphere itself, in tiles. Reach only sets how "
-                              "bright it is; this is what can poke into the car or the road. "
-                              "0 uses the global emitter radius.");
         if (category == kSynthBrake) {
             changed |= ImGui::SliderFloat("Behind the tail", &c.forwardOffset, 0.0f, 0.5f, "%.3f");
         }
