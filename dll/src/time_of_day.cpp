@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -182,19 +183,38 @@ void TimeOfDayUpdate() {
     }
 }
 
-float DaylightGateFactorAt(const DaylightGate& gate, float sunElevationDeg) {
-    if (!gate.enabled) return 1.0f;
-    // A gate the wrong way round would divide by zero and is more likely a
-    // mistyped slider than an intention, so it is read as a hard switch.
-    if (gate.offAboveDeg <= gate.onBelowDeg) {
-        return sunElevationDeg >= gate.offAboveDeg ? 0.0f : 1.0f;
-    }
-    if (sunElevationDeg >= gate.offAboveDeg) return 0.0f;
-    if (sunElevationDeg <= gate.onBelowDeg) return 1.0f;
-    const float t = (gate.offAboveDeg - sunElevationDeg) / (gate.offAboveDeg - gate.onBelowDeg);
+namespace {
+
+// Hours from `from` forward to `to`, round the clock: 0..24.
+float HoursAfter(float from, float to) {
+    float d = std::fmod(to - from, 24.0f);
+    if (d < 0.0f) d += 24.0f;
+    return d;
+}
+
+float Smooth(float t) {
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
     // Smoothstep rather than a straight ramp: the ends are what the eye notices,
     // and a linear fade visibly starts and stops.
     return t * t * (3.0f - 2.0f * t);
+}
+
+}  // namespace
+
+float DaylightGateFactorAtHour(const DaylightGate& gate, float hour) {
+    if (!gate.enabled) return 1.0f;
+    const float fade = (std::max)(g_settings.lightsFadeMinutes, 0.0f) / 60.0f;
+    const float off = g_settings.lightsOffHour;
+    const float on = g_settings.lightsOnHour;
+    // Where the clock is within the lit stretch, from the on hour to the off hour.
+    const float lit = HoursAfter(on, off);
+    const float sinceOn = HoursAfter(on, hour);
+    if (sinceOn >= lit) return 0.0f;   // daytime
+    if (fade <= 0.0f) return 1.0f;
+    // Fading in after the on hour, fading out before the off hour.
+    const float in = Smooth(sinceOn / fade);
+    const float out = Smooth((lit - sinceOn) / fade);
+    return (std::min)(in, out);
 }
 
 float DaylightGateFactor(const DaylightGate& gate) {
@@ -203,7 +223,7 @@ float DaylightGateFactor(const DaylightGate& gate) {
     // street light dark at noon under a sky that never changed would just look
     // broken.
     if (RemixApiAvailable() && !RemixApiHasAtmosphere()) return 1.0f;
-    return DaylightGateFactorAt(gate, g_elevation);
+    return DaylightGateFactorAtHour(gate, g_hour);
 }
 
 void TimeOfDayAngles(float* elevationDeg, float* rotationDeg) {

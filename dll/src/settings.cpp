@@ -90,6 +90,9 @@ void Fields(FloatField** floats, int* floatCount, BoolField** bools, int* boolCo
     b[nb++] = {"timeofday", "RotationClockwise", &tod.rotationClockwise};
     f[nf++] = {"timeofday", "StartHour", &tod.startHour};
     f[nf++] = {"timeofday", "MinutesPerSecond", &tod.minutesPerSecond};
+    f[nf++] = {"timeofday", "LightsOffHour", &tod.lightsOffHour};
+    f[nf++] = {"timeofday", "LightsOnHour", &tod.lightsOnHour};
+    f[nf++] = {"timeofday", "LightsFadeMinutes", &tod.lightsFadeMinutes};
     f[nf++] = {"timeofday", "Latitude", &tod.latitudeDeg};
     f[nf++] = {"timeofday", "Declination", &tod.declinationDeg};
     f[nf++] = {"timeofday", "RotationOffset", &tod.rotationOffsetDeg};

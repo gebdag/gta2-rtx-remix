@@ -359,24 +359,7 @@ bool DrawGate(DaylightGate& gate, const char* what) {
     const float now = DaylightGateFactor(gate);
     ImGui::TextColored(now > 0.99f ? kGood : (now < 0.01f ? kDim : kWarn), "%s %.0f%%", what,
                        now * 100.0f);
-    if (!Adv()) return changed;
-
-    // Side by side and unlabelled: five of these stack up in the map light table
-    // and a row apiece each would make it three times as tall as it is worth.
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(S(120.0f));
-    changed |= ImGui::SliderFloat("##offabove", &gate.offAboveDeg, -20.0f, 20.0f, "out %.1f deg");
-    ImGui::SetItemTooltip("Fully off once the sun is this high. 0 is the horizon.");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(S(120.0f));
-    changed |= ImGui::SliderFloat("##onbelow", &gate.onBelowDeg, -30.0f, 10.0f, "on %.1f deg");
-    ImGui::SetItemTooltip("Fully on once the sun is this far down. -6 is the end of civil "
-                          "twilight, when real street lighting is at full.");
-    if (gate.offAboveDeg <= gate.onBelowDeg) {
-        ImGui::SameLine();
-        ImGui::TextColored(kWarn, "the wrong way round");
-        ImGui::SetItemTooltip("It switches hard instead of fading.");
-    }
+    // When, is one setting for every light: the times on the Time of day tab.
     return changed;
 }
 
@@ -888,6 +871,25 @@ void DrawTimeOfDay() {
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Back to it")) TimeOfDayReset();
+
+    // When the lights that are off in daylight switch, for all of them at once.
+    char offText[16], onText[16];
+    HourText(tod.lightsOffHour, offText, sizeof(offText));
+    HourText(tod.lightsOnHour, onText, sizeof(onText));
+    ImGui::SetNextItemWidth(S(300.0f));
+    if (ImGui::SliderFloat("Lights out by", &tod.lightsOffHour, 0.0f, 24.0f, offText)) {
+        SettingsMarkDirty();
+    }
+    ImGui::SetNextItemWidth(S(300.0f));
+    if (ImGui::SliderFloat("Lights on from", &tod.lightsOnHour, 0.0f, 24.0f, onText)) {
+        SettingsMarkDirty();
+    }
+    ImGui::SetNextItemWidth(S(300.0f));
+    if (ImGui::SliderFloat("Fade", &tod.lightsFadeMinutes, 0.0f, 120.0f, "%.0f game min")) {
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("Every light marked off in daylight fades out over this long before "
+                          "the off time and in over this long after the on time.");
 
     if (!Adv()) return;
 

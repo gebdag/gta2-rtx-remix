@@ -230,6 +230,12 @@ void LoadConfig() {
         GetPrivateProfileIntA("timeofday", "latitude_tenths", 400, ini) / 10.0f;
     tod.declinationDeg =
         GetPrivateProfileIntA("timeofday", "declination_tenths", 0, ini) / 10.0f;
+    const int lightsOff = GetPrivateProfileIntA("timeofday", "lights_off_hhmm", 600, ini);
+    const int lightsOn = GetPrivateProfileIntA("timeofday", "lights_on_hhmm", 1800, ini);
+    tod.lightsOffHour =
+        static_cast<float>(lightsOff / 100) + static_cast<float>(lightsOff % 100) / 60.0f;
+    tod.lightsOnHour =
+        static_cast<float>(lightsOn / 100) + static_cast<float>(lightsOn % 100) / 60.0f;
     gta2dx9::TimeOfDayReset();
 
     // The effective sprite numbers, not the compiled-in ones. gta2dx9.ini's

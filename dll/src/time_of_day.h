@@ -37,6 +37,14 @@ struct TimeOfDaySettings {
     float minutesPerSecond = 1.0f;
     bool  paused = false;
 
+    // When lights that are off in daylight go out and come back on, by the
+    // clock: out by 06:00, on from 18:00. Each change is a fade over
+    // lightsFadeMinutes of game time - ending at the off hour, starting at the on
+    // hour - so nothing pops.
+    float lightsOffHour = 6.0f;
+    float lightsOnHour = 18.0f;
+    float lightsFadeMinutes = 15.0f;
+
     // Where on Earth this city is. Latitude sets how high the sun climbs and how
     // steeply it rises; declination sets the season (+23.44 at the June
     // solstice, 0 at either equinox, -23.44 in December).
@@ -106,10 +114,14 @@ struct DaylightGate {
 // switched so nothing pops. Always 1 when the gate is off or the cycle is not
 // running: a light nobody asked to follow the sun keeps burning, which is the
 // behaviour this had before gates existed.
+//
+// Decided by the clock - TimeOfDaySettings::lightsOffHour and lightsOnHour, the
+// same for every gated light - rather than by how high the sun is. The gate's
+// own two angles are what it used before, and are kept only so older settings
+// files still read.
 float DaylightGateFactor(const DaylightGate& gate);
 
-// The same curve for an arbitrary sun elevation, so the menu can show what a
-// gate will do across the whole day without waiting for it.
-float DaylightGateFactorAt(const DaylightGate& gate, float sunElevationDeg);
+// The same for an arbitrary time of day, 0..24.
+float DaylightGateFactorAtHour(const DaylightGate& gate, float hour);
 
 }  // namespace gta2dx9
