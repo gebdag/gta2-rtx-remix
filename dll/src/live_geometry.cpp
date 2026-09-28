@@ -772,6 +772,30 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     Sprite placed;
     placed.texture = texture;
     if (!Place(out, corners, centre, tilted ? &groundUp : nullptr, &placed)) return;
+
+    // Which game object this is, written into the quad itself.
+    //
+    // Every sprite of one texture and size used to be the very same geometry, so
+    // to Remix two pedestrians on the same animation frame, or two phone boxes,
+    // were one mesh drawn twice. It tells those instances apart from frame to
+    // frame by position alone (InstanceManager::findSimilarInstance: an exact
+    // transform, else the nearest unclaimed instance of that mesh), and a
+    // transform that moves by so much as a stack step loses the exact match. The
+    // nearest one is then sometimes the other object, which hands this sprite
+    // that object's history - its previous position and its motion - and the
+    // denoiser and DLSS draw it where the other one was. That is the copy in the
+    // wrong place.
+    //
+    // The game's sprite object is the identity: the same object every frame for
+    // as long as the thing exists, and no two live things share one. A few low
+    // bits of it become an offset along the quad's normal of at most 6e-5 tiles -
+    // a quarter of a millimetre - which no one can see and which makes each
+    // object's quad a mesh of its own, so there is nothing left to confuse.
+    if (const void* object = GameObjectBeingDrawn()) {
+        const uint32_t bits = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(object) >> 2);
+        const float nudge = static_cast<float>(bits & 0xFFFF) * (1.0f / 1073741824.0f);
+        for (int i = 0; i < placed.corners; ++i) placed.local[i].y += nudge;
+    }
     sprites_.push_back(placed);
     ++spriteQuads_;
     ++drops_.accepted;

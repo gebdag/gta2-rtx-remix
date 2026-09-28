@@ -22,6 +22,12 @@ void GibsReset();
 // Whether the object the game is drawing right now is a gibbed body.
 bool GibsHideCurrentSprite();
 
+// The sprite object gta2.exe's object draw (FUN_004BE060) was entered with, for
+// as long as that draw is running - so every world sprite can be told which game
+// object it belongs to. Null before the first draw or if the hook could not go
+// in. The hook lives here because gibs needed it first.
+const void* GameObjectBeingDrawn();
+
 // Routes GTA2's ped death handler through us, so a death can be looked at before
 // the game handles it. Leaves a gta2.exe that is not the build these addresses
 // came from alone. The setting is read on every death, so this goes in whether

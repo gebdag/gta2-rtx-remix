@@ -350,6 +350,8 @@ void GibsReset() {
     g_drawing = nullptr;
 }
 
+const void* GameObjectBeingDrawn() { return g_drawing; }
+
 bool GibsHideCurrentSprite() {
     const void* drawing = g_drawing;
     if (!drawing) return false;
