@@ -54,6 +54,9 @@ bool Style::Load(const std::string& path, std::string* error) {
     size_t tileOff = 0, tileSize = 0, palOff = 0, palxOff = 0, palxSize = 0;
     sprites_.clear();
     spriteGraphics_.clear();
+    deltas_.clear();
+    deltaStore_.clear();
+    size_t delxOff = 0, delxSize = 0;
     memset(spriteBases_, 0, sizeof(spriteBases_));
     size_t offset = 6;
     while (offset + 8 <= data.size()) {
@@ -79,6 +82,11 @@ bool Style::Load(const std::string& path, std::string* error) {
             }
         } else if (!strcmp(tag, "SPRB") && size >= sizeof(spriteBases_)) {
             for (int i = 0; i < 6; ++i) spriteBases_[i] = ReadU16(&data[body + i * 2]);
+        } else if (!strcmp(tag, "DELX")) {
+            delxOff = body;
+            delxSize = size;
+        } else if (!strcmp(tag, "DELS")) {
+            deltaStore_.assign(data.begin() + body, data.begin() + body + size);
         }
         offset = body + size;
     }
@@ -89,7 +97,66 @@ bool Style::Load(const std::string& path, std::string* error) {
     }
 
     DecodeTiles(data.data(), tileOff, tileSize, palOff, palxOff, palxSize);
+
+    // DELX: per sprite, its number, how many deltas it has and each one's size in
+    // DELS, whose data runs on in the same order.
+    uint32_t storeAt = 0;
+    for (size_t at = delxOff; delxOff && at + 4 <= delxOff + delxSize;) {
+        const int sprite = ReadU16(&data[at]);
+        const int count = data[at + 2];
+        at += 4;
+        if (at + static_cast<size_t>(count) * 2 > delxOff + delxSize) break;
+        DeltaSet set;
+        for (int i = 0; i < count; ++i) {
+            const uint16_t size = ReadU16(&data[at + i * 2]);
+            set.offsets.push_back(storeAt);
+            set.sizes.push_back(size);
+            storeAt += size;
+        }
+        at += static_cast<size_t>(count) * 2;
+        deltas_.emplace_back(sprite, std::move(set));
+    }
     return true;
+}
+
+// A delta is a list of runs: a 16-bit skip from where the last run ended, a
+// length, and that many palette indices. Positions are in the sprite's page, so
+// a row is 256 bytes whatever the sprite's own width.
+bool Style::SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, float* y) const {
+    const int which = static_cast<int>(base);
+    if (index < 0 || index >= spriteBases_[which] || delta < 0) return false;
+    int first = 0;
+    for (int i = 0; i < which; ++i) first += spriteBases_[i];
+    const int sprite = first + index;
+    for (const auto& entry : deltas_) {
+        if (entry.first != sprite) continue;
+        const DeltaSet& set = entry.second;
+        if (delta >= static_cast<int>(set.sizes.size())) return false;
+        const size_t begin = set.offsets[delta];
+        const size_t end = begin + set.sizes[delta];
+        if (end > deltaStore_.size()) return false;
+        double sumX = 0.0, sumY = 0.0;
+        int pixels = 0;
+        uint32_t position = 0;
+        for (size_t at = begin; at + 3 <= end;) {
+            position += ReadU16(&deltaStore_[at]);
+            const int length = deltaStore_[at + 2];
+            at += 3;
+            for (int i = 0; i < length; ++i) {
+                sumX += (position + i) % kPageStride;
+                sumY += (position + i) / kPageStride;
+            }
+            pixels += length;
+            position += length;
+            at += length;
+        }
+        if (!pixels) return false;
+        // Pixel centres, so a one-pixel delta at column 0 is at 0.5.
+        *x = static_cast<float>(sumX / pixels) + 0.5f;
+        *y = static_cast<float>(sumY / pixels) + 0.5f;
+        return true;
+    }
+    return false;
 }
 
 bool Style::SpriteArtwork(SpriteBase base, int index, SpriteIndices* out) const {

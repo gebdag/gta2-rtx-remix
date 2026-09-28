@@ -37,6 +37,8 @@ enum SyntheticCategory {
     kSynthCigarette,
     kSynthFire,
     kSynthHeadlight,
+    // Last, so the category numbers in existing Bind= lines keep their meaning.
+    kSynthBrake,
     kSynthCategoryCount
 };
 
@@ -137,8 +139,23 @@ void SyntheticEraseBeam(int model);
 void SyntheticHighlightModel(int model);
 int  SyntheticHighlightedModel();
 
+// Where a car's brake lamp sits, from the style file's own delta for it. See
+// SyntheticSetBrakeLamps.
+struct BrakeLamp {
+    bool valid = false;
+    float along = 0.0f;  // tiles along the car's heading from its centre; negative is behind
+    float side = 0.0f;   // tiles to its right; the other lamp is the mirror image
+};
+
+// One entry per car sprite, set when a district's style is loaded. GTA2 draws a
+// car's lamps as deltas patched onto its sprite, and delta 5 is the brake light
+// on one side - a few red pixels at the tail - so where it sits in the artwork is
+// where the light goes. A sprite without an entry falls back to the headlight
+// geometry turned round.
+void SyntheticSetBrakeLamps(std::vector<BrakeLamp> bySprite);
+
 // Which particle types feed which category. A type may be bound to at most one.
-// kSynthHeadlight takes no types - it comes off the vehicle list.
+// kSynthHeadlight and kSynthBrake take no types - they come off the vehicle list.
 int  SyntheticTypeBinding(int particleType);        // category, or -1
 void SyntheticBindType(int particleType, int category);   // -1 unbinds
 

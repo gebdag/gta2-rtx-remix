@@ -339,6 +339,22 @@ constexpr uintptr_t kVehiclePoolPtr = 0x005E4CA0;
 constexpr uintptr_t kVehicleLiveHead = 0x04;
 constexpr uintptr_t kVehicleNext = 0x4C;
 constexpr uintptr_t kVehicleModel = 0x84;   // int32, car model id
+
+// Which of its deltas the car shows, one bit per delta: dents, doors and lamps.
+// FUN_004be060 reads it through the object at +0x08 (lea edi,[ebp+8]) and, with
+// lighting on, draws the lamp bits as a separate lit quad - the masks it uses
+// are at 0x00591E90..98. Delta 5 is the brake light on one side of the sprite
+// and 15 the same lamp mirrored to the other; both are red pixels at the tail.
+constexpr uintptr_t kVehicleDeltaMask = 0x08;
+constexpr uint32_t kBrakeLightDeltaA = 1u << 5;
+constexpr uint32_t kBrakeLightDeltaB = 1u << 15;
+constexpr int kBrakeLightDelta = 5;
+// The object the vehicle's placement pointer names is its sprite: the sprite
+// number within its base at +0x22, and the base at +0x30, 2 for cars
+// (FUN_004ba230, FUN_004bf2a0).
+constexpr uintptr_t kSpriteObjectNumber = 0x22;
+constexpr uintptr_t kSpriteObjectBase = 0x30;
+constexpr int32_t kSpriteBaseCar = 2;
 // The occupant. Found by the structure probe correlating pointer fields against
 // which cars actually moved: this one is a pointer on 100% of moving cars and on
 // 0% of parked ones, and it points into the entity heap rather than the
@@ -418,6 +434,15 @@ inline bool ReadFacing(const uint8_t* entity, uintptr_t placementPtrOffset, floa
     *dirX = s * kFixedScale;
     *dirY = c * kFixedScale;
     return true;
+}
+
+// The car sprite a vehicle is drawn with, as a number within the car base, or
+// -1 when its placement object is not a car sprite.
+inline int VehicleCarSprite(const uint8_t* vehicle) {
+    const uint8_t* place = Placement(vehicle, kVehiclePlacementPtr);
+    if (!place) return -1;
+    if (*reinterpret_cast<const int32_t*>(place + kSpriteObjectBase) != kSpriteBaseCar) return -1;
+    return *reinterpret_cast<const uint16_t*>(place + kSpriteObjectNumber);
 }
 
 inline bool CameraPosition(float* x, float* y) {

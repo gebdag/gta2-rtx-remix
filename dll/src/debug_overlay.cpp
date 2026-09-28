@@ -623,7 +623,7 @@ void DrawCategory(int category) {
     changed |= ImGui::SliderFloat("Brightness", &c.intensity, 0.0f, 8.0f, "%.3f",
                                   ImGuiSliderFlags_Logarithmic);
     changed |= ImGui::SliderFloat("Reach (tiles)", &c.radius, 0.1f, 12.0f, "%.2f");
-    if (category != kSynthHeadlight) {
+    if (category != kSynthHeadlight && category != kSynthBrake) {
         changed |= ImGui::SliderFloat("Flicker", &c.flicker, 0.0f, 1.0f, "%.2f");
         ImGui::SetItemTooltip("How far brightness wanders, 0 for a steady light. Each light "
                               "flickers on its own, so a fire never pulses in step.");
@@ -757,6 +757,9 @@ void DrawExtraLights() {
                     }
                 }
                 if (changed) SyntheticLightsMarkDirty();
+            } else if (i == kSynthBrake) {
+                ImGui::TextColored(kDim, "Lit whenever a car shows its brake-light delta, at "
+                                         "the lamps' place in the car's own artwork.");
             } else if (boundTypes == 0) {
                 ImGui::TextColored(kWarn, "No particle type is bound to this, so it emits "
                                           "nothing. Bind one on the Diagnostics tab.");
@@ -1535,7 +1538,7 @@ void DrawParticleTypes() {
 
         const int bound = SyntheticTypeBinding(info.type);
         for (int i = 0; i < kSynthCategoryCount; ++i) {
-            if (i == kSynthHeadlight) continue;   // vehicles, not particles
+            if (i == kSynthHeadlight || i == kSynthBrake) continue;   // vehicles, not particles
             if (i) ImGui::SameLine();
             const bool on = bound == i;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.55f, 0.25f, 1.0f));

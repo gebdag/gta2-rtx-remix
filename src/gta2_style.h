@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gta2 {
@@ -47,6 +48,15 @@ public:
     // SPRB and SPRG chunks. False when the style has none, or no such sprite.
     bool SpriteArtwork(SpriteBase base, int index, SpriteIndices* out) const;
 
+    // How many sprites a base holds.
+    int SpriteCount(SpriteBase base) const { return spriteBases_[static_cast<int>(base)]; }
+
+    // Where one of a sprite's deltas sits, as the centre of the pixels it
+    // changes, in the sprite's own pixels (0,0 top left). Deltas are the pieces
+    // the game patches onto a car as it runs - dents, doors, and its lamps - from
+    // the DELX index and the DELS store. False when the sprite has no such delta.
+    bool SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, float* y) const;
+
 private:
     void DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
                      size_t palOffset, size_t palIndexOffset, size_t palIndexSize);
@@ -59,6 +69,15 @@ private:
     };
     std::vector<SpriteEntry> sprites_;
     std::vector<uint8_t> spriteGraphics_;
+
+    // Per sprite with deltas, where each one's runs start in deltaStore_ and how
+    // many bytes they take.
+    struct DeltaSet {
+        std::vector<uint32_t> offsets;
+        std::vector<uint16_t> sizes;
+    };
+    std::vector<std::pair<int, DeltaSet>> deltas_;   // by sprite number, in DELX order
+    std::vector<uint8_t> deltaStore_;
     uint16_t spriteBases_[6] = {};
 };
 

@@ -64,7 +64,10 @@ const int kMaxWalk = 4096;
 const float kWorldMargin = 8.0f;
 
 const char* const kCategoryNames[kSynthCategoryCount] = {
-    "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights"};
+    "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights", "Brake lights"};
+
+// Per car sprite, from the district's style. See SyntheticSetBrakeLamps.
+std::vector<BrakeLamp> g_brakeLamps;
 
 // The game's frame is x east, y south, z the level. Ours is x east, y up,
 // z north, with the rows mirrored - the same conversion live_geometry.cpp does
@@ -193,6 +196,15 @@ void EnsureBinding() {
     head.sideOffset = 0.10f;
     head.forwardOffset = 0.40f;
     head.maxLights = 40;
+
+    // Two faint red lamps while a car brakes, day or night: the game shows the
+    // same delta whatever the time, so the light follows it rather than the sun.
+    SyntheticCategorySettings& brake = g_settings.category[kSynthBrake];
+    brake.rgb[0] = 1.0f; brake.rgb[1] = 0.06f; brake.rgb[2] = 0.03f;
+    brake.intensity = 0.3f;
+    brake.radius = 1.0f;
+    brake.heightOffset = 0.12f;
+    brake.maxLights = 40;
 }
 
 ParticleTypeInfo& TypeSlot(int type) {
@@ -384,6 +396,58 @@ void NoteModel(int model, bool driven) {
     info.lastSeenTick = GetTickCount();
 }
 
+// The car's own brake delta bits, and a lamp for each one that is lit, where the
+// artwork puts it.
+void SubmitBrakeLights(const uint8_t* entry, float gx, float gy, float gz) {
+    const SyntheticCategorySettings& c = g_settings.category[kSynthBrake];
+    if (!c.enabled) return;
+    const uint32_t mask = *reinterpret_cast<const uint32_t*>(entry + game::kVehicleDeltaMask);
+    const uint32_t lit = mask & (game::kBrakeLightDeltaA | game::kBrakeLightDeltaB);
+    if (!lit) return;
+    const float daylight = DaylightGateFactor(c.gate);
+    if (daylight <= kGateFloor) return;
+    float fx, fy;
+    if (!game::ReadFacing(entry, game::kVehiclePlacementPtr, &fx, &fy)) return;
+
+    // Without the artwork, the headlights' own geometry turned round to the tail.
+    const SyntheticCategorySettings& head = g_settings.category[kSynthHeadlight];
+    float along = -head.forwardOffset;
+    float side = head.sideOffset;
+    const int sprite = game::VehicleCarSprite(entry);
+    if (sprite >= 0 && static_cast<size_t>(sprite) < g_brakeLamps.size() &&
+        g_brakeLamps[sprite].valid) {
+        along = g_brakeLamps[sprite].along;
+        side = g_brakeLamps[sprite].side;
+    }
+    const float rx = fy, ry = -fx;   // right-hand perpendicular, as for headlights
+
+    const uint32_t bits[2] = {game::kBrakeLightDeltaA, game::kBrakeLightDeltaB};
+    for (int lamp = 0; lamp < 2; ++lamp) {
+        if (!(lit & bits[lamp])) continue;
+        if (!Room(kSynthBrake)) return;
+        // Delta 15 is delta 5 mirrored, so it is the same lamp on the other side.
+        const float sign = lamp == 0 ? 1.0f : -1.0f;
+        const float px = gx + fx * along + rx * side * sign;
+        const float py = gy + fy * along + ry * side * sign;
+        RemixLightDesc d;
+        ToWorld(px, py, gz, d.pos);
+        d.pos[1] += c.heightOffset;
+        d.rgb[0] = c.rgb[0];
+        d.rgb[1] = c.rgb[1];
+        d.rgb[2] = c.rgb[2];
+        d.intensity = c.intensity * daylight;
+        d.radius = c.radius;
+        d.source = kLightSourceBrake;
+        // One identity per lamp per car, so it is the same light every time the
+        // driver touches the brake rather than a new one found by proximity.
+        d.explicitId = MixPointer(reinterpret_cast<uintptr_t>(entry),
+                                  static_cast<uint64_t>(lamp) + 0xB4A7E);
+        LightsSubmitExtra(d);
+        ++g_stats.emitted[kSynthBrake];
+        ++g_stats.totalEmitted[kSynthBrake];
+    }
+}
+
 void WalkVehicles() {
     for (VehicleModelInfo& m : g_models) {
         m.seen = 0;
@@ -420,6 +484,10 @@ void WalkVehicles() {
         track.lastPos[1] = gy;
         track.lastPos[2] = gz;
         track.lastSeenTick = now ? now : 1;
+
+        // Brake lights go by what the car shows rather than by who is in it: the
+        // game lights the delta, so the light comes on exactly when it does.
+        SubmitBrakeLights(entry, gx, gy, gz);
 
         // Parked cars stay dark. Someone in the driving seat is the test that
         // actually means what it says; the movement window is a fallback for a
@@ -806,9 +874,9 @@ int SyntheticTypeBinding(int particleType) {
 void SyntheticBindType(int particleType, int category) {
     EnsureBinding();
     if (static_cast<unsigned>(particleType) >= kMaxParticleType) return;
-    // Headlights come off the vehicle list, so binding a particle to them would
-    // silently do nothing.
-    if (category == kSynthHeadlight) return;
+    // Headlights and brake lights come off the vehicle list, so binding a
+    // particle to them would silently do nothing.
+    if (category == kSynthHeadlight || category == kSynthBrake) return;
     g_binding[particleType] = (category >= 0 && category < kSynthCategoryCount) ? category : -1;
     g_dirty = true;
 }
@@ -850,16 +918,17 @@ void SyntheticLightsUpdate() {
     // switched off all look identical in the picture. This says which it is.
     if ((inWorldFrames & 0xFF) == 0) {
         Log("synthetic: particles %d, vehicles %d (%d driven) | muzzle %d bullet %d spark %d "
-            "cigarette %d headlight %d",
+            "cigarette %d headlight %d brake %d",
             g_stats.particlesWalked, g_stats.vehiclesWalked, g_stats.vehiclesDriven,
             g_stats.emitted[kSynthMuzzle], g_stats.emitted[kSynthBullet],
             g_stats.emitted[kSynthSpark], g_stats.emitted[kSynthCigarette],
-            g_stats.emitted[kSynthHeadlight]);
+            g_stats.emitted[kSynthHeadlight], g_stats.emitted[kSynthBrake]);
         Log("synthetic: totals since start | muzzle %u bullet %u spark %u cigarette %u fire %u "
-            "headlight %u",
+            "headlight %u brake %u",
             g_stats.totalEmitted[kSynthMuzzle], g_stats.totalEmitted[kSynthBullet],
             g_stats.totalEmitted[kSynthSpark], g_stats.totalEmitted[kSynthCigarette],
-            g_stats.totalEmitted[kSynthFire], g_stats.totalEmitted[kSynthHeadlight]);
+            g_stats.totalEmitted[kSynthFire], g_stats.totalEmitted[kSynthHeadlight],
+            g_stats.totalEmitted[kSynthBrake]);
         // The profile is what separates a bullet from a spark from a fire, and
         // no amount of decompiling says it: speed, how many arrive at once, how
         // long they last.
@@ -882,6 +951,8 @@ void SyntheticLightsUpdate() {
 const std::vector<ParticleTypeInfo>& SyntheticParticleTypes() { return g_types; }
 
 const std::vector<VehicleModelInfo>& SyntheticVehicleModels() { return g_models; }
+
+void SyntheticSetBrakeLamps(std::vector<BrakeLamp> bySprite) { g_brakeLamps = std::move(bySprite); }
 
 BeamOverride* SyntheticFindBeam(int model) {
     auto it = g_beams.find(model);
@@ -1022,7 +1093,8 @@ void SyntheticLightsSave() {
     for (int i = 0; i < kSynthCategoryCount; ++i) {
         fprintf(f, "%d=%s%s", i, kCategoryNames[i], i + 1 < kSynthCategoryCount ? ", " : "\n");
     }
-    fprintf(f, "; Headlights take no particle types -- they come off the vehicle list.\n");
+    fprintf(f, "; Headlights and brake lights take no particle types -- they come off the\n");
+    fprintf(f, "; vehicle list.\n");
 
     fprintf(f, "\n[general]\n");
     fprintf(f, "Enabled=%d\n", g_settings.enabled ? 1 : 0);
@@ -1040,7 +1112,7 @@ void SyntheticLightsSave() {
         fprintf(f, "Intensity=%.3f\n", c.intensity);
         fprintf(f, "Radius=%.3f\n", c.radius);
         fprintf(f, "Height=%.3f\n", c.heightOffset);
-        if (i != kSynthHeadlight) fprintf(f, "Flicker=%.3f\n", c.flicker);
+        if (i != kSynthHeadlight && i != kSynthBrake) fprintf(f, "Flicker=%.3f\n", c.flicker);
         fprintf(f, "Daylight=%d %.2f %.2f\n", c.gate.enabled ? 1 : 0, c.gate.offAboveDeg,
                 c.gate.onBelowDeg);
         if (i == kSynthHeadlight) {

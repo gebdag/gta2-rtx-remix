@@ -689,6 +689,31 @@ bool WorldView::EnsureWorldLoaded() {
     }
     Log("ground decals: %d skid, trail and blood sprites registered", GroundDecalArtworkCount());
 
+    // Where each car's brake lamp is, from the delta the game lights for it. A
+    // car sprite faces down the page - its headlight delta is on the bottom row -
+    // so the heading runs along +y and the lamp's offset from the middle, at 64
+    // pixels a tile, is where the light goes relative to the car.
+    {
+        const int cars = style.SpriteCount(gta2::SpriteBase::Car);
+        std::vector<BrakeLamp> lamps(cars > 0 ? cars : 0);
+        int found = 0;
+        for (int sprite = 0; sprite < cars; ++sprite) {
+            gta2::SpriteIndices art;
+            float x = 0.0f, y = 0.0f;
+            if (!style.SpriteArtwork(gta2::SpriteBase::Car, sprite, &art) ||
+                !style.SpriteDeltaCentre(gta2::SpriteBase::Car, sprite, game::kBrakeLightDelta, &x,
+                                         &y)) {
+                continue;
+            }
+            lamps[sprite].valid = true;
+            lamps[sprite].along = (y - art.height * 0.5f) / 64.0f;
+            lamps[sprite].side = (x - art.width * 0.5f) / 64.0f;
+            ++found;
+        }
+        SyntheticSetBrakeLamps(std::move(lamps));
+        Log("brake lamps: placed from the artwork for %d of %d car sprites", found, cars);
+    }
+
     // Prefer the game's own artwork over our parse of the style file: the game
     // resolves tile numbers through a remap table, so indexing the file directly
     // yields the right set of textures in the wrong order.
