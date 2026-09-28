@@ -365,6 +365,50 @@ void LogGraphicsModules() {
     Log("video device in use: %s (Vid_Init_SYS at %p)", ownerPath, vidInit);
 }
 
+// Make the process DPI-aware, before our present window exists.
+//
+// A DPI-unaware process on a scaled desktop has its windows scaled by the window
+// manager on the way out. For the present window that means the swap chain is
+// composited rather than flipped straight to the screen, which is what frame
+// generation wants; it came and went with whatever else happened to make the
+// process aware first. dxwrapper's ddraw.dll did ("Disabling High DPI Scaling"),
+// and the RTX Remix bridge does, but only once it loads - after the window.
+// Neither is something to rely on: the release ships no dxwrapper.
+//
+// The same three calls dxwrapper makes, newest first. Each fails harmlessly if
+// the process already has an awareness, and the window gets one of its own in
+// CreatePresentWindow either way.
+void MakeProcessDpiAware() {
+    HMODULE user32 = GetModuleHandleA("user32.dll");
+    typedef BOOL(WINAPI * SetContextFn)(HANDLE);
+    const SetContextFn setContext = user32 ? reinterpret_cast<SetContextFn>(
+        GetProcAddress(user32, "SetProcessDpiAwarenessContext")) : nullptr;
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, spelled out so this builds
+    // against any SDK.
+    if (setContext && setContext(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)))) {
+        Log("dpi: process made per-monitor aware (v2)");
+        return;
+    }
+    if (HMODULE shcore = LoadLibraryA("shcore.dll")) {
+        typedef HRESULT(WINAPI * SetAwarenessFn)(int);
+        const SetAwarenessFn setAwareness =
+            reinterpret_cast<SetAwarenessFn>(GetProcAddress(shcore, "SetProcessDpiAwareness"));
+        if (setAwareness && SUCCEEDED(setAwareness(2))) {  // PROCESS_PER_MONITOR_DPI_AWARE
+            Log("dpi: process made per-monitor aware");
+            return;
+        }
+    }
+    typedef BOOL(WINAPI * SetAwareFn)();
+    const SetAwareFn setAware =
+        user32 ? reinterpret_cast<SetAwareFn>(GetProcAddress(user32, "SetProcessDPIAware"))
+               : nullptr;
+    if (setAware && setAware()) {
+        Log("dpi: process made system aware");
+        return;
+    }
+    Log("dpi: process awareness left as it was (already set, or not available)");
+}
+
 __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
     g_system = system;
     Log("gbh_InitDLL(system=%p)", system);
@@ -377,6 +421,7 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         Log("proxy live");
     } else {
         Log("takeover mode: the original renderer is not loaded");
+        MakeProcessDpiAware();
         // Before anything else the game does: its startup decides whether to play
         // the intro straight after loading us.
         gta2dx9::IntroInstall(g_intro, &PresentMovieFrame);

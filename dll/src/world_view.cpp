@@ -383,9 +383,20 @@ HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow m
         if (left < 0) left = 0;
         if (top < 0) top = 0;
     }
+    // Created per-monitor DPI-aware whatever the process is, so a size in
+    // physical pixels stays one and the window manager never scales the swap
+    // chain. See MakeProcessDpiAware in dllmain.cpp for why that matters.
+    typedef HANDLE(WINAPI * SetThreadContextFn)(HANDLE);
+    static const SetThreadContextFn setThreadContext = reinterpret_cast<SetThreadContextFn>(
+        GetProcAddress(GetModuleHandleA("user32.dll"), "SetThreadDpiAwarenessContext"));
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.
+    const HANDLE previous = setThreadContext
+        ? setThreadContext(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)))
+        : nullptr;
     HWND window = CreateWindowExA(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                                   "gta2dx9_present", "GTA2", WS_POPUP, left, top, width, height,
                                   nullptr, nullptr, instance, nullptr);
+    if (previous) setThreadContext(previous);
     if (!window) return nullptr;
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,

@@ -142,6 +142,20 @@ void EndParticle(uint8_t* p) {
     *reinterpret_cast<int16_t*>(p + game::kParticleLifeStart) = 2;
 }
 
+// A dword out of game memory that may since have been freed: the ped a hidden
+// body belongs to is only ours to read while the game keeps it, and a ped the
+// game has let go of can take its page with it. Structured exception handling
+// rather than a guess at which pointers are still good, because nothing here
+// can tell.
+bool ReadGameDword(const uint8_t* at, uint32_t* out) {
+    __try {
+        *out = *reinterpret_cast<const volatile uint32_t*>(at);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 // Ends every limb, in the air or on the ground, that came off this ped.
 void RemoveLimbsOf(const uint8_t* ped) {
     int removed = 0;
@@ -433,14 +447,18 @@ void GibsUpdate() {
     // it goes too - otherwise the ped stands up beside its own limbs.
     for (size_t i = 0; i < g_hidden.size();) {
         const Hidden& h = g_hidden[i];
-        const bool body =
-            *reinterpret_cast<const uint8_t* const*>(h.ped + game::kPedPhysics) == h.physics &&
-            *reinterpret_cast<const void* const*>(h.physics + game::kPhysicsSprite) == h.sprite;
-        const bool dead =
-            *reinterpret_cast<const int32_t*>(h.ped + game::kPedState) == game::kPedStateDead ||
-            *reinterpret_cast<const int32_t*>(h.ped + game::kPedStatePending) ==
-                game::kPedStateDead;
-        if (body && !dead) RemoveLimbsOf(h.ped);
+        // Anything unreadable is a ped the game has let go of: forget it, and
+        // take nothing else from it.
+        uint32_t physics = 0, sprite = 0, state = 0, pending = 0;
+        const bool readable = ReadGameDword(h.ped + game::kPedPhysics, &physics) &&
+                              ReadGameDword(h.ped + game::kPedState, &state) &&
+                              ReadGameDword(h.ped + game::kPedStatePending, &pending);
+        const bool body = readable && physics == reinterpret_cast<uintptr_t>(h.physics) &&
+                          ReadGameDword(h.physics + game::kPhysicsSprite, &sprite) &&
+                          sprite == reinterpret_cast<uintptr_t>(h.sprite);
+        const bool dead = static_cast<int32_t>(state) == game::kPedStateDead ||
+                          static_cast<int32_t>(pending) == game::kPedStateDead;
+        if (g_gibs && body && !dead) RemoveLimbsOf(h.ped);
         if (!(g_gibs && body && dead)) {
             g_hidden.erase(g_hidden.begin() + i);
             continue;
