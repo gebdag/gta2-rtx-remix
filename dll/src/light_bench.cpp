@@ -162,10 +162,13 @@ void LightBenchSubmit() {
         d.pos[0] = gx;
         d.pos[1] = 3.2f;
         d.pos[2] = static_cast<float>(gta2::kMapHeight) - gy;
-        d.rgb[0] = 1.0f;
-        d.rgb[1] = 1.0f;
-        d.rgb[2] = 1.0f;
-        d.intensity = 0.0005f;
+        // Dim by colour, not by intensity: anything under the reconcile's
+        // minimum intensity is dropped before it ever reaches Remix, which is
+        // how the first version of this measured nothing at all.
+        d.rgb[0] = 0.01f;
+        d.rgb[1] = 0.01f;
+        d.rgb[2] = 0.01f;
+        d.intensity = 1.0f;
         d.radius = 1.0f;
         d.emitterRadius = 0.02f;
         d.source = kLightSourceSpark;
