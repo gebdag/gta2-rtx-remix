@@ -199,10 +199,16 @@ void EnsureBinding() {
 
     // Two faint red lamps while a car brakes, day or night: the game shows the
     // same delta whatever the time, so the light follows it rather than the sun.
+    // A small bulb just behind the tail rather than the global one over the car:
+    // the global sphere is 0.15 tiles and reached into the car and the road. A
+    // smaller sphere and a shorter reach both give less light, which the
+    // brightness makes up.
     SyntheticCategorySettings& brake = g_settings.category[kSynthBrake];
     brake.rgb[0] = 1.0f; brake.rgb[1] = 0.06f; brake.rgb[2] = 0.03f;
-    brake.intensity = 0.3f;
-    brake.radius = 1.0f;
+    brake.intensity = 8.0f;
+    brake.radius = 0.1f;
+    brake.bulbSize = 0.06f;
+    brake.forwardOffset = 0.08f;
     brake.heightOffset = 0.12f;
     brake.maxLights = 40;
 }
@@ -276,6 +282,7 @@ void SubmitPoint(int category, const float* world, float extraIntensity, uintptr
     d.intensity = c.intensity * extraIntensity * daylight;
     if (c.flicker > 0.0f) d.intensity *= Flicker(seed, c.flicker);
     d.radius = c.radius;
+    d.emitterRadius = c.bulbSize;
     d.source = static_cast<uint8_t>(kLightSourceMuzzle + category);
     LightsSubmitExtra(d);
     ++g_stats.emitted[category];
@@ -419,13 +426,15 @@ void SubmitBrakeLights(const uint8_t* entry, float gx, float gy, float gz) {
         along = g_brakeLamps[sprite].along;
         side = g_brakeLamps[sprite].side;
     }
+    // Out past the tail, so the bulb sits behind the car rather than under it.
+    along -= c.forwardOffset;
     const float rx = fy, ry = -fx;   // right-hand perpendicular, as for headlights
 
     const uint32_t bits[2] = {game::kBrakeLightDeltaA, game::kBrakeLightDeltaB};
     for (int lamp = 0; lamp < 2; ++lamp) {
         if (!(lit & bits[lamp])) continue;
         if (!Room(kSynthBrake)) return;
-        // Delta 15 is delta 5 mirrored, so it is the same lamp on the other side.
+        // Delta 22 is delta 5 mirrored, so it is the same lamp on the other side.
         const float sign = lamp == 0 ? 1.0f : -1.0f;
         const float px = gx + fx * along + rx * side * sign;
         const float py = gy + fy * along + ry * side * sign;
@@ -437,6 +446,7 @@ void SubmitBrakeLights(const uint8_t* entry, float gx, float gy, float gz) {
         d.rgb[2] = c.rgb[2];
         d.intensity = c.intensity * daylight;
         d.radius = c.radius;
+        d.emitterRadius = c.bulbSize;
         d.source = kLightSourceBrake;
         // One identity per lamp per car, so it is the same light every time the
         // driver touches the brake rather than a new one found by proximity.
@@ -1057,6 +1067,7 @@ void SyntheticLightsLoad(const char* path) {
         else if (_stricmp(key, "Intensity") == 0) c.intensity = static_cast<float>(atof(value));
         else if (_stricmp(key, "Radius") == 0) c.radius = static_cast<float>(atof(value));
         else if (_stricmp(key, "Height") == 0) c.heightOffset = static_cast<float>(atof(value));
+        else if (_stricmp(key, "Bulb") == 0) c.bulbSize = static_cast<float>(atof(value));
         else if (_stricmp(key, "Flicker") == 0) c.flicker = static_cast<float>(atof(value));
         else if (_stricmp(key, "MaxLights") == 0) c.maxLights = atoi(value);
         else if (_stricmp(key, "ConeAngle") == 0) c.coneAngleDeg = static_cast<float>(atof(value));
@@ -1112,9 +1123,11 @@ void SyntheticLightsSave() {
         fprintf(f, "Intensity=%.3f\n", c.intensity);
         fprintf(f, "Radius=%.3f\n", c.radius);
         fprintf(f, "Height=%.3f\n", c.heightOffset);
+        fprintf(f, "Bulb=%.3f\n", c.bulbSize);
         if (i != kSynthHeadlight && i != kSynthBrake) fprintf(f, "Flicker=%.3f\n", c.flicker);
         fprintf(f, "Daylight=%d %.2f %.2f\n", c.gate.enabled ? 1 : 0, c.gate.offAboveDeg,
                 c.gate.onBelowDeg);
+        if (i == kSynthBrake) fprintf(f, "Forward=%.3f\n", c.forwardOffset);
         if (i == kSynthHeadlight) {
             fprintf(f, "ConeAngle=%.2f\n", c.coneAngleDeg);
             fprintf(f, "Forward=%.3f\n", c.forwardOffset);

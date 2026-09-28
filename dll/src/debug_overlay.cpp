@@ -635,6 +635,14 @@ void DrawCategory(int category) {
         changed |= ImGui::SliderFloat("Beam angle", &c.coneAngleDeg, 5.0f, 90.0f, "%.1f deg");
         changed |= ImGui::SliderFloat("Beam pitch", &c.pitchDegrees, 0.0f, 45.0f, "%.1f deg");
     }
+    if (category == kSynthBrake) {
+        changed |= ImGui::SliderFloat("Bulb size", &c.bulbSize, 0.0f, 0.3f, "%.3f");
+        ImGui::SetItemTooltip("The glowing sphere itself, in tiles. Reach only sets how "
+                              "bright it is; this is what can poke into the car or the road. "
+                              "0 uses the global emitter radius.");
+        changed |= ImGui::SliderFloat("Behind the tail", &c.forwardOffset, 0.0f, 0.5f, "%.3f");
+        changed |= ImGui::SliderFloat("Height", &c.heightOffset, 0.0f, 0.5f, "%.3f");
+    }
 
     if (Adv()) {
         changed |= ImGui::SliderFloat("Height offset", &c.heightOffset, -0.5f, 2.0f, "%.3f");

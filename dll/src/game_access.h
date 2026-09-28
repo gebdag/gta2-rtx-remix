@@ -374,11 +374,13 @@ constexpr uintptr_t kVehicleModel = 0x84;   // int32, car model id
 // Which of its deltas the car shows, one bit per delta: dents, doors and lamps.
 // FUN_004be060 reads it through the object at +0x08 (lea edi,[ebp+8]) and, with
 // lighting on, draws the lamp bits as a separate lit quad - the masks it uses
-// are at 0x00591E90..98. Delta 5 is the brake light on one side of the sprite
-// and 15 the same lamp mirrored to the other; both are red pixels at the tail.
+// are at 0x00591E90..98. The car's brake lights are switched on by
+// FUN_004213D0: bit 5 unless the rear corner on that side is dented (bit 1), and
+// bit 22 - the same lamp mirrored to the other side - unless that corner is
+// (bit 0). Delta 5 is a few red pixels at the tail of the sprite.
 constexpr uintptr_t kVehicleDeltaMask = 0x08;
 constexpr uint32_t kBrakeLightDeltaA = 1u << 5;
-constexpr uint32_t kBrakeLightDeltaB = 1u << 15;
+constexpr uint32_t kBrakeLightDeltaB = 1u << 22;
 constexpr int kBrakeLightDelta = 5;
 // The object the vehicle's placement pointer names is its sprite: the sprite
 // number within its base at +0x22, and the base at +0x30, 2 for cars

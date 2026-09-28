@@ -54,6 +54,8 @@ struct SyntheticCategorySettings {
     float intensity = 1.0f;
     float radius = 2.0f;       // reach in tiles, fed to the same radiance curve
     float heightOffset = 0.0f; // tiles above the effect's own position
+    // The size of the glowing sphere, in tiles; 0 uses the global emitter radius.
+    float bulbSize = 0.0f;
     // How far brightness wanders around its setting, 0 for steady. A flame is
     // never a constant light; each particle flickers on its own phase, so a
     // cluster of them never pulses in step.
@@ -75,7 +77,9 @@ struct SyntheticCategorySettings {
 
     // Headlights only.
     float coneAngleDeg = 32.0f;
-    float forwardOffset = 0.45f;  // from the car's centre to its nose, in tiles
+    // From the car's centre to its nose, in tiles. For brake lights, how far
+    // behind the tail lamp the light is put, so its sphere clears the car.
+    float forwardOffset = 0.45f;
     float sideOffset = 0.22f;     // half the spacing between the two beams
     float pitchDegrees = 8.0f;    // tilted down towards the road
 };

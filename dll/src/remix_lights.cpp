@@ -101,7 +101,7 @@ bool SameDesc(const RemixLightDesc& a, const RemixLightDesc& b) {
     return SameColourAndRadius(a, b) && a.intensity == b.intensity && a.pos[0] == b.pos[0]
         && a.pos[1] == b.pos[1] && a.pos[2] == b.pos[2] && a.spot == b.spot
         && a.coneAngleDeg == b.coneAngleDeg && a.dir[0] == b.dir[0] && a.dir[1] == b.dir[1]
-        && a.dir[2] == b.dir[2];
+        && a.dir[2] == b.dir[2] && a.emitterRadius == b.emitterRadius;
 }
 
 float DistanceSquared(const float* a, const float* b) {
@@ -202,8 +202,9 @@ void Apply(RemixTrackedLight& t) {
     remixapi_LightInfoSphereEXT sphere = {};
     sphere.sType = REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT;
     sphere.position = ToRemix(pos);
-    sphere.radius = (ov && ov->emitterRadius > 0.0f) ? ov->emitterRadius
-                                                     : g_settings.emitterRadius;
+    sphere.radius = (ov && ov->emitterRadius > 0.0f)  ? ov->emitterRadius
+                    : t.def.emitterRadius > 0.0f      ? t.def.emitterRadius
+                                                      : g_settings.emitterRadius;
     sphere.volumetricRadianceScale = 1.0f;
     // A headlight is a cone, not a bare bulb. Remix calls that shaping, and it
     // is the one thing here the game's own light model had no way to express.

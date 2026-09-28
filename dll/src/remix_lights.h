@@ -89,6 +89,9 @@ struct RemixLightDesc {
     float rgb[3] = {};      // 0..1
     float intensity = 0.0f; // 0..1
     float radius = 0.0f;    // reach in tiles; drives brightness, not emitter size
+    // The size of the glowing sphere itself, in tiles. 0 is the global emitter
+    // radius; a small lamp wants less, or its sphere reaches into what it sits on.
+    float emitterRadius = 0.0f;
 
     // Cone shaping, for headlights. dir is a unit vector in world space.
     bool  spot = false;
