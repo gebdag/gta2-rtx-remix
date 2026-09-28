@@ -518,8 +518,16 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
         // Touching: overlapping rows, and no more than most of a glyph apart -
         // the gap between words, not the gap between the score and the lives.
         const float gap = (std::max)(4.0f, (b.y1 - b.y0) * 0.75f);
-        const bool joins = open && b.y0 < group.y1 && b.y1 > group.y0 &&
-                           b.x0 <= group.x1 + gap && b.x1 >= group.x0 - gap;
+        const bool sameRow = b.y0 < group.y1 && b.y1 > group.y0 &&
+                             b.x0 <= group.x1 + gap && b.x1 >= group.x0 - gap;
+        // Or the next line of the same block: straight below, overlapping it
+        // sideways, no more than a line's spacing down. Without this each line
+        // of a message was an element of its own, so a short last line - one
+        // word, all of it in the left third - went to the left edge and took
+        // the speaker's portrait beside it along.
+        const bool nextLine = b.x0 < group.x1 && b.x1 > group.x0 &&
+                              b.y0 >= group.y1 - 1.0f && b.y0 <= group.y1 + gap;
+        const bool joins = open && (sameRow || nextLine);
         if (!joins) {
             close(i);
             start = i;
