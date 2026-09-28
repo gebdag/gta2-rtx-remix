@@ -14,6 +14,12 @@ bool Gibs();
 void SetGibsStay(bool on);
 bool GibsStay();
 
+// Whether a pedestrian killed by a car comes apart too, not only one killed by an
+// explosion. Off by default: GTA2 runs people over a great deal.
+constexpr bool kDefaultGibsCar = false;
+void SetGibsCar(bool on);
+bool GibsCar();
+
 // Once a frame, after the game has updated its particles: settles landed limbs
 // and lets go of anything the game has since reused.
 void GibsUpdate();

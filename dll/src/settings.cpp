@@ -179,6 +179,7 @@ void SettingsSaveAll() {
     fprintf(out, "Blood=%d\n", Blood() ? 1 : 0);
     fprintf(out, "Gibs=%d\n", Gibs() ? 1 : 0);
     fprintf(out, "GibsStay=%d\n", GibsStay() ? 1 : 0);
+    fprintf(out, "GibsCar=%d\n", GibsCar() ? 1 : 0);
     fprintf(out, "SpriteConform=%d\n", SpriteConform() ? 1 : 0);
     fprintf(out, "SpriteHeight=%.4f\n", SpriteHeight());
     fprintf(out, "SpriteRoll=%.4f\n", SpriteRoll());
@@ -269,6 +270,8 @@ void SettingsLoadAll() {
             SetGibs(atoi(value) != 0);
         } else if (!_stricmp(key, "GibsStay")) {
             SetGibsStay(atoi(value) != 0);
+        } else if (!_stricmp(key, "GibsCar")) {
+            SetGibsCar(atoi(value) != 0);
         } else if (!_stricmp(key, "SpriteRoll")) {
             SetSpriteRoll(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "SpriteHeight")) {

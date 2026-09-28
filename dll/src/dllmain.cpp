@@ -187,6 +187,8 @@ void LoadConfig() {
         GetPrivateProfileIntA("renderer", "gibs", gta2dx9::kDefaultGibs ? 1 : 0, ini) != 0);
     gta2dx9::SetGibsStay(GetPrivateProfileIntA("renderer", "gibs_stay",
                                                gta2dx9::kDefaultGibsStay ? 1 : 0, ini) != 0);
+    gta2dx9::SetGibsCar(GetPrivateProfileIntA("renderer", "gibs_car",
+                                              gta2dx9::kDefaultGibsCar ? 1 : 0, ini) != 0);
 
     // Whether the intro movie plays. Decided here rather than by GTA2's own
     // do_play_movie, and either way it never goes near DirectDraw.

@@ -14,10 +14,11 @@
 // moved by the game's own code and drawn like any other particle.
 //
 // Which deaths: the explosion update, FUN_00490D60, marks every pedestrian it
-// catches by setting +0x290 to 4 before throwing them (a car hit sets 2). The
-// death handler, FUN_004411B0, is where every death ends up, so it is hooked, and
-// a pedestrian arriving there with 4 in that field died in an explosion - a
-// grenade, a rocket, or a car going up next to them.
+// catches by setting +0x290 to 4 before throwing them, and a car hitting one
+// (FUN_004A0A30) sets 1 or 3. The death handler, FUN_004411B0, is where every
+// death ends up, so it is hooked, and a pedestrian arriving there with 4 in that
+// field died in an explosion - a grenade, a rocket, or a car going up next to
+// them. With the option on, 1 and 3 count too: run down.
 //
 // Two things make it read as a body coming apart rather than as debris:
 //
@@ -54,6 +55,7 @@ using gta2dx9::Log;
 
 bool g_gibs = gta2dx9::kDefaultGibs;
 bool g_gibsStay = gta2dx9::kDefaultGibsStay;
+bool g_gibsCar = gta2dx9::kDefaultGibsCar;
 
 // Deaths already given gibs, so a handler that runs twice for one body does not
 // throw a second set. A handful is plenty: they are forgotten after a few seconds.
@@ -216,7 +218,8 @@ void ThrowGibs(const uint8_t* ped) {
 
     if (g_logged < 8) {
         ++g_logged;
-        Log("gibs: ped %p killed by an explosion at (%.2f, %.2f, %.2f), %d limbs thrown", ped,
+        Log("gibs: ped %p killed (cause %d) at (%.2f, %.2f, %.2f), %d limbs thrown", ped,
+            *reinterpret_cast<const int32_t*>(ped + game::kPedDamageCause),
             x * game::kFixedScale, y * game::kFixedScale, z * game::kFixedScale, limb);
     }
 }
@@ -227,9 +230,9 @@ void ThrowGibs(const uint8_t* ped) {
 // runs. File scope and __stdcall so the thunk below can call it by name.
 static void __stdcall GibsOnPedDeath(uint8_t* ped) {
     if (!g_gibs || !game::PlausiblePointer(ped)) return;
-    if (*reinterpret_cast<const int32_t*>(ped + game::kPedDamageCause) != game::kDamageExplosion) {
-        return;
-    }
+    const int32_t cause = *reinterpret_cast<const int32_t*>(ped + game::kPedDamageCause);
+    const bool byCar = cause == game::kDamageCarHit || cause == game::kDamageRunOver;
+    if (cause != game::kDamageExplosion && !(byCar && g_gibsCar)) return;
     if (AlreadyGibbed(ped)) return;
     ThrowGibs(ped);
 }
@@ -302,6 +305,8 @@ void SetGibs(bool on) { g_gibs = on; }
 bool Gibs() { return g_gibs; }
 void SetGibsStay(bool on) { g_gibsStay = on; }
 bool GibsStay() { return g_gibsStay; }
+void SetGibsCar(bool on) { g_gibsCar = on; }
+bool GibsCar() { return g_gibsCar; }
 
 void GibsInstall() {
     static const uint8_t kDeath[game::kPedDeathStolenBytes] = {0x56, 0x8B, 0xF1, 0xF6, 0x86,

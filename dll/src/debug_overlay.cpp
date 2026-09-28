@@ -1049,6 +1049,14 @@ void DrawSprites() {
         Help("The last few dozen stay on the ground; older ones are cleared as new ones land, "
              "because they share the game's particle pool with every fire and spark. Persist it "
              "with gibs_stay under [renderer].");
+        bool car = GibsCar();
+        if (ImGui::Checkbox("Also when run over", &car)) {
+            SetGibsCar(car);
+            SettingsMarkDirty();
+        }
+        Help("A pedestrian killed by a car with a driver comes apart as well. GTA2 marks those "
+             "deaths itself, so this is only people hit by cars, not ones who fell or burned. "
+             "Persist it with gibs_car under [renderer].");
         ImGui::Unindent();
     }
 

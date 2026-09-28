@@ -360,9 +360,15 @@ constexpr uintptr_t kSetSprite = 0x004206C0;
 constexpr uintptr_t kPedDeathHandler = 0x004411B0;
 constexpr int kPedDeathStolenBytes = 10;
 // What last hurt a pedestrian. The explosion update (FUN_00490D60) sets 4 on
-// every ped it catches, a car hit (FUN_0049A560) 2.
+// every ped it catches. A car with someone at the wheel that hits a ped
+// (FUN_004A0A30) sets 1, or 3 when the car is the thing the ped was in contact
+// with - struck, or driven over - and makes the driver the attacker. 2 is a
+// ped standing on a block that hurts (FUN_0049A560), 5 FUN_004938A0's, 0x12
+// the electro gun.
 constexpr uintptr_t kPedDamageCause = 0x290;
 constexpr int32_t kDamageExplosion = 4;
+constexpr int32_t kDamageCarHit = 1;
+constexpr int32_t kDamageRunOver = 3;
 // Where the ped is, 16.14 fixed - what the death handler hands the blood pool.
 constexpr uintptr_t kPedX = 0x1AC;
 constexpr uintptr_t kPedY = 0x1B0;
