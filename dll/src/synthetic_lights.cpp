@@ -598,18 +598,43 @@ void WalkVehicles() {
     g_stats.vehiclesWalked = 0;
     g_stats.vehiclesDriven = 0;
 
-    const unsigned now = GetTickCount();
+    // Every car in the district is on this list, not just the ones on screen, and
+    // each category has a ceiling on lights per frame. Taken in list order, the
+    // ceiling went to whichever cars happened to come first - mostly ones
+    // nowhere near the camera - and a busy night left the player's own car dark
+    // for as long as the city stayed that busy. So the cars are gathered first
+    // and served nearest the camera first.
+    struct Visit {
+        uint8_t* entry;
+        float gx, gy, gz;
+        float distance2;
+    };
+    static std::vector<Visit> visits;
+    visits.clear();
+    float camX = 0.0f, camY = 0.0f;
+    const bool haveCamera = game::CameraPosition(&camX, &camY);
     for (int guard = 0; entry && guard < kMaxWalk; ++guard) {
         uint8_t* next = game::NextInList(entry, game::kVehicleNext);
         ++g_stats.vehiclesWalked;
-
-        const int model = *reinterpret_cast<const int32_t*>(entry + game::kVehicleModel);
         float gx = 0.0f, gy = 0.0f, gz = 0.0f;
-        if (!game::ReadPlacement(entry, game::kVehiclePlacementPtr, &gx, &gy, &gz)
-            || !InsideWorld(gx, gy, gz)) {
-            entry = next;
-            continue;
+        if (game::ReadPlacement(entry, game::kVehiclePlacementPtr, &gx, &gy, &gz)
+            && InsideWorld(gx, gy, gz)) {
+            const float dx = gx - camX, dy = gy - camY;
+            visits.push_back({entry, gx, gy, gz, haveCamera ? dx * dx + dy * dy : 0.0f});
         }
+        entry = next;
+    }
+    if (haveCamera) {
+        std::stable_sort(visits.begin(), visits.end(), [](const Visit& a, const Visit& b) {
+            return a.distance2 < b.distance2;
+        });
+    }
+
+    const unsigned now = GetTickCount();
+    for (const Visit& visit : visits) {
+        uint8_t* entry = visit.entry;
+        const float gx = visit.gx, gy = visit.gy, gz = visit.gz;
+        const int model = *reinterpret_cast<const int32_t*>(entry + game::kVehicleModel);
 
         VehicleTrack& track = g_vehicles[reinterpret_cast<uintptr_t>(entry)];
         const float dx = gx - track.lastPos[0];
@@ -638,27 +663,23 @@ void WalkVehicles() {
         const bool driven = occupied || rolling;
         if (!driven) NoteModel(model, false);
         if (!driven) {
-            entry = next;
             continue;
         }
         ++g_stats.vehiclesDriven;
         NoteModel(model, true);
         if (!c.enabled) {
-            entry = next;
             continue;
         }
         // Beams off in daylight. The car is still walked and still counted, so
         // the menu's model list does not empty out at noon.
         const float daylight = DaylightGateFactor(c.gate);
         if (daylight <= kGateFloor) {
-            entry = next;
             continue;
         }
 
         float fx, fy;
         if (!game::ReadFacing(entry, game::kVehiclePlacementPtr, &fx, &fy)) {
             g_stats.trigTablesReady = false;
-            entry = next;
             continue;
         }
         g_stats.trigTablesReady = true;
@@ -672,7 +693,6 @@ void WalkVehicles() {
             (mask & (game::kHeadlightDeltaA | game::kHeadlightAltDeltaA)) != 0,
             (mask & (game::kHeadlightDeltaB | game::kHeadlightAltDeltaB)) != 0};
         if (!litLamp[0] && !litLamp[1]) {
-            entry = next;
             continue;
         }
 
@@ -731,7 +751,6 @@ void WalkVehicles() {
             ++g_stats.emitted[kSynthHeadlight];
             ++g_stats.totalEmitted[kSynthHeadlight];
         }
-        entry = next;
     }
 
     // Vehicles that have not been seen for a while are gone; their slots can be
