@@ -217,7 +217,13 @@ void EnsureBinding() {
     // one pair of headlights.
     head.sideOffset = 0.10f;
     head.forwardOffset = 0.40f;
-    head.maxLights = 40;
+    // The car lights' ceilings are a bridge budget and nothing else, and it was
+    // measured (light_bench.cpp, 2026-09-28): Remix took 6400 extra lights
+    // without refusing one and held 30 fps, and 1600 moving ones cost half a
+    // millisecond a frame on our side. 256 each keeps all three car categories
+    // together under 800, several times clear of that. Serving nearest the camera
+    // first (WalkVehicles) means reaching one drops only the most distant cars.
+    head.maxLights = 256;
 
     // Two faint red lamps while a car brakes, and only after dark: in daylight
     // the delta on the sprite says it all. A small bulb just behind the tail
@@ -231,7 +237,7 @@ void EnsureBinding() {
     brake.bulbSize = 0.06f;
     brake.forwardOffset = 0.08f;
     brake.heightOffset = 0.12f;
-    brake.maxLights = 40;
+    brake.maxLights = 256;
 
     // The bolt is a chain of short links, dozens along a long one, so it is
     // capped well below that: a handful of lights along it reads as the arc
@@ -273,7 +279,7 @@ void EnsureBinding() {
     lamp.radius = 0.3f;
     lamp.bulbSize = 0.035f;
     lamp.heightOffset = 0.06f;
-    lamp.maxLights = 64;
+    lamp.maxLights = 256;
 }
 
 ParticleTypeInfo& TypeSlot(int type) {

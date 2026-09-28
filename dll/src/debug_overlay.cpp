@@ -635,8 +635,10 @@ void DrawCategory(int category) {
     if (Adv()) {
         changed |= ImGui::SliderFloat("Height offset", &c.heightOffset, -0.5f, 2.0f, "%.3f");
         changed |= ImGui::SliderInt("Max lights per frame", &c.maxLights, 1, 128);
-        ImGui::SetItemTooltip("Every light is a CreateLight across the 32-bit Remix bridge and "
-                              "some particle types arrive in bursts of dozens.");
+        ImGui::SetItemTooltip("Measured with the light benchmark: Remix took 6400 extra lights "
+                              "without refusing one, and 1600 moving lights cost about half a "
+                              "millisecond a frame. For fire, sparks and the like this also "
+                              "sets how bright a cluster gets, since each light adds up.");
 
         if (category == kSynthHeadlight) {
             changed |= ImGui::SliderFloat("Forward from centre", &c.forwardOffset, 0.0f, 2.0f,
