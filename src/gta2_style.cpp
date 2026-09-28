@@ -192,6 +192,34 @@ bool Style::SpriteDeltaBounds(SpriteBase base, int index, int delta, int* x0, in
     return true;
 }
 
+bool Style::SpriteDeltaImage(SpriteBase base, int index, int delta, int* x0, int* y0, int* width,
+                             int* height, std::vector<uint32_t>* argb) const {
+    std::vector<DeltaPixel> pixels;
+    if (!DeltaPixels(base, index, delta, &pixels)) return false;
+    int x1 = 0, y1 = 0;
+    if (!SpriteDeltaBounds(base, index, delta, x0, y0, &x1, &y1)) return false;
+    *width = x1 - *x0;
+    *height = y1 - *y0;
+    const int which = static_cast<int>(base);
+    int first = 0;
+    for (int i = 0; i < which; ++i) first += spriteBases_[i];
+    const size_t slot = static_cast<size_t>(tilePalettes_) + first + index;
+    if (slot >= paletteIndex_.size()) return false;
+    const uint16_t palette = paletteIndex_[slot];
+    const size_t paletteBase = static_cast<size_t>(palette / kPalettesPerPage) * kPalettePageBytes +
+                               static_cast<size_t>(palette % kPalettesPerPage) * 4;
+    argb->assign(static_cast<size_t>(*width) * *height, 0);
+    for (const DeltaPixel& p : pixels) {
+        if (p.index == 0) continue;
+        const size_t at = paletteBase + static_cast<size_t>(p.index) * 256;
+        if (at + 3 > palettes_.size()) continue;
+        (*argb)[static_cast<size_t>(p.y - *y0) * *width + (p.x - *x0)] =
+            0xFF000000u | (static_cast<uint32_t>(palettes_[at + 2]) << 16) |
+            (static_cast<uint32_t>(palettes_[at + 1]) << 8) | palettes_[at];
+    }
+    return true;
+}
+
 // PPAL keeps 64 palettes to a 64K page, interleaved: entry i of palette p is the
 // dword at (p / 64) * 64K + i * 256 + (p % 64) * 4, as B, G, R. A sprite's own
 // palette is the PALX slot after the tiles' ones, at its number across all bases.

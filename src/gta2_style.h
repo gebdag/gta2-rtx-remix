@@ -66,6 +66,12 @@ public:
     bool SpriteDeltaBounds(SpriteBase base, int index, int delta, int* x0, int* y0, int* x1,
                            int* y1) const;
 
+    // A delta's pixels cropped to the rectangle they cover, in the sprite's own
+    // palette as A8R8G8B8: alpha 0 wherever the delta paints nothing. False when
+    // the sprite has no such delta.
+    bool SpriteDeltaImage(SpriteBase base, int index, int delta, int* x0, int* y0, int* width,
+                          int* height, std::vector<uint32_t>* argb) const;
+
 private:
     void DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
                      size_t palOffset, size_t palIndexOffset, size_t palIndexSize);

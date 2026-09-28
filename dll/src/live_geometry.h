@@ -138,22 +138,30 @@ float SpriteLift();
 // the whole car, with a texture built for whichever lamps are on - a new texture
 // for every car and every combination of lamps, and a quad that could drift off
 // the body. Instead that quad is left out and each lit lamp gets a small quad of
-// its own, laid on the body exactly over the lamp's pixels, textured with one of
-// three fixed images: headlight, brake light, other lamp. Those three never
-// change, so one emissive on each covers every car in the game.
+// its own, laid on the body exactly over the lamp, textured with that lamp's own
+// pixels cut out of the car's artwork. So it looks as the game's does, and each
+// lamp of each car model is one small texture that never changes, which an
+// emissive can be put on once.
 constexpr bool kDefaultOwnCarLamps = true;
 void SetOwnCarLamps(bool on);
 bool OwnCarLamps();
 
-// Where each lamp delta sits on each car sprite, set when a district's style is
-// loaded: per delta, one rectangle per car sprite in its own pixels, plus the
-// sprite's size. An empty rectangle means the sprite has no such lamp.
-struct LampRect {
-    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-    int width = 0, height = 0;
-    bool Valid() const { return x1 > x0 && y1 > y0 && width > 0 && height > 0; }
+// One lamp delta of one car sprite, set when a district's style is loaded: its
+// pixels cropped to the rectangle they cover (alpha 0 where the delta paints
+// nothing), where that rectangle is on the sprite, and the sprite's size.
+struct LampArt {
+    int x0 = 0, y0 = 0, width = 0, height = 0;
+    int spriteWidth = 0, spriteHeight = 0;
+    std::vector<uint32_t> argb;
+    bool Valid() const { return width > 0 && height > 0 && spriteWidth > 0 && spriteHeight > 0; }
 };
-void SetCarLampRects(int delta, std::vector<LampRect> bySprite);
+void SetCarLampArt(int delta, std::vector<LampArt> bySprite);
+
+// The texture a lamp is drawn with, exactly as it is uploaded: the crop, mirrored
+// for a lamp on the far side, with every transparent texel given the mean colour
+// of the opaque ones so filtering cannot pull a dark fringe in. Its Remix hash is
+// what tools/lamp_emissives.py reproduces to put an emissive on it.
+std::vector<uint32_t> LampTexels(const LampArt& art, bool mirrored);
 
 // How many sprites were drawn additively last frame - the fire and explosion
 // artwork. A free function because the menu has no handle on the LiveGeometry
@@ -250,8 +258,9 @@ private:
         Vertex local[4];
         int corners;
         gta2::Mat4 objectToWorld;
-        // One of our own lamp images instead of a game texture; see OwnCarLamps.
-        int lampKind = -1;
+        // One of our own lamp textures instead of a game texture; see OwnCarLamps.
+        const LampArt* lamp = nullptr;
+        bool lampMirrored = false;
     };
 
     // The lamps of the car drawn last, as quads of their own on its body.

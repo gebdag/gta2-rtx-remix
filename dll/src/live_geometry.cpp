@@ -214,48 +214,76 @@ int g_effectBatches = 0;
 int EffectBatchesDrawn() { return g_effectBatches; }
 
 bool g_ownCarLamps = kDefaultOwnCarLamps;
+void ReleaseLampTextures();
+// Per lamp delta, one entry per car sprite.
+std::map<int, std::vector<LampArt>> g_lampArt;
 void SetOwnCarLamps(bool on) { g_ownCarLamps = on; }
 bool OwnCarLamps() { return g_ownCarLamps; }
 
-std::map<int, std::vector<LampRect>> g_lampRects;
-void SetCarLampRects(int delta, std::vector<LampRect> bySprite) {
-    g_lampRects[delta] = std::move(bySprite);
+std::vector<uint32_t> LampTexels(const LampArt& art, bool mirrored) {
+    std::vector<uint32_t> texels(art.argb.size(), 0);
+    uint32_t sum[3] = {}, count = 0;
+    for (uint32_t c : art.argb) {
+        if (!(c >> 24)) continue;
+        sum[0] += (c >> 16) & 0xFF;
+        sum[1] += (c >> 8) & 0xFF;
+        sum[2] += c & 0xFF;
+        ++count;
+    }
+    const uint32_t fill =
+        count ? ((sum[0] / count) << 16) | ((sum[1] / count) << 8) | (sum[2] / count) : 0;
+    for (int y = 0; y < art.height; ++y) {
+        for (int x = 0; x < art.width; ++x) {
+            const int from = mirrored ? art.width - 1 - x : x;
+            const uint32_t c = art.argb[static_cast<size_t>(y) * art.width + from];
+            texels[static_cast<size_t>(y) * art.width + x] = (c >> 24) ? c : fill;
+        }
+    }
+    return texels;
 }
 
-// The three lamp images. Solid, opaque and fixed, so each has one Remix hash for
-// the life of the mod: make it emissive once and every car's lamp glows. The
-// colours are the ones the artwork's lamp deltas average out to.
-enum LampKind { kLampHead = 0, kLampBrake, kLampOther, kLampKinds };
-constexpr int kLampTextureSize = 4;
-const uint32_t kLampColours[kLampKinds] = {0xFFF0DCC0u, 0xFFD84A36u, 0xFFFFC060u};
-IDirect3DTexture9* g_lampTextures[kLampKinds] = {};
+void SetCarLampArt(int delta, std::vector<LampArt> bySprite) {
+    // Textures point at the art they were made from.
+    ReleaseLampTextures();
+    g_lampArt[delta] = std::move(bySprite);
+}
+
+// Textures for the lamps, made on first use, keyed by the art and which side.
+std::map<std::pair<const LampArt*, bool>, IDirect3DTexture9*> g_lampTextures;
 IDirect3DDevice9* g_lampDevice = nullptr;
 
-IDirect3DTexture9* LampTexture(IDirect3DDevice9* device, int kind) {
-    if (kind < 0 || kind >= kLampKinds) return nullptr;
+void ReleaseLampTextures() {
+    for (auto& entry : g_lampTextures) {
+        if (entry.second) entry.second->Release();
+    }
+    g_lampTextures.clear();
+}
+
+IDirect3DTexture9* LampTexture(IDirect3DDevice9* device, const LampArt* art, bool mirrored) {
+    if (!art || !art->Valid()) return nullptr;
     if (g_lampDevice != device) {
-        for (IDirect3DTexture9*& t : g_lampTextures) {
-            if (t) t->Release();
-            t = nullptr;
-        }
+        ReleaseLampTextures();
         g_lampDevice = device;
     }
-    if (g_lampTextures[kind]) return g_lampTextures[kind];
+    auto found = g_lampTextures.find({art, mirrored});
+    if (found != g_lampTextures.end()) return found->second;
     IDirect3DTexture9* texture = nullptr;
-    if (FAILED(device->CreateTexture(kLampTextureSize, kLampTextureSize, 1, 0, D3DFMT_A8R8G8B8,
+    if (FAILED(device->CreateTexture(art->width, art->height, 1, 0, D3DFMT_A8R8G8B8,
                                      D3DPOOL_MANAGED, &texture, nullptr))) {
-        return nullptr;
-    }
-    D3DLOCKED_RECT locked;
-    if (SUCCEEDED(texture->LockRect(0, &locked, nullptr, 0))) {
-        for (int y = 0; y < kLampTextureSize; ++y) {
-            uint32_t* row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(locked.pBits) +
-                                                        y * locked.Pitch);
-            for (int x = 0; x < kLampTextureSize; ++x) row[x] = kLampColours[kind];
+        texture = nullptr;
+    } else {
+        const std::vector<uint32_t> texels = LampTexels(*art, mirrored);
+        D3DLOCKED_RECT locked;
+        if (SUCCEEDED(texture->LockRect(0, &locked, nullptr, 0))) {
+            for (int y = 0; y < art->height; ++y) {
+                memcpy(static_cast<uint8_t*>(locked.pBits) + y * locked.Pitch,
+                       &texels[static_cast<size_t>(y) * art->width],
+                       static_cast<size_t>(art->width) * 4);
+            }
+            texture->UnlockRect(0);
         }
-        texture->UnlockRect(0);
     }
-    g_lampTextures[kind] = texture;
+    g_lampTextures[{art, mirrored}] = texture;
     return texture;
 }
 
@@ -965,26 +993,31 @@ void LiveGeometry::AddCarLamps(const Sprite& body) {
     // Above the body, whichever way its frame faces.
     const float above = body.objectToWorld.m[1][1] >= 0.0f ? 1.0f : -1.0f;
 
-    for (const int delta : game::kLampQuadDeltas) {
-        auto rects = g_lampRects.find(delta);
-        if (rects == g_lampRects.end() || sprite >= static_cast<int>(rects->second.size())) continue;
-        const LampRect& r = rects->second[sprite];
+    // Exactly the bits the game is about to draw as its lamp quad: the car's own
+    // mask, cut down to the lamp mask FUN_004BE060 chose for this car.
+    const uint32_t lit = mask & *reinterpret_cast<const uint32_t*>(game::kLampMaskPtr);
+    for (int bit = 0; bit < 32; ++bit) {
+        if (!(lit & (1u << bit))) continue;
+        // FUN_0044AEA0's reading: from bit 22 up, delta bit - 17 mirrored.
+        const bool mirrored = bit >= game::kMirroredDeltaFirstBit;
+        const int delta = mirrored ? bit - game::kMirroredDeltaOffset : bit;
+        auto arts = g_lampArt.find(delta);
+        if (arts == g_lampArt.end() || sprite >= static_cast<int>(arts->second.size())) continue;
+        const LampArt& r = arts->second[sprite];
         if (!r.Valid()) continue;
-        const int kind = delta == 6 ? kLampHead : delta == 5 ? kLampBrake : kLampOther;
-        for (int mirrored = 0; mirrored < 2; ++mirrored) {
-            const int bit = mirrored ? delta + game::kMirroredDeltaOffset : delta;
-            if (mirrored && bit < game::kMirroredDeltaFirstBit) continue;
-            if (bit >= 32 || !(mask & (1u << bit))) continue;
+        {
             // The mirrored lamp is the same pixels flipped across the sprite.
-            const float px0 = static_cast<float>(mirrored ? r.width - r.x1 : r.x0);
-            const float px1 = static_cast<float>(mirrored ? r.width - r.x0 : r.x1);
-            const float tu0 = u0 + (u1 - u0) * px0 / r.width;
-            const float tu1 = u0 + (u1 - u0) * px1 / r.width;
-            const float tv0 = v0 + (v1 - v0) * static_cast<float>(r.y0) / r.height;
-            const float tv1 = v0 + (v1 - v0) * static_cast<float>(r.y1) / r.height;
+            const int rx0 = r.x0, rx1 = r.x0 + r.width;
+            const float px0 = static_cast<float>(mirrored ? r.spriteWidth - rx1 : rx0);
+            const float px1 = static_cast<float>(mirrored ? r.spriteWidth - rx0 : rx1);
+            const float tu0 = u0 + (u1 - u0) * px0 / r.spriteWidth;
+            const float tu1 = u0 + (u1 - u0) * px1 / r.spriteWidth;
+            const float tv0 = v0 + (v1 - v0) * static_cast<float>(r.y0) / r.spriteHeight;
+            const float tv1 = v0 + (v1 - v0) * static_cast<float>(r.y0 + r.height) / r.spriteHeight;
             Sprite lamp = body;
             lamp.texture = nullptr;
-            lamp.lampKind = kind;
+            lamp.lamp = &r;
+            lamp.lampMirrored = mirrored;
             const float us[4] = {tu0, tu1, tu1, tu0};
             const float vs[4] = {tv0, tv0, tv1, tv1};
             const float uvs[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
@@ -1061,8 +1094,8 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
     std::vector<Drawable> plain, effects;
     plain.reserve(sprites_.size());
     for (const Sprite& sprite : sprites_) {
-        if (sprite.lampKind >= 0) {
-            if (IDirect3DTexture9* lamp = LampTexture(device, sprite.lampKind)) {
+        if (sprite.lamp) {
+            if (IDirect3DTexture9* lamp = LampTexture(device, sprite.lamp, sprite.lampMirrored)) {
                 plain.push_back({&sprite, lamp});
             }
             continue;
@@ -1144,10 +1177,7 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
 
 void LiveGeometry::ReleaseResources() {
     sprites_.clear();
-    for (IDirect3DTexture9*& t : g_lampTextures) {
-        if (t) t->Release();
-        t = nullptr;
-    }
+    ReleaseLampTextures();
     g_lampDevice = nullptr;
     spriteQuads_ = 0;
     effectQuads_ = 0;
