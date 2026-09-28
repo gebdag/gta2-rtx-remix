@@ -497,15 +497,20 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
     const float third = static_cast<float>(gameWidth_) / 3.0f;
     const float left = 0.0f;            // the 4:3 canvas against the left edge
     const float right = centred * 2.0f; // against the right edge
+
+    // First the runs of consecutive draws that touch - a line of text, a line
+    // and the next one under it.
+    struct Group {
+        size_t start, end;
+        Box box;
+    };
+    std::vector<Group> groups;
     size_t start = 0;
     Box group;
     bool open = false;
     auto close = [&](size_t end) {
         if (!open) return;
-        const float offset = group.x1 <= third                ? left
-                             : group.x0 >= 2.0f * third        ? right
-                                                               : centred;
-        for (size_t i = start; i < end; ++i) out[i] = offset;
+        groups.push_back({start, end, group});
         open = false;
     };
     for (size_t i = 0; i < draws_.size(); ++i) {
@@ -541,6 +546,46 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
         }
     }
     close(draws_.size());
+
+    // Then whatever sits together on screen, whatever order it was drawn in. A
+    // message's portrait is drawn before its text and only shares rows with the
+    // text's first line when the message is three lines or fewer; a fourth line
+    // starts above the portrait, the two never touched in draw order, and the
+    // portrait - all of it in the left third - went to the left edge alone. On
+    // screen it is a few pixels from the text, which is what settles it here.
+    const float closeBy = 8.0f;
+    std::vector<size_t> parent(groups.size());
+    for (size_t i = 0; i < groups.size(); ++i) parent[i] = i;
+    auto root = [&](size_t i) {
+        while (parent[i] != i) i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    for (size_t i = 0; i < groups.size(); ++i) {
+        for (size_t j = i + 1; j < groups.size(); ++j) {
+            const Box& a = groups[i].box;
+            const Box& b = groups[j].box;
+            if (a.x0 - closeBy <= b.x1 && b.x0 - closeBy <= a.x1 && a.y0 - closeBy <= b.y1 &&
+                b.y0 - closeBy <= a.y1) {
+                parent[root(j)] = root(i);
+            }
+        }
+    }
+    std::vector<Box> merged(groups.size());
+    for (size_t i = 0; i < groups.size(); ++i) {
+        Box& m = merged[root(i)];
+        const Box& b = groups[i].box;
+        m.x0 = (std::min)(m.x0, b.x0);
+        m.x1 = (std::max)(m.x1, b.x1);
+        m.y0 = (std::min)(m.y0, b.y0);
+        m.y1 = (std::max)(m.y1, b.y1);
+    }
+    for (size_t i = 0; i < groups.size(); ++i) {
+        const Box& m = merged[root(i)];
+        const float offset = m.x1 <= third           ? left
+                             : m.x0 >= 2.0f * third  ? right
+                                                     : centred;
+        for (size_t d = groups[i].start; d < groups[i].end; ++d) out[d] = offset;
+    }
     return out;
 }
 
