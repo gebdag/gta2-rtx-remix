@@ -263,10 +263,6 @@ private:
         bool lampMirrored = false;
         // Never effect artwork, whatever its outline: a power-up token.
         bool plain = false;
-        // The game object it was drawn for, as base and sprite number, or -1.
-        // Only for the log line that says which objects went to the effect pass.
-        int16_t objectBase = -1;
-        int16_t objectNumber = -1;
     };
 
     // The lamps of the car drawn last, as quads of their own on its body.

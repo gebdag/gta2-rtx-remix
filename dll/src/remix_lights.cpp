@@ -434,6 +434,7 @@ const char* LightSourceName(uint8_t source) {
         case kLightSourceBrake: return "brake";
         case kLightSourceElectric: return "electric";
         case kLightSourceCarLamp: return "car lamp";
+        case kLightSourceFlame: return "flamethrower";
         default: return "?";
     }
 }

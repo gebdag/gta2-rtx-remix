@@ -41,6 +41,7 @@ enum SyntheticCategory {
     kSynthBrake,
     kSynthElectric,
     kSynthCarLamp,
+    kSynthFlame,
     kSynthCategoryCount
 };
 

@@ -9,12 +9,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <unordered_map>
+#include <vector>
 
 namespace gta2dx9 {
 namespace {
@@ -65,7 +68,7 @@ const float kWorldMargin = 8.0f;
 
 const char* const kCategoryNames[kSynthCategoryCount] = {
     "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights", "Brake lights",
-    "Electricity", "Car lamps"};
+    "Electricity", "Car lamps", "Flamethrower"};
 
 // Per lamp delta, per car sprite, from the district's style. See
 // SyntheticSetCarLamps.
@@ -152,6 +155,10 @@ void EnsureBinding() {
     // between the gun and each target - FUN_0048DDC0, one of code_obj 480-483 at
     // random per link - and nothing else in the game creates the type.
     g_binding[0x25] = kSynthElectric;
+    // 0x1F is the flamethrower's stream, the player's and the fire truck's alike:
+    // both weapons (FUN_004D0530 cases 8 and 0x15) go through FUN_0048D4E0, which
+    // makes one per shot with a life of 100 and nothing else makes the type.
+    g_binding[0x1F] = kSynthFlame;
     // 0x26 and 0x2B were bound to bullet and fire on the strength of the profile
     // and both were wrong - each emitted thousands of lights on the wrong sprite.
     // They stay unbound rather than plausibly wrong: an unbound category says so
@@ -246,6 +253,17 @@ void EnsureBinding() {
     // game shows it.
     // Off by default: bulbs read soft on a moving car, where the game's own lamp
     // artwork with an emissive stays crisp.
+    // A stream of flame is dozens of particles, newest at the nozzle, so its
+    // lights are spread evenly along all of them rather than handed to the first
+    // few - see SubmitFlameStream. Fire's colour, and fire's flicker.
+    SyntheticCategorySettings& flame = g_settings.category[kSynthFlame];
+    flame.rgb[0] = 1.0f; flame.rgb[1] = 0.45f; flame.rgb[2] = 0.10f;
+    flame.intensity = 0.08f;
+    flame.radius = 1.5f;
+    flame.heightOffset = 0.1f;
+    flame.flicker = 0.35f;
+    flame.maxLights = 8;
+
     SyntheticCategorySettings& lamp = g_settings.category[kSynthCarLamp];
     lamp.enabled = false;
     lamp.intensity = 1.0f;
@@ -331,8 +349,27 @@ void SubmitPoint(int category, const float* world, float extraIntensity, uintptr
     ++g_stats.totalEmitted[category];
 }
 
+// The flamethrower's particles this frame, in list order - newest first, so from
+// the nozzle outward.
+std::vector<std::array<float, 3>> g_flameStream;
+
+// Up to the category's cap, at even spacing along the whole stream. Each light
+// keeps its flicker phase by its place in the stream rather than by particle, so
+// a light does not change character as the stream grows under it.
+void SubmitFlameStream() {
+    const size_t n = g_flameStream.size();
+    const int cap = g_settings.category[kSynthFlame].maxLights;
+    if (!n || cap <= 0) return;
+    const size_t m = (std::min)(n, static_cast<size_t>(cap));
+    for (size_t i = 0; i < m; ++i) {
+        const size_t at = (std::min)(n - 1, static_cast<size_t>((i + 0.5) * n / m));
+        SubmitPoint(kSynthFlame, g_flameStream[at].data(), 1.0f, 0x9E3779B9u + i);
+    }
+}
+
 void WalkParticles() {
     for (ParticleTypeInfo& info : g_types) info.liveNow = 0;
+    g_flameStream.clear();
     ++g_walkFrame;
     std::unordered_map<int, int> spawnedThisFrame;
 
@@ -404,12 +441,18 @@ void WalkParticles() {
             }
 
             const int category = g_binding[type];
-            if (category >= 0 && g_settings.category[category].enabled) {
+            if (category == kSynthFlame) {
+                if (g_settings.category[category].enabled) {
+                    g_flameStream.push_back({info.lastPos[0], info.lastPos[1], info.lastPos[2]});
+                }
+            } else if (category >= 0 && g_settings.category[category].enabled) {
                 SubmitPoint(category, info.lastPos, 1.0f, reinterpret_cast<uintptr_t>(entry));
             }
         }
         entry = next;
     }
+
+    SubmitFlameStream();
 
     for (auto& kv : spawnedThisFrame) {
         ParticleTypeInfo& info = TypeSlot(kv.first);
