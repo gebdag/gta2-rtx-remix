@@ -188,6 +188,10 @@ void LoadConfig() {
     gta2dx9::SetGibsCar(GetPrivateProfileIntA("renderer", "gibs_car",
                                               gta2dx9::kDefaultGibsCar ? 1 : 0, ini) != 0);
 
+    // Car lamps as our own small quads rather than GTA2's whole-car one.
+    gta2dx9::SetOwnCarLamps(GetPrivateProfileIntA("renderer", "own_car_lamps",
+                                                  gta2dx9::kDefaultOwnCarLamps ? 1 : 0, ini) != 0);
+
     // Whether the intro movie plays. Decided here rather than by GTA2's own
     // do_play_movie, and either way it never goes near DirectDraw.
     g_intro =

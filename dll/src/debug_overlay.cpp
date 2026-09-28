@@ -1037,6 +1037,17 @@ void DrawSprites() {
          "leaves off. This turns the flag on. Off hands it back to whatever the game had. "
          "Persist it with blood under [renderer].");
 
+    bool ownLamps = OwnCarLamps();
+    if (ImGui::Checkbox("Car lamps as small quads of their own", &ownLamps)) {
+        SetOwnCarLamps(ownLamps);
+        SettingsMarkDirty();
+    }
+    Help("GTA2 draws a car's lit lamps as a second quad the size of the car, with a texture "
+         "for every car and every mix of lamps. This draws each lit lamp as a small quad of its "
+         "own over the lamp, laid on the body, with one of three fixed textures - headlight, "
+         "brake light, other lamp - so an emissive on each covers every car. Persist it with "
+         "own_car_lamps under [renderer].");
+
     bool gibs = Gibs();
     if (ImGui::Checkbox("Gibs from explosions (experimental)", &gibs)) {
         SetGibs(gibs);

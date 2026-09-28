@@ -132,6 +132,29 @@ void SetSpriteStackStep(float blocks);
 float SpriteStackStep();
 float SpriteLift();
 
+// Car lamps drawn by us rather than by GTA2.
+//
+// With lighting on the game draws a car's lit lamps as a second quad the size of
+// the whole car, with a texture built for whichever lamps are on - a new texture
+// for every car and every combination of lamps, and a quad that could drift off
+// the body. Instead that quad is left out and each lit lamp gets a small quad of
+// its own, laid on the body exactly over the lamp's pixels, textured with one of
+// three fixed images: headlight, brake light, other lamp. Those three never
+// change, so one emissive on each covers every car in the game.
+constexpr bool kDefaultOwnCarLamps = true;
+void SetOwnCarLamps(bool on);
+bool OwnCarLamps();
+
+// Where each lamp delta sits on each car sprite, set when a district's style is
+// loaded: per delta, one rectangle per car sprite in its own pixels, plus the
+// sprite's size. An empty rectangle means the sprite has no such lamp.
+struct LampRect {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    int width = 0, height = 0;
+    bool Valid() const { return x1 > x0 && y1 > y0 && width > 0 && height > 0; }
+};
+void SetCarLampRects(int delta, std::vector<LampRect> bySprite);
+
 // How many sprites were drawn additively last frame - the fire and explosion
 // artwork. A free function because the menu has no handle on the LiveGeometry
 // instance. See EffectSpriteSettings in texture_store.h.
@@ -227,7 +250,12 @@ private:
         Vertex local[4];
         int corners;
         gta2::Mat4 objectToWorld;
+        // One of our own lamp images instead of a game texture; see OwnCarLamps.
+        int lampKind = -1;
     };
+
+    // The lamps of the car drawn last, as quads of their own on its body.
+    void AddCarLamps(const Sprite& body);
 
     // One entry per sprite already placed this frame, for spotting a stack.
     struct Stack {

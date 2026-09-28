@@ -61,6 +61,11 @@ public:
     // palette, 0..1. False when the sprite has no such delta.
     bool SpriteDeltaColour(SpriteBase base, int index, int delta, float* rgb) const;
 
+    // The rectangle a delta's pixels cover, in the sprite's own pixels: x0,y0
+    // inclusive, x1,y1 exclusive. False when the sprite has no such delta.
+    bool SpriteDeltaBounds(SpriteBase base, int index, int delta, int* x0, int* y0, int* x1,
+                           int* y1) const;
+
 private:
     void DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
                      size_t palOffset, size_t palIndexOffset, size_t palIndexSize);

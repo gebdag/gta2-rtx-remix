@@ -712,6 +712,20 @@ bool WorldView::EnsureWorldLoaded() {
                 ++found;
             }
             SyntheticSetCarLamps(delta, std::move(lamps));
+
+            // And the rectangle the lamp covers, for our own lamp quads.
+            std::vector<LampRect> rects(cars > 0 ? cars : 0);
+            for (int sprite = 0; sprite < cars; ++sprite) {
+                gta2::SpriteIndices art;
+                LampRect& r = rects[sprite];
+                if (style.SpriteArtwork(gta2::SpriteBase::Car, sprite, &art) &&
+                    style.SpriteDeltaBounds(gta2::SpriteBase::Car, sprite, delta, &r.x0, &r.y0,
+                                            &r.x1, &r.y1)) {
+                    r.width = art.width;
+                    r.height = art.height;
+                }
+            }
+            SetCarLampRects(delta, std::move(rects));
             Log("car lamps: delta %d placed from the artwork for %d of %d car sprites", delta,
                 found, cars);
         }

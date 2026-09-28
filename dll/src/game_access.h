@@ -434,6 +434,13 @@ constexpr int kCarLampDeltas[] = {5, 6, 11, 15, 16, 17, 18};
 // the lamps alone as a second quad, from the gbh_DrawQuad call at 0x004BE50B.
 // This is where that call returns to.
 constexpr uintptr_t kObjectDrawLampsReturn = 0x004BE511;
+// A car's sprite object leads back to the car: FUN_0040FEB0 returns +0x08 when
+// the object's base (+0x30) is 2.
+constexpr uintptr_t kSpriteObjectOwner = 0x08;
+// The lamps GTA2 draws on that quad (the masks at 0x00591E90..98): brake 5,
+// headlight 6, and 15-18 on the vehicles that have them; 22 and 23 are 5 and 6
+// mirrored.
+constexpr int kLampQuadDeltas[] = {5, 6, 15, 16, 17, 18};
 // The object the vehicle's placement pointer names is its sprite: the sprite
 // number within its base at +0x22, and the base at +0x30, 2 for cars
 // (FUN_004ba230, FUN_004bf2a0).

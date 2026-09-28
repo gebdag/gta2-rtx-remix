@@ -177,6 +177,21 @@ bool Style::SpriteDeltaCentre(SpriteBase base, int index, int delta, float* x, f
     return true;
 }
 
+bool Style::SpriteDeltaBounds(SpriteBase base, int index, int delta, int* x0, int* y0, int* x1,
+                              int* y1) const {
+    std::vector<DeltaPixel> pixels;
+    if (!DeltaPixels(base, index, delta, &pixels)) return false;
+    *x0 = *y0 = 1 << 30;
+    *x1 = *y1 = -1;
+    for (const DeltaPixel& p : pixels) {
+        if (p.x < *x0) *x0 = p.x;
+        if (p.y < *y0) *y0 = p.y;
+        if (p.x + 1 > *x1) *x1 = p.x + 1;
+        if (p.y + 1 > *y1) *y1 = p.y + 1;
+    }
+    return true;
+}
+
 // PPAL keeps 64 palettes to a 64K page, interleaved: entry i of palette p is the
 // dword at (p / 64) * 64K + i * 256 + (p % 64) * 4, as B, G, R. A sprite's own
 // palette is the PALX slot after the tiles' ones, at its number across all bases.

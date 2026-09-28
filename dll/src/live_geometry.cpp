@@ -213,6 +213,52 @@ float SpriteStackStep() { return g_spriteStackStep; }
 int g_effectBatches = 0;
 int EffectBatchesDrawn() { return g_effectBatches; }
 
+bool g_ownCarLamps = kDefaultOwnCarLamps;
+void SetOwnCarLamps(bool on) { g_ownCarLamps = on; }
+bool OwnCarLamps() { return g_ownCarLamps; }
+
+std::map<int, std::vector<LampRect>> g_lampRects;
+void SetCarLampRects(int delta, std::vector<LampRect> bySprite) {
+    g_lampRects[delta] = std::move(bySprite);
+}
+
+// The three lamp images. Solid, opaque and fixed, so each has one Remix hash for
+// the life of the mod: make it emissive once and every car's lamp glows. The
+// colours are the ones the artwork's lamp deltas average out to.
+enum LampKind { kLampHead = 0, kLampBrake, kLampOther, kLampKinds };
+constexpr int kLampTextureSize = 4;
+const uint32_t kLampColours[kLampKinds] = {0xFFF0DCC0u, 0xFFD84A36u, 0xFFFFC060u};
+IDirect3DTexture9* g_lampTextures[kLampKinds] = {};
+IDirect3DDevice9* g_lampDevice = nullptr;
+
+IDirect3DTexture9* LampTexture(IDirect3DDevice9* device, int kind) {
+    if (kind < 0 || kind >= kLampKinds) return nullptr;
+    if (g_lampDevice != device) {
+        for (IDirect3DTexture9*& t : g_lampTextures) {
+            if (t) t->Release();
+            t = nullptr;
+        }
+        g_lampDevice = device;
+    }
+    if (g_lampTextures[kind]) return g_lampTextures[kind];
+    IDirect3DTexture9* texture = nullptr;
+    if (FAILED(device->CreateTexture(kLampTextureSize, kLampTextureSize, 1, 0, D3DFMT_A8R8G8B8,
+                                     D3DPOOL_MANAGED, &texture, nullptr))) {
+        return nullptr;
+    }
+    D3DLOCKED_RECT locked;
+    if (SUCCEEDED(texture->LockRect(0, &locked, nullptr, 0))) {
+        for (int y = 0; y < kLampTextureSize; ++y) {
+            uint32_t* row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(locked.pBits) +
+                                                        y * locked.Pitch);
+            for (int x = 0; x < kLampTextureSize; ++x) row[x] = kLampColours[kind];
+        }
+        texture->UnlockRect(0);
+    }
+    g_lampTextures[kind] = texture;
+    return texture;
+}
+
 // The last complete frame's conform counts. The menu has no handle on the
 // LiveGeometry instance - the same reason EffectBatchesDrawn is a free function.
 LiveGeometry::Conform g_lastConform;
@@ -537,6 +583,11 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     // cannot end up anywhere but on top.
     if (lamps) {
         const void* object = GameObjectBeingDrawn();
+        if (g_ownCarLamps && object && object == lastObject_ && lastSprite_ < sprites_.size()) {
+            // Ours instead of the game's. See OwnCarLamps.
+            AddCarLamps(sprites_[lastSprite_]);
+            return;
+        }
         if (object && object == lastObject_ && lastSprite_ < sprites_.size() && corners == 4) {
             Sprite placed = sprites_[lastSprite_];
             placed.texture = texture;
@@ -868,6 +919,87 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     }
 }
 
+// Each lit lamp of the car just drawn, as a quad of its own over the lamp's
+// pixels on the body. The body's corners carry the sprite's texture coordinates,
+// so a point of the sprite at (u, v) is the bilinear blend of the corners by
+// where u and v fall between the corners' own - which also takes care of however
+// the game turned or mirrored the quad.
+void LiveGeometry::AddCarLamps(const Sprite& body) {
+    const uint8_t* object = static_cast<const uint8_t*>(GameObjectBeingDrawn());
+    if (!object || body.corners != 4) return;
+    if (*reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase) != game::kSpriteBaseCar) {
+        return;
+    }
+    const uint8_t* car = *reinterpret_cast<const uint8_t* const*>(object + game::kSpriteObjectOwner);
+    if (!game::PlausiblePointer(car)) return;
+    const uint32_t mask = *reinterpret_cast<const uint32_t*>(car + game::kVehicleDeltaMask);
+    const int sprite = *reinterpret_cast<const uint16_t*>(object + game::kSpriteObjectNumber);
+
+    float u0 = body.local[0].u, u1 = u0, v0 = body.local[0].v, v1 = v0;
+    for (int i = 1; i < 4; ++i) {
+        u0 = (std::min)(u0, body.local[i].u);
+        u1 = (std::max)(u1, body.local[i].u);
+        v0 = (std::min)(v0, body.local[i].v);
+        v1 = (std::max)(v1, body.local[i].v);
+    }
+    if (u1 - u0 < 1e-6f || v1 - v0 < 1e-6f) return;
+    // Which corner is which, by its texture coordinates: 0 at the low end.
+    int corner[2][2] = {{0, 0}, {0, 0}};
+    for (int i = 0; i < 4; ++i) {
+        const int su = body.local[i].u > (u0 + u1) * 0.5f ? 1 : 0;
+        const int sv = body.local[i].v > (v0 + v1) * 0.5f ? 1 : 0;
+        corner[su][sv] = i;
+    }
+    auto at = [&](float u, float v) {
+        const float a = (u - u0) / (u1 - u0), b = (v - v0) / (v1 - v0);
+        const Vertex& p00 = body.local[corner[0][0]];
+        const Vertex& p10 = body.local[corner[1][0]];
+        const Vertex& p01 = body.local[corner[0][1]];
+        const Vertex& p11 = body.local[corner[1][1]];
+        Vertex out = p00;
+        out.x = (p00.x * (1 - a) + p10.x * a) * (1 - b) + (p01.x * (1 - a) + p11.x * a) * b;
+        out.y = (p00.y * (1 - a) + p10.y * a) * (1 - b) + (p01.y * (1 - a) + p11.y * a) * b;
+        out.z = (p00.z * (1 - a) + p10.z * a) * (1 - b) + (p01.z * (1 - a) + p11.z * a) * b;
+        return out;
+    };
+    // Above the body, whichever way its frame faces.
+    const float above = body.objectToWorld.m[1][1] >= 0.0f ? 1.0f : -1.0f;
+
+    for (const int delta : game::kLampQuadDeltas) {
+        auto rects = g_lampRects.find(delta);
+        if (rects == g_lampRects.end() || sprite >= static_cast<int>(rects->second.size())) continue;
+        const LampRect& r = rects->second[sprite];
+        if (!r.Valid()) continue;
+        const int kind = delta == 6 ? kLampHead : delta == 5 ? kLampBrake : kLampOther;
+        for (int mirrored = 0; mirrored < 2; ++mirrored) {
+            const int bit = mirrored ? delta + game::kMirroredDeltaOffset : delta;
+            if (mirrored && bit < game::kMirroredDeltaFirstBit) continue;
+            if (bit >= 32 || !(mask & (1u << bit))) continue;
+            // The mirrored lamp is the same pixels flipped across the sprite.
+            const float px0 = static_cast<float>(mirrored ? r.width - r.x1 : r.x0);
+            const float px1 = static_cast<float>(mirrored ? r.width - r.x0 : r.x1);
+            const float tu0 = u0 + (u1 - u0) * px0 / r.width;
+            const float tu1 = u0 + (u1 - u0) * px1 / r.width;
+            const float tv0 = v0 + (v1 - v0) * static_cast<float>(r.y0) / r.height;
+            const float tv1 = v0 + (v1 - v0) * static_cast<float>(r.y1) / r.height;
+            Sprite lamp = body;
+            lamp.texture = nullptr;
+            lamp.lampKind = kind;
+            const float us[4] = {tu0, tu1, tu1, tu0};
+            const float vs[4] = {tv0, tv0, tv1, tv1};
+            const float uvs[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+            for (int i = 0; i < 4; ++i) {
+                lamp.local[i] = at(us[i], vs[i]);
+                lamp.local[i].y += kConformClearance * above;
+                lamp.local[i].u = uvs[i][0];
+                lamp.local[i].v = uvs[i][1];
+            }
+            sprites_.push_back(lamp);
+            ++spriteQuads_;
+        }
+    }
+}
+
 void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, int width,
                         int height) {
     if (!device) return;
@@ -929,6 +1061,12 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
     std::vector<Drawable> plain, effects;
     plain.reserve(sprites_.size());
     for (const Sprite& sprite : sprites_) {
+        if (sprite.lampKind >= 0) {
+            if (IDirect3DTexture9* lamp = LampTexture(device, sprite.lampKind)) {
+                plain.push_back({&sprite, lamp});
+            }
+            continue;
+        }
         bool effect = false;
         IDirect3DTexture9* texture = DeviceTextureFor(device, sprite.texture, &effect);
         if (!texture) {
@@ -1006,6 +1144,11 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
 
 void LiveGeometry::ReleaseResources() {
     sprites_.clear();
+    for (IDirect3DTexture9*& t : g_lampTextures) {
+        if (t) t->Release();
+        t = nullptr;
+    }
+    g_lampDevice = nullptr;
     spriteQuads_ = 0;
     effectQuads_ = 0;
     // The shapes are keyed by texture record, and a new level hands out new ones.
