@@ -81,10 +81,14 @@ public:
 
     // gbh_LoadImage is handed a 16-bit uncompressed TGA; gbh_BlitImage copies a
     // sub-rectangle of one to the screen. Menu backgrounds arrive this way.
+    //
+    // BlitImage returns what the original's did, because the game acts on it: 0
+    // for a blit, -1 for no such image, -2 for a source rectangle outside it, -3
+    // for a destination off the screen. See the note on the definition.
     void InitImageTable(int count);
     void FreeImageTable();
     int LoadImage(const void* tga);
-    void BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, int dstX, int dstY);
+    int BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, int dstX, int dstY);
 
     // A frame of the intro movie, 32-bit B,G,R,X rows, drawn over the whole of the
     // game's screen. See intro_movie.cpp. EndMovie lets the last frame go.

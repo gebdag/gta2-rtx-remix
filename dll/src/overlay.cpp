@@ -305,11 +305,33 @@ int Overlay::LoadImage(const void* data) {
     return static_cast<int>(slot);
 }
 
-void Overlay::BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, int dstX, int dstY) {
-    if (image < 0 || image >= static_cast<int>(images_.size())) return;
+// The return value is not a courtesy. gta2.exe!FUN_00453020 draws the front
+// end's background as a left and a right part, and blits the right one - the
+// panel the menu text sits on - only when the left one returned 0. This used to
+// return nothing, which left whatever was in EAX: the right panel was then
+// skipped on any frame that value was not 0, and each redraw of the menu text
+// landed on the last one instead of on fresh background. That is the text
+// "painted on" as it is typed and as screens change. -10, the original's lost
+// surface, is the one the game answers by reloading the image; nothing here can
+// lose one, so it is never returned.
+//
+// The checks and codes are d3ddll.dll!0x00E04A10's, in its order.
+int Overlay::BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, int dstX, int dstY) {
+    if (image < 0 || image >= static_cast<int>(images_.size())) return -1;
     const Image& source = images_[image];
-    if (!source.width) return;
-    if (srcX2 <= srcX1 || srcY2 <= srcY1) return;
+    if (!source.width) return -1;
+    if (srcX1 < 0 || srcY1 < 0 || srcX2 < 0 || srcY2 < 0 || srcX1 > source.width ||
+        srcY1 > source.height || srcX2 > source.width || srcY2 > source.height) {
+        return -2;
+    }
+    // The original also rejects a destination running off the right or bottom of
+    // its screen. Ours is scaled rather than clipped, and the size we hold for the
+    // game's screen can lag a level's worth behind the front end's, so that half
+    // of the check would only ever turn away a background that belongs there.
+    if (dstX < 0 || dstY < 0) return -3;
+    // An empty rectangle is a blit of nothing, which the original also reports
+    // as done.
+    if (srcX2 <= srcX1 || srcY2 <= srcY1) return 0;
 
     const float u0 = static_cast<float>(srcX1);
     const float v0 = static_cast<float>(srcY1);
@@ -333,6 +355,7 @@ void Overlay::BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, i
     // A blit is a straight surface copy in the original: fully opaque, and it
     // keeps its hard pixels.
     PushTriangleFan(corners, 4, nullptr, image, Style{});
+    return 0;
 }
 
 IDirect3DTexture9* Overlay::ResolveImage(IDirect3DDevice9* device, int index) {

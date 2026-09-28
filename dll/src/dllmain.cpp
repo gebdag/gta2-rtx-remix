@@ -698,14 +698,15 @@ __declspec(dllexport) void __stdcall gbh_FreeImageTable() {
     g_world.GetOverlay().FreeImageTable();
 }
 
-__declspec(dllexport) void __stdcall gbh_BlitImage(int image, int srcX1, int srcY1, int srcX2,
-                                                   int srcY2, int dstX, int dstY) {
+// Returns an int, as the original does: the front end decides whether to draw
+// the second half of its background on it. See Overlay::BlitImage.
+__declspec(dllexport) int __stdcall gbh_BlitImage(int image, int srcX1, int srcY1, int srcX2,
+                                                  int srcY2, int dstX, int dstY) {
     if (Proxying() && g_p_gbh_BlitImage) {
-        Backend<void(__stdcall*)(int, int, int, int, int, int, int)>(g_p_gbh_BlitImage)(
+        return Backend<int(__stdcall*)(int, int, int, int, int, int, int)>(g_p_gbh_BlitImage)(
             image, srcX1, srcY1, srcX2, srcY2, dstX, dstY);
-        return;
     }
-    g_world.GetOverlay().BlitImage(image, srcX1, srcY1, srcX2, srcY2, dstX, dstY);
+    return g_world.GetOverlay().BlitImage(image, srcX1, srcY1, srcX2, srcY2, dstX, dstY);
 }
 
 __declspec(dllexport) void __stdcall DrawLine(int x1, int y1, int x2, int y2, int colour) {
