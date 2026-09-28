@@ -5,9 +5,22 @@
 namespace gta2dx9 {
 
 constexpr bool kDefaultGibs = false;
+// Whether limbs stay where they land. On by default, so gibs read as a body
+// that came apart rather than a moment of debris.
+constexpr bool kDefaultGibsStay = true;
 
 void SetGibs(bool on);
 bool Gibs();
+void SetGibsStay(bool on);
+bool GibsStay();
+
+// Once a frame, after the game has updated its particles: settles landed limbs
+// and lets go of anything the game has since reused.
+void GibsUpdate();
+// Forgets everything; the particle pool does not survive a level.
+void GibsReset();
+// Whether the object the game is drawing right now is a gibbed body.
+bool GibsHideCurrentSprite();
 
 // Routes GTA2's ped death handler through us, so a death can be looked at before
 // the game handles it. Leaves a gta2.exe that is not the build these addresses

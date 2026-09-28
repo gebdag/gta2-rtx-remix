@@ -8,6 +8,7 @@
 #include "../../src/gta2_map.h"
 #include "../../src/renderer.h"
 #include "game_access.h"
+#include "gibs.h"
 #include "log.h"
 #include "overlay.h"
 #include "texture_store.h"
@@ -516,6 +517,10 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         ++drops_.notTheSpriteArray;
         return;
     }
+
+    // A pedestrian blown apart: the limbs are on the ground, so the body is not.
+    // See gibs.cpp.
+    if (GibsHideCurrentSprite()) return;
 
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;

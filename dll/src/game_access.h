@@ -364,6 +364,22 @@ constexpr int32_t kDamageExplosion = 4;
 constexpr uintptr_t kPedX = 0x1AC;
 constexpr uintptr_t kPedY = 0x1B0;
 constexpr uintptr_t kPedZ = 0x1B4;
+// The ped's physics object (FUN_004360C0 allocates it from the pool at
+// 0x0066A3B4), whose +0x80 is the sprite object the body is drawn with; the
+// object points back at the ped from +0x7C.
+constexpr uintptr_t kPedPhysics = 0x168;
+constexpr uintptr_t kPhysicsSprite = 0x80;
+// The ped's state, 9 once dead. The death handler sets it through
+// FUN_00433270, which parks it at +0x280 instead while the ped is in state 8 -
+// knocked down, which is what a blast leaves them - so the game's own "is this
+// ped dead" tests read both, and so does anything here.
+constexpr uintptr_t kPedState = 0x278;
+constexpr uintptr_t kPedStatePending = 0x280;
+constexpr int32_t kPedStateDead = 9;
+// The object draw's first instruction, sub esp, 0xA4, identical in 9.6 and 11.44.
+constexpr int kObjectDrawStolenBytes = 6;
+// The particle manager's allocation (FUN_00491B90), which is also its pool.
+constexpr size_t kParticleManagerBytes = 0x947C;
 
 // Same shape for vehicles: FUN_004254A0 appends, FUN_00425480 prepends.
 constexpr uintptr_t kVehiclePoolPtr = 0x005E4CA0;

@@ -185,6 +185,8 @@ void LoadConfig() {
     // Gibs for pedestrians killed by explosions. Experimental, so off unless asked.
     gta2dx9::SetGibs(
         GetPrivateProfileIntA("renderer", "gibs", gta2dx9::kDefaultGibs ? 1 : 0, ini) != 0);
+    gta2dx9::SetGibsStay(GetPrivateProfileIntA("renderer", "gibs_stay",
+                                               gta2dx9::kDefaultGibsStay ? 1 : 0, ini) != 0);
 
     // Whether the intro movie plays. Decided here rather than by GTA2's own
     // do_play_movie, and either way it never goes near DirectDraw.
@@ -450,12 +452,16 @@ __declspec(dllexport) void __stdcall gbh_BeginScene() {
 
 __declspec(dllexport) void __stdcall gbh_EndScene() {
     if (Proxying() && g_p_gbh_EndScene) { Backend<void(__stdcall*)()>(g_p_gbh_EndScene)(); return; }
+    // Between this frame's particle update and the next, which is when a limb
+    // about to land has to be caught.
+    gta2dx9::GibsUpdate();
     g_world.RenderFrame();
 }
 
 __declspec(dllexport) void __stdcall gbh_BeginLevel() {
     if (Proxying() && g_p_gbh_BeginLevel) { Backend<void(__stdcall*)()>(g_p_gbh_BeginLevel)(); return; }
     g_world.InvalidateWorld();
+    gta2dx9::GibsReset();
     // Every run starts at the same time of day, which is the point of a start
     // hour: 2 am, and dark.
     gta2dx9::TimeOfDayReset();
@@ -464,6 +470,7 @@ __declspec(dllexport) void __stdcall gbh_BeginLevel() {
 __declspec(dllexport) void __stdcall gbh_EndLevel() {
     if (Proxying() && g_p_gbh_EndLevel) { Backend<void(__stdcall*)()>(g_p_gbh_EndLevel)(); return; }
     g_world.InvalidateWorld();
+    gta2dx9::GibsReset();
 }
 
 __declspec(dllexport) void __stdcall gbh_SetCamera(float minX, float minY, float maxX, float maxY) {
