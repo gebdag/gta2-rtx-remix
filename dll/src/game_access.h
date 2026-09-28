@@ -332,7 +332,38 @@ constexpr uintptr_t kParticleManagerPtr = 0x00669E70;
 constexpr uintptr_t kParticleLiveHead = 0x04;
 constexpr uintptr_t kParticleNext = 0x3C;
 constexpr uintptr_t kParticleLife = 0x2C;  // int16, frames remaining
+constexpr uintptr_t kParticleLifeStart = 0x2E;  // int16, what the life started at
 constexpr uintptr_t kParticleType = 0x38;  // int32
+
+// The sprite number the particle bank (object type 0x70, code_obj 305-509) starts
+// at, as every particle creator reads it: [[0x00665B40] + 0x8CA4].
+constexpr uintptr_t kObjectBankPtr = 0x00665B40;
+constexpr uintptr_t kParticleSpriteBase = 0x8CA4;
+// The six severed-limb sprites, code_obj 394-399, which no code ever draws.
+constexpr int kGibSpriteOffset = 0x59;
+constexpr int kGibSprites = 6;
+
+// The blood spray a shot pedestrian gets (FUN_0048C9C0): __thiscall on the
+// effects object at [0x00669E74], then x, y, z in 16.14 and an angle; ret 0x10.
+// Six type-1 particles thrown outward, which FUN_0048C270 carries in an arc.
+constexpr uintptr_t kEffectSystemPtr = 0x00669E74;
+constexpr uintptr_t kBloodSpray = 0x0048C9C0;
+// Sets a sprite object's sprite number (FUN_004206C0): __thiscall, one word.
+constexpr uintptr_t kSetSprite = 0x004206C0;
+
+// The pedestrian death handler, FUN_004411B0, __thiscall on the ped. Every
+// death ends up here. Its first ten bytes are push esi / mov esi, ecx /
+// test byte ptr [esi+0x21F], 1, the same in 9.6 and 11.44.
+constexpr uintptr_t kPedDeathHandler = 0x004411B0;
+constexpr int kPedDeathStolenBytes = 10;
+// What last hurt a pedestrian. The explosion update (FUN_00490D60) sets 4 on
+// every ped it catches, a car hit (FUN_0049A560) 2.
+constexpr uintptr_t kPedDamageCause = 0x290;
+constexpr int32_t kDamageExplosion = 4;
+// Where the ped is, 16.14 fixed - what the death handler hands the blood pool.
+constexpr uintptr_t kPedX = 0x1AC;
+constexpr uintptr_t kPedY = 0x1B0;
+constexpr uintptr_t kPedZ = 0x1B4;
 
 // Same shape for vehicles: FUN_004254A0 appends, FUN_00425480 prepends.
 constexpr uintptr_t kVehiclePoolPtr = 0x005E4CA0;
@@ -370,6 +401,9 @@ constexpr uintptr_t kVehicleDriver = 0x54;
 constexpr uintptr_t kSinTablePtr = 0x005D3938;
 constexpr uintptr_t kCosTablePtr = 0x005D6718;
 constexpr int kTrigTableEntries = (kCosTablePtr - kSinTablePtr) / 4;
+// A whole turn in the game's angle units: FUN_00401C10 wraps every angle into
+// 0..0x59F.
+constexpr uint32_t kAngleFullTurn = 0x5A0;
 
 // A linked list read out of another process's heap is one bad pointer away from
 // taking the game down with it, and these lists are walked every frame.

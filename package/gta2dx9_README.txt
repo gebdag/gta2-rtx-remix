@@ -8,6 +8,8 @@ Features:
 - generating new lights off of game events
 - dynamic time of day (Remix Plus required) 
 - blood pools under bodies, which the original game hides behind a debug flag
+- experimental gibs for pedestrians killed by explosions, off by default
+  (gibs=1 in gta2dx9.ini, or the Sprites tab of the F4 menu)
 
 The mod also comes with emissive maps for some of the games textures,
 including every animation frame of the weapon, vehicle and token pickups.

@@ -22,6 +22,7 @@
 
 #include "frame_limiter.h"
 #include "game_access.h"
+#include "gibs.h"
 #include "hud_pass.h"
 #include "intro_movie.h"
 #include "live_geometry.h"
@@ -180,6 +181,10 @@ void LoadConfig() {
     // Blood pools under bodies, which GTA2 keeps behind a debug flag.
     gta2dx9::SetBlood(
         GetPrivateProfileIntA("renderer", "blood", gta2dx9::kDefaultBlood ? 1 : 0, ini) != 0);
+
+    // Gibs for pedestrians killed by explosions. Experimental, so off unless asked.
+    gta2dx9::SetGibs(
+        GetPrivateProfileIntA("renderer", "gibs", gta2dx9::kDefaultGibs ? 1 : 0, ini) != 0);
 
     // Whether the intro movie plays. Decided here rather than by GTA2's own
     // do_play_movie, and either way it never goes near DirectDraw.
@@ -366,6 +371,8 @@ __declspec(dllexport) void __stdcall gbh_InitDLL(void* system) {
         // So the overlay can tell the HUD from screen-space draws tied to the
         // world, and move only the HUD out to the edges of a wide display.
         gta2dx9::HudPassInstall();
+        // Every death passes through us so gibs can be switched on from the menu.
+        gta2dx9::GibsInstall();
         char path[MAX_PATH];
         PathBesideGame("gta2dx9_lights.ini", path, sizeof(path));
         gta2dx9::LightsInit(path);

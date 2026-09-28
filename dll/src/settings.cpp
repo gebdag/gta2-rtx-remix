@@ -9,6 +9,7 @@
 #include "synthetic_lights.h"
 #include "texture_store.h"
 #include "time_of_day.h"
+#include "gibs.h"
 #include "world_view.h"
 
 #include "../../src/renderer.h"
@@ -176,6 +177,7 @@ void SettingsSaveAll() {
     fprintf(out, "\n[render]\n");
     fprintf(out, "SpawnOffscreen=%d\n", SpawnOffscreen() ? 1 : 0);
     fprintf(out, "Blood=%d\n", Blood() ? 1 : 0);
+    fprintf(out, "Gibs=%d\n", Gibs() ? 1 : 0);
     fprintf(out, "SpriteConform=%d\n", SpriteConform() ? 1 : 0);
     fprintf(out, "SpriteHeight=%.4f\n", SpriteHeight());
     fprintf(out, "SpriteRoll=%.4f\n", SpriteRoll());
@@ -262,6 +264,8 @@ void SettingsLoadAll() {
             SetSpawnOffscreen(atoi(value) != 0);
         } else if (!_stricmp(key, "Blood")) {
             SetBlood(atoi(value) != 0);
+        } else if (!_stricmp(key, "Gibs")) {
+            SetGibs(atoi(value) != 0);
         } else if (!_stricmp(key, "SpriteRoll")) {
             SetSpriteRoll(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "SpriteHeight")) {

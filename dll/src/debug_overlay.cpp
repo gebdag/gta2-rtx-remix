@@ -13,6 +13,7 @@
 #include "synthetic_lights.h"
 #include "texture_store.h"
 #include "time_of_day.h"
+#include "gibs.h"
 #include "world_view.h"
 
 #include <cmath>
@@ -1021,6 +1022,15 @@ void DrawSprites() {
     Help("GTA2 puts a pool of blood under a body, but only with a debug flag the retail game "
          "leaves off. This turns the flag on. Off hands it back to whatever the game had. "
          "Persist it with blood under [renderer].");
+
+    bool gibs = Gibs();
+    if (ImGui::Checkbox("Gibs from explosions (experimental)", &gibs)) {
+        SetGibs(gibs);
+        SettingsMarkDirty();
+    }
+    Help("A pedestrian killed by a grenade, a rocket or any other explosion bursts into blood "
+         "and flying limbs. GTA2 has the limb sprites but never uses them; this throws them with "
+         "its own blood spray. Persist it with gibs under [renderer].");
 
     ImGui::SeparatorText("Standing on the ground");
 
