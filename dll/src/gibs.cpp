@@ -482,10 +482,8 @@ bool GameObjectIsCorpse() {
 bool GameObjectIsPowerUp() {
     const uint8_t* object = static_cast<const uint8_t*>(g_drawing);
     if (!object) return false;
-    if (*reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase) !=
-        game::kSpriteBaseCodeObj) {
-        return false;
-    }
+    const int32_t base = *reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase);
+    if (base != game::kSpriteBaseCodeObj && base != game::kSpriteBaseCodeObjToo) return false;
     const int number = *reinterpret_cast<const uint16_t*>(object + game::kSpriteObjectNumber);
     return number >= game::kPowerUpSpriteFirst &&
            number < game::kPowerUpSpriteFirst + game::kPowerUpSpriteCount;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <utility>
 
 #include "../../src/gta2_map.h"
@@ -925,6 +926,12 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         for (int i = 0; i < placed.corners; ++i) placed.local[i].y += nudge;
     }
     placed.plain = GameObjectIsPowerUp();
+    if (const uint8_t* object = static_cast<const uint8_t*>(GameObjectBeingDrawn())) {
+        placed.objectBase =
+            static_cast<int16_t>(*reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase));
+        placed.objectNumber = static_cast<int16_t>(
+            *reinterpret_cast<const uint16_t*>(object + game::kSpriteObjectNumber));
+    }
     lastObject_ = GameObjectBeingDrawn();
     lastSprite_ = sprites_.size();
     sprites_.push_back(placed);
@@ -1114,6 +1121,16 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
         // Recorded so the texture report can tell a fireball from a road tile
         // that happens to have a hole in it. See texture_store.h.
         NoteSpriteTexture(sprite.texture);
+        if (effect) {
+            // Which game objects end up in the effect pass, the first few of each,
+            // so an object wrongly taken for a fireball can be named from the log.
+            static std::set<uint32_t> s_named;
+            const uint32_t id = (static_cast<uint32_t>(static_cast<uint16_t>(sprite.objectBase)) << 16) |
+                                static_cast<uint16_t>(sprite.objectNumber);
+            if (s_named.size() < 48 && s_named.insert(id).second) {
+                Log("effect pass: object base %d sprite %d", sprite.objectBase, sprite.objectNumber);
+            }
+        }
         (effect ? effects : plain).push_back({&sprite, texture});
     }
 

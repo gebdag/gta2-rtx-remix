@@ -463,6 +463,9 @@ constexpr uintptr_t kSpriteObjectBase = 0x30;
 constexpr int32_t kSpriteBaseCar = 2;
 // What particles set with FUN_004206F0(8): the code_obj base.
 constexpr int32_t kSpriteBaseCodeObj = 8;
+// The other one. FUN_004BF2A0, which turns base and number into a style sprite,
+// sends 4 to code_obj as well; objects such as the power-up tokens use it.
+constexpr int32_t kSpriteBaseCodeObjToo = 4;
 // A pedestrian's sprite object has base 3, and its +0x08 is the ped's physics
 // object (FUN_0040FEA0), whose +0x7C is the ped.
 constexpr int32_t kSpriteBasePed = 3;
