@@ -144,20 +144,20 @@ void SyntheticEraseBeam(int model);
 void SyntheticHighlightModel(int model);
 int  SyntheticHighlightedModel();
 
-// Where a car's brake lamp sits, from the style file's own delta for it. See
-// SyntheticSetBrakeLamps.
-struct BrakeLamp {
+// Where one of a car's lamps sits, from the style file's own delta for it. See
+// SyntheticSetCarLamps.
+struct CarLamp {
     bool valid = false;
     float along = 0.0f;  // tiles along the car's heading from its centre; negative is behind
     float side = 0.0f;   // tiles to its right; the other lamp is the mirror image
 };
 
-// One entry per car sprite, set when a district's style is loaded. GTA2 draws a
-// car's lamps as deltas patched onto its sprite, and delta 5 is the brake light
-// on one side - a few red pixels at the tail - so where it sits in the artwork is
-// where the light goes. A sprite without an entry falls back to the headlight
-// geometry turned round.
-void SyntheticSetBrakeLamps(std::vector<BrakeLamp> bySprite);
+// One entry per car sprite for one lamp delta, set when a district's style is
+// loaded. GTA2 draws a car's lamps as deltas patched onto its sprite - delta 5
+// the brake light, a few red pixels at the tail, and 6 (11 on some vehicles) the
+// headlight at the nose - so where the delta sits in the artwork is where the
+// light goes. A sprite without an entry falls back to the category's offsets.
+void SyntheticSetCarLamps(int delta, std::vector<CarLamp> bySprite);
 
 // Which particle types feed which category. A type may be bound to at most one.
 // kSynthHeadlight and kSynthBrake take no types - they come off the vehicle list.

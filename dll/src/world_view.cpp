@@ -689,29 +689,33 @@ bool WorldView::EnsureWorldLoaded() {
     }
     Log("ground decals: %d skid, trail and blood sprites registered", GroundDecalArtworkCount());
 
-    // Where each car's brake lamp is, from the delta the game lights for it. A
+    // Where each car's lamps are, from the deltas the game lights for them. A
     // car sprite faces down the page - its headlight delta is on the bottom row -
     // so the heading runs along +y and the lamp's offset from the middle, at 64
     // pixels a tile, is where the light goes relative to the car.
     {
         const int cars = style.SpriteCount(gta2::SpriteBase::Car);
-        std::vector<BrakeLamp> lamps(cars > 0 ? cars : 0);
-        int found = 0;
-        for (int sprite = 0; sprite < cars; ++sprite) {
-            gta2::SpriteIndices art;
-            float x = 0.0f, y = 0.0f;
-            if (!style.SpriteArtwork(gta2::SpriteBase::Car, sprite, &art) ||
-                !style.SpriteDeltaCentre(gta2::SpriteBase::Car, sprite, game::kBrakeLightDelta, &x,
-                                         &y)) {
-                continue;
+        const int deltas[3] = {game::kBrakeLightDelta, game::kHeadlightDelta,
+                               game::kHeadlightAltDelta};
+        for (const int delta : deltas) {
+            std::vector<CarLamp> lamps(cars > 0 ? cars : 0);
+            int found = 0;
+            for (int sprite = 0; sprite < cars; ++sprite) {
+                gta2::SpriteIndices art;
+                float x = 0.0f, y = 0.0f;
+                if (!style.SpriteArtwork(gta2::SpriteBase::Car, sprite, &art) ||
+                    !style.SpriteDeltaCentre(gta2::SpriteBase::Car, sprite, delta, &x, &y)) {
+                    continue;
+                }
+                lamps[sprite].valid = true;
+                lamps[sprite].along = (y - art.height * 0.5f) / 64.0f;
+                lamps[sprite].side = (x - art.width * 0.5f) / 64.0f;
+                ++found;
             }
-            lamps[sprite].valid = true;
-            lamps[sprite].along = (y - art.height * 0.5f) / 64.0f;
-            lamps[sprite].side = (x - art.width * 0.5f) / 64.0f;
-            ++found;
+            SyntheticSetCarLamps(delta, std::move(lamps));
+            Log("car lamps: delta %d placed from the artwork for %d of %d car sprites", delta,
+                found, cars);
         }
-        SyntheticSetBrakeLamps(std::move(lamps));
-        Log("brake lamps: placed from the artwork for %d of %d car sprites", found, cars);
     }
 
     // Prefer the game's own artwork over our parse of the style file: the game

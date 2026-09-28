@@ -67,8 +67,18 @@ const char* const kCategoryNames[kSynthCategoryCount] = {
     "Muzzle flash", "Bullet", "Sparks", "Cigarette", "Fire", "Headlights", "Brake lights",
     "Electricity"};
 
-// Per car sprite, from the district's style. See SyntheticSetBrakeLamps.
-std::vector<BrakeLamp> g_brakeLamps;
+// Per lamp delta, per car sprite, from the district's style. See
+// SyntheticSetCarLamps.
+std::map<int, std::vector<CarLamp>> g_carLamps;
+
+const CarLamp* LampFor(int delta, int sprite) {
+    auto it = g_carLamps.find(delta);
+    if (it == g_carLamps.end() || sprite < 0 || static_cast<size_t>(sprite) >= it->second.size()) {
+        return nullptr;
+    }
+    const CarLamp& lamp = it->second[sprite];
+    return lamp.valid ? &lamp : nullptr;
+}
 
 // The game's frame is x east, y south, z the level. Ours is x east, y up,
 // z north, with the rows mirrored - the same conversion live_geometry.cpp does
@@ -435,11 +445,9 @@ void SubmitBrakeLights(const uint8_t* entry, float gx, float gy, float gz) {
     const SyntheticCategorySettings& head = g_settings.category[kSynthHeadlight];
     float along = -head.forwardOffset;
     float side = head.sideOffset;
-    const int sprite = game::VehicleCarSprite(entry);
-    if (sprite >= 0 && static_cast<size_t>(sprite) < g_brakeLamps.size() &&
-        g_brakeLamps[sprite].valid) {
-        along = g_brakeLamps[sprite].along;
-        side = g_brakeLamps[sprite].side;
+    if (const CarLamp* lamp = LampFor(game::kBrakeLightDelta, game::VehicleCarSprite(entry))) {
+        along = lamp->along;
+        side = lamp->side;
     }
     // Out past the tail, so the bulb sits behind the car rather than under it.
     along -= c.forwardOffset;
@@ -548,16 +556,35 @@ void WalkVehicles() {
         }
         g_stats.trigTablesReady = true;
 
+        // Which lamps the game has lit. A lamp broken by a knock to its corner,
+        // or one off in the dark part of a flash, is not lit, so neither is its
+        // beam.
+        const uint32_t mask = *reinterpret_cast<const uint32_t*>(entry + game::kVehicleDeltaMask);
+        const bool alt = (mask & (game::kHeadlightAltDeltaA | game::kHeadlightAltDeltaB)) != 0;
+        const bool litLamp[2] = {
+            (mask & (game::kHeadlightDeltaA | game::kHeadlightAltDeltaA)) != 0,
+            (mask & (game::kHeadlightDeltaB | game::kHeadlightAltDeltaB)) != 0};
+        if (!litLamp[0] && !litLamp[1]) {
+            entry = next;
+            continue;
+        }
+
         // Forward and right in the game's frame, then converted the same way the
         // positions are: our +Z is north, which is the game's -y.
         const float rx = fy, ry = -fx;   // right-hand perpendicular
-        // Per model where one has been set, category default otherwise.
+        // Per model where one has been set; otherwise where the car's own
+        // headlight delta is; otherwise the category default.
         const BeamOverride* beam = g_settings.perModelBeams ? SyntheticFindBeam(model) : nullptr;
+        const CarLamp* art = LampFor(alt ? game::kHeadlightAltDelta : game::kHeadlightDelta,
+                                     game::VehicleCarSprite(entry));
         const float cone = (beam && beam->coneAngleDeg > 0.0f) ? beam->coneAngleDeg
                                                                : c.coneAngleDeg;
-        const float side = (beam && beam->sideOffset > 0.0f) ? beam->sideOffset : c.sideOffset;
+        const float side = (beam && beam->sideOffset > 0.0f) ? beam->sideOffset
+                         : art                                ? art->side
+                                                              : c.sideOffset;
         const float forward = (beam && beam->forwardOffset > 0.0f) ? beam->forwardOffset
-                                                                   : c.forwardOffset;
+                            : art                                   ? art->along
+                                                                    : c.forwardOffset;
         const float pitch = c.pitchDegrees * 3.14159265f / 180.0f;
         const float horizontal = std::cos(pitch);
 
@@ -566,8 +593,10 @@ void WalkVehicles() {
         // at the car's centre and the other a full tile away, and the separation
         // setting did nothing at all because nothing read it.
         for (int lamp = 0; lamp < 2; ++lamp) {
+            if (!litLamp[lamp]) continue;
             if (!Room(kSynthHeadlight)) break;
-            const float sign = lamp == 0 ? -1.0f : 1.0f;
+            // Lamp 0 is the delta as drawn, lamp 1 its mirror image.
+            const float sign = lamp == 0 ? 1.0f : -1.0f;
             const float px = gx + fx * forward + rx * side * sign;
             const float py = gy + fy * forward + ry * side * sign;
 
@@ -977,7 +1006,9 @@ const std::vector<ParticleTypeInfo>& SyntheticParticleTypes() { return g_types; 
 
 const std::vector<VehicleModelInfo>& SyntheticVehicleModels() { return g_models; }
 
-void SyntheticSetBrakeLamps(std::vector<BrakeLamp> bySprite) { g_brakeLamps = std::move(bySprite); }
+void SyntheticSetCarLamps(int delta, std::vector<CarLamp> bySprite) {
+    g_carLamps[delta] = std::move(bySprite);
+}
 
 BeamOverride* SyntheticFindBeam(int model) {
     auto it = g_beams.find(model);

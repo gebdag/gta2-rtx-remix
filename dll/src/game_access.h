@@ -401,6 +401,19 @@ constexpr uintptr_t kVehicleDeltaMask = 0x08;
 constexpr uint32_t kBrakeLightDeltaA = 1u << 5;
 constexpr uint32_t kBrakeLightDeltaB = 1u << 22;
 constexpr int kBrakeLightDelta = 5;
+// Headlights the same way, switched on by FUN_00425590: bit 6 unless the front
+// corner on that side is dented (bit 2), bit 23 - its mirror - unless the other
+// is (bit 3). Vehicles FUN_00421700 picks out carry their lamps as deltas 11
+// and 28 instead. The car's own lamp state is at +0xA4 (2 is lights on, the
+// others are flash sequences counted down at +0xA5), and every path that lights
+// the lamps goes through that one function, so the bits are exactly what the
+// game draws - flashing, and a lamp broken by a knock, included.
+constexpr uint32_t kHeadlightDeltaA = 1u << 6;
+constexpr uint32_t kHeadlightDeltaB = 1u << 23;
+constexpr uint32_t kHeadlightAltDeltaA = 1u << 11;
+constexpr uint32_t kHeadlightAltDeltaB = 1u << 28;
+constexpr int kHeadlightDelta = 6;
+constexpr int kHeadlightAltDelta = 11;
 // The object the vehicle's placement pointer names is its sprite: the sprite
 // number within its base at +0x22, and the base at +0x30, 2 for cars
 // (FUN_004ba230, FUN_004bf2a0).
