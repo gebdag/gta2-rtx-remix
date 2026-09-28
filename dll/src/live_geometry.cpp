@@ -924,6 +924,7 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         const float nudge = static_cast<float>(bits & 0xFFFF) * (1.0f / 1073741824.0f);
         for (int i = 0; i < placed.corners; ++i) placed.local[i].y += nudge;
     }
+    placed.plain = GameObjectIsPowerUp();
     lastObject_ = GameObjectBeingDrawn();
     lastSprite_ = sprites_.size();
     sprites_.push_back(placed);
@@ -1102,7 +1103,8 @@ void LiveGeometry::Draw(IDirect3DDevice9* device, const gta2::Camera& camera, in
             continue;
         }
         bool effect = false;
-        IDirect3DTexture9* texture = DeviceTextureFor(device, sprite.texture, &effect);
+        IDirect3DTexture9* texture = DeviceTextureFor(device, sprite.texture, &effect,
+                                                      !sprite.plain);
         if (!texture) {
             // The sprite was accepted and then had no artwork to draw with:
             // this is a sprite that vanishes for exactly one frame.

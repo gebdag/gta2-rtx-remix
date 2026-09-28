@@ -101,8 +101,14 @@ constexpr size_t kMaxHidden = 32;
 // crumbs.
 constexpr float kGibScale = 1.5f;
 
-std::vector<uint8_t*> g_flying;     // limbs still in the air
-std::deque<uint8_t*> g_resting;     // limbs on the ground, oldest first
+// A limb, and the pedestrian it came off: a paramedic can bring that ped back,
+// and then its limbs have to go.
+struct Limb {
+    uint8_t* particle;
+    const uint8_t* ped;
+};
+std::vector<Limb> g_flying;     // limbs still in the air
+std::deque<Limb> g_resting;     // limbs on the ground, oldest first
 
 struct Hidden {
     const uint8_t* ped;
@@ -134,6 +140,33 @@ void EndParticle(uint8_t* p) {
     *reinterpret_cast<int32_t*>(p + game::kParticleType) = kSprayType;
     *reinterpret_cast<int16_t*>(p + game::kParticleLife) = 1;
     *reinterpret_cast<int16_t*>(p + game::kParticleLifeStart) = 2;
+}
+
+// Ends every limb, in the air or on the ground, that came off this ped.
+void RemoveLimbsOf(const uint8_t* ped) {
+    int removed = 0;
+    for (size_t i = 0; i < g_flying.size();) {
+        if (g_flying[i].ped == ped) {
+            if (IsParticle(g_flying[i].particle)) EndParticle(g_flying[i].particle);
+            g_flying[i] = g_flying.back();
+            g_flying.pop_back();
+            ++removed;
+            continue;
+        }
+        ++i;
+    }
+    for (auto it = g_resting.begin(); it != g_resting.end();) {
+        if (it->ped == ped) {
+            if (IsParticle(it->particle) && ParticleType(it->particle) == kRestingType) {
+                EndParticle(it->particle);
+            }
+            it = g_resting.erase(it);
+            ++removed;
+            continue;
+        }
+        ++it;
+    }
+    if (removed) Log("gibs: ped %p revived, %d limbs removed", ped, removed);
 }
 
 bool IsGibSprite(const uint8_t* p, int16_t particleBase) {
@@ -211,7 +244,7 @@ void ThrowGibs(const uint8_t* ped) {
                     const int16_t life = static_cast<int16_t>(18 + Random(15));
                     *reinterpret_cast<int16_t*>(particle + game::kParticleLife) = life;
                     *reinterpret_cast<int16_t*>(particle + game::kParticleLifeStart) = life;
-                    g_flying.push_back(particle);
+                    g_flying.push_back({particle, ped});
                     taken = true;
                     ++limb;
                 } else {
@@ -346,7 +379,7 @@ void GibsUpdate() {
     // life reaches 0, so one at 2 or less is caught here, between that frame's
     // update and the next.
     for (size_t i = 0; i < g_flying.size();) {
-        uint8_t* p = g_flying[i];
+        uint8_t* p = g_flying[i].particle;
         const bool ours = IsParticle(p) && ParticleType(p) == 1 && IsGibSprite(p, particleBase);
         if (!ours) {
             g_flying[i] = g_flying.back();
@@ -364,7 +397,7 @@ void GibsUpdate() {
                     *reinterpret_cast<const int16_t*>(p + game::kParticleLifeStart);
                 *reinterpret_cast<int16_t*>(p + game::kParticleLife) =
                     static_cast<int16_t>(game::kBloodPoolLife - flown);
-                g_resting.push_back(p);
+                g_resting.push_back(g_flying[i]);
             }
             g_flying[i] = g_flying.back();
             g_flying.pop_back();
@@ -376,10 +409,11 @@ void GibsUpdate() {
     // Drop any that are no longer ours, clear the ones whose blood has gone, then
     // retire the oldest past the cap - or all of them, once the option is off.
     for (auto it = g_resting.begin(); it != g_resting.end();) {
-        if (!IsParticle(*it) || ParticleType(*it) != kRestingType) {
+        uint8_t* p = it->particle;
+        if (!IsParticle(p) || ParticleType(p) != kRestingType) {
             it = g_resting.erase(it);
-        } else if (*reinterpret_cast<const int16_t*>(*it + game::kParticleLife) <= 2) {
-            EndParticle(*it);
+        } else if (*reinterpret_cast<const int16_t*>(p + game::kParticleLife) <= 2) {
+            EndParticle(p);
             it = g_resting.erase(it);
         } else {
             ++it;
@@ -387,22 +421,27 @@ void GibsUpdate() {
     }
     const size_t keep = g_gibs ? kMaxResting : 0;
     while (g_resting.size() > keep) {
-        EndParticle(g_resting.front());
+        EndParticle(g_resting.front().particle);
         g_resting.pop_front();
     }
 
     // A hidden body stays hidden only while its ped is still dead and still owns
     // that sprite: the game recycles all three.
+    //
+    // The same ped with the same body, alive again, is one a paramedic brought
+    // back. The game puts the whole pedestrian back on its feet, so what came off
+    // it goes too - otherwise the ped stands up beside its own limbs.
     for (size_t i = 0; i < g_hidden.size();) {
         const Hidden& h = g_hidden[i];
-        const bool same =
-            g_gibs &&
+        const bool body =
             *reinterpret_cast<const uint8_t* const*>(h.ped + game::kPedPhysics) == h.physics &&
-            *reinterpret_cast<const void* const*>(h.physics + game::kPhysicsSprite) == h.sprite &&
-            (*reinterpret_cast<const int32_t*>(h.ped + game::kPedState) == game::kPedStateDead ||
-             *reinterpret_cast<const int32_t*>(h.ped + game::kPedStatePending) ==
-                 game::kPedStateDead);
-        if (!same) {
+            *reinterpret_cast<const void* const*>(h.physics + game::kPhysicsSprite) == h.sprite;
+        const bool dead =
+            *reinterpret_cast<const int32_t*>(h.ped + game::kPedState) == game::kPedStateDead ||
+            *reinterpret_cast<const int32_t*>(h.ped + game::kPedStatePending) ==
+                game::kPedStateDead;
+        if (body && !dead) RemoveLimbsOf(h.ped);
+        if (!(g_gibs && body && dead)) {
             g_hidden.erase(g_hidden.begin() + i);
             continue;
         }
@@ -429,8 +468,27 @@ bool GameObjectIsCorpse() {
     if (!game::PlausiblePointer(physics)) return false;
     const uint8_t* ped = *reinterpret_cast<const uint8_t* const*>(physics + game::kPhysicsPed);
     if (!game::PlausiblePointer(ped)) return false;
-    return *reinterpret_cast<const int32_t*>(ped + game::kPedState) == game::kPedStateDead ||
-           *reinterpret_cast<const int32_t*>(ped + game::kPedStatePending) == game::kPedStateDead;
+    const int32_t state = *reinterpret_cast<const int32_t*>(ped + game::kPedState);
+    if (state == game::kPedStateDead ||
+        *reinterpret_cast<const int32_t*>(ped + game::kPedStatePending) == game::kPedStateDead) {
+        return true;
+    }
+    // Knocked down and still alive - the player included - lies just as flat.
+    return state == game::kPedStateInterrupted &&
+           *reinterpret_cast<const int32_t*>(ped + game::kPedSubState) ==
+               game::kPedSubStateKnockedDown;
+}
+
+bool GameObjectIsPowerUp() {
+    const uint8_t* object = static_cast<const uint8_t*>(g_drawing);
+    if (!object) return false;
+    if (*reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase) !=
+        game::kSpriteBaseCodeObj) {
+        return false;
+    }
+    const int number = *reinterpret_cast<const uint16_t*>(object + game::kSpriteObjectNumber);
+    return number >= game::kPowerUpSpriteFirst &&
+           number < game::kPowerUpSpriteFirst + game::kPowerUpSpriteCount;
 }
 
 float GibsCurrentScale() {

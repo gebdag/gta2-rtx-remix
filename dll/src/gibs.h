@@ -32,8 +32,14 @@ const void* GameObjectBeingDrawn();
 // for a limb, 1 for everything else.
 float GibsCurrentScale();
 
-// Whether the sprite being drawn is a dead pedestrian's.
+// Whether the sprite being drawn is a pedestrian lying on the ground: dead, or
+// knocked down and not up yet.
 bool GameObjectIsCorpse();
+
+// Whether the sprite being drawn is a power-up token. About half of them have a
+// near-black outline, which is what marks a fireball as effect artwork, so they
+// have to be told apart by what they are rather than by how they look.
+bool GameObjectIsPowerUp();
 
 // Routes GTA2's ped death handler through us, so a death can be looked at before
 // the game handles it. Leaves a gta2.exe that is not the build these addresses

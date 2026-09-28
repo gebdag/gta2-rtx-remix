@@ -325,7 +325,8 @@ EffectSpriteSettings& EffectSprites() { return g_effects; }
 int EffectSpriteFrames() { return g_effectFrames; }
 int ClassifiedFrames() { return g_classifiedFrames; }
 
-IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle, bool* effect) {
+IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle, bool* effect,
+                                    bool mayBeEffect) {
     if (effect) *effect = false;
     const TextureRecord* record = static_cast<const TextureRecord*>(handle);
     if (!device || !record || !record->pixels || !record->width || !record->height) return nullptr;
@@ -334,7 +335,10 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     // A texture built from a palette the game had not filled in yet is kept but
     // not trusted, so the next frame builds it again rather than leaving it
     // black for good.
-    if (cached.texture && !cached.provisional && cached.width == record->width &&
+    // An effect texture handed to a caller that says it cannot be one is rebuilt
+    // below as ordinary artwork, which then replaces it for good.
+    const bool wrongKind = cached.effect && !mayBeEffect;
+    if (cached.texture && !cached.provisional && !wrongKind && cached.width == record->width &&
         cached.height == record->height && cached.palette == record->palette &&
         cached.revision == record->revision) {
         // The four fields the original cache keyed on can all be unchanged while
@@ -352,7 +356,7 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     // same Remix hash, which is the whole point.
     const uint64_t key = FrameKey(record);
     const auto existing = g_frames.find(key);
-    if (existing != g_frames.end()) {
+    if (existing != g_frames.end() && !(existing->second.effect && !mayBeEffect)) {
         cached.texture = existing->second.texture;
         cached.width = record->width;
         cached.height = record->height;
@@ -428,7 +432,8 @@ IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* handle
     // black rim can be looked up afterwards and the thresholds moved with the
     // numbers in front of you rather than by guessing. See WriteTextureReport.
     const EffectMeasure measure = MeasureEffect(image.data(), record->width, record->height);
-    const bool isEffect = g_effects.mode != EffectSpriteMode::Off && IsEffect(measure, g_effects);
+    const bool isEffect =
+        mayBeEffect && g_effects.mode != EffectSpriteMode::Off && IsEffect(measure, g_effects);
     ++g_classifiedFrames;
     if (isEffect) ++g_effectFrames;
 

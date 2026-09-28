@@ -261,6 +261,8 @@ private:
         // One of our own lamp textures instead of a game texture; see OwnCarLamps.
         const LampArt* lamp = nullptr;
         bool lampMirrored = false;
+        // Never effect artwork, whatever its outline: a power-up token.
+        bool plain = false;
     };
 
     // The lamps of the car drawn last, as quads of their own on its body.

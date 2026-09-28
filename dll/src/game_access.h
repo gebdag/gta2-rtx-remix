@@ -346,6 +346,11 @@ constexpr uintptr_t kObjectBankPtr = 0x00665B40;
 constexpr uintptr_t kParticleSpriteBase = 0x8CA4;
 // The six severed-limb sprites, code_obj 394-399, which no code ever draws.
 constexpr int kGibSpriteOffset = 0x59;
+// The spinning power-up tokens - health, armour, multiplier, the rest - are
+// code_obj 151-254, thirteen of them at eight frames each; the same numbers in
+// all three districts' styles.
+constexpr int kPowerUpSpriteFirst = 151;
+constexpr int kPowerUpSpriteCount = 104;
 constexpr int kGibSprites = 6;
 
 // The blood spray a shot pedestrian gets (FUN_0048C9C0): __thiscall on the
@@ -387,6 +392,12 @@ constexpr uintptr_t kPhysicsSprite = 0x80;
 constexpr uintptr_t kPedState = 0x278;
 constexpr uintptr_t kPedStatePending = 0x280;
 constexpr int32_t kPedStateDead = 9;
+// State 8 is an interruption with a sub-state at +0x27C. 0x16 is knocked flat -
+// punched down (FUN_004436A0), or by what FUN_004454E0 reacts to - and the
+// death handler checks for it (0x004411F1), since a ped on the ground dies there.
+constexpr uintptr_t kPedSubState = 0x27C;
+constexpr int32_t kPedStateInterrupted = 8;
+constexpr int32_t kPedSubStateKnockedDown = 0x16;
 // The object draw's first instruction, sub esp, 0xA4, identical in 9.6 and 11.44.
 constexpr int kObjectDrawStolenBytes = 6;
 // The particle manager's allocation (FUN_00491B90), which is also its pool.

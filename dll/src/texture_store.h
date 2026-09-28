@@ -129,8 +129,11 @@ int ClassifiedFrames();
 // `effect` reports whether this frame was classified as effect artwork, so the
 // sprite pass can draw it additively. It is answered from the cache too, not
 // only on the frame the texture is built.
+//
+// `mayBeEffect` false is a caller that knows better than the outline: the frame
+// is built, and kept from then on, as ordinary artwork.
 IDirect3DTexture9* DeviceTextureFor(IDirect3DDevice9* device, const void* record,
-                                    bool* effect = nullptr);
+                                    bool* effect = nullptr, bool mayBeEffect = true);
 void ForgetDeviceTexture(const void* record);
 void ReleaseDeviceTextures();
 
