@@ -475,8 +475,7 @@ bool GameObjectIsCorpse() {
     }
     // Knocked down and still alive - the player included - lies just as flat.
     return state == game::kPedStateInterrupted &&
-           *reinterpret_cast<const int32_t*>(ped + game::kPedSubState) ==
-               game::kPedSubStateKnockedDown;
+           game::PedSubStateLying(*reinterpret_cast<const int32_t*>(ped + game::kPedSubState));
 }
 
 bool GameObjectIsPowerUp() {

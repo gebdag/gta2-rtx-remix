@@ -392,12 +392,21 @@ constexpr uintptr_t kPhysicsSprite = 0x80;
 constexpr uintptr_t kPedState = 0x278;
 constexpr uintptr_t kPedStatePending = 0x280;
 constexpr int32_t kPedStateDead = 9;
-// State 8 is an interruption with a sub-state at +0x27C. 0x16 is knocked flat -
-// punched down (FUN_004436A0), or by what FUN_004454E0 reacts to - and the
-// death handler checks for it (0x004411F1), since a ped on the ground dies there.
+// State 8 is an interruption with a sub-state at +0x27C, set through
+// FUN_004332B0. The ones that put a ped on the ground:
+//   0x16        punched down (FUN_004436A0, FUN_004454E0); the death handler
+//               checks for it (0x004411F1), since a ped on the ground dies there
+//   0x18..0x1A  hit by a car (FUN_00497570, which also sprays the blood) - and
+//               only these may cut into a knock-down already running
+//   0x1B        dazed, once the damage counter at +0x210 reaches its limit
+//               (FUN_00435CE0, FUN_004454E0)
+// and the ones that do not: 0x13 falling from a height, 0x14 dropping into
+// water (FUN_004938A0), 0x11.
 constexpr uintptr_t kPedSubState = 0x27C;
 constexpr int32_t kPedStateInterrupted = 8;
-constexpr int32_t kPedSubStateKnockedDown = 0x16;
+inline bool PedSubStateLying(int32_t sub) {
+    return sub == 0x16 || (sub >= 0x18 && sub <= 0x1B);
+}
 // The object draw's first instruction, sub esp, 0xA4, identical in 9.6 and 11.44.
 constexpr int kObjectDrawStolenBytes = 6;
 // The particle manager's allocation (FUN_00491B90), which is also its pool.
