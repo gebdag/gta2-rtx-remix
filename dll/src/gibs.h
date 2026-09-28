@@ -5,14 +5,8 @@
 namespace gta2dx9 {
 
 constexpr bool kDefaultGibs = false;
-// Whether limbs stay where they land. On by default, so gibs read as a body
-// that came apart rather than a moment of debris.
-constexpr bool kDefaultGibsStay = true;
-
 void SetGibs(bool on);
 bool Gibs();
-void SetGibsStay(bool on);
-bool GibsStay();
 
 // Whether a pedestrian killed by a car comes apart too, not only one killed by an
 // explosion. Off by default: GTA2 runs people over a great deal.

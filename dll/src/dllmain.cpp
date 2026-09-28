@@ -185,8 +185,6 @@ void LoadConfig() {
     // Gibs for pedestrians killed by explosions. Experimental, so off unless asked.
     gta2dx9::SetGibs(
         GetPrivateProfileIntA("renderer", "gibs", gta2dx9::kDefaultGibs ? 1 : 0, ini) != 0);
-    gta2dx9::SetGibsStay(GetPrivateProfileIntA("renderer", "gibs_stay",
-                                               gta2dx9::kDefaultGibsStay ? 1 : 0, ini) != 0);
     gta2dx9::SetGibsCar(GetPrivateProfileIntA("renderer", "gibs_car",
                                               gta2dx9::kDefaultGibsCar ? 1 : 0, ini) != 0);
 

@@ -1037,18 +1037,11 @@ void DrawSprites() {
         SettingsMarkDirty();
     }
     Help("A pedestrian killed by a grenade, a rocket or any other explosion bursts into blood "
-         "and flying limbs, and the body goes. GTA2 has the limb sprites but never uses them; "
-         "this throws them with its own blood spray. Persist it with gibs under [renderer].");
+         "and flying limbs, and the body goes. The limbs stay where they land; the last few "
+         "dozen are kept. GTA2 has the limb sprites but never uses them; this throws them with "
+         "its own blood spray. Persist it with gibs under [renderer].");
     if (gibs) {
         ImGui::Indent();
-        bool stay = GibsStay();
-        if (ImGui::Checkbox("Limbs stay where they land", &stay)) {
-            SetGibsStay(stay);
-            SettingsMarkDirty();
-        }
-        Help("The last few dozen stay on the ground; older ones are cleared as new ones land, "
-             "because they share the game's particle pool with every fire and spark. Persist it "
-             "with gibs_stay under [renderer].");
         bool car = GibsCar();
         if (ImGui::Checkbox("Also when run over", &car)) {
             SetGibsCar(car);

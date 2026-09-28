@@ -26,8 +26,18 @@
 //   does, the limb is given a type the particle update has no case for - the
 //   switch in FUN_00490760 only covers 1..0x2C, and its default keeps the
 //   particle and does nothing to it - so it lies where it landed, drawn as
-//   before, until it is one of the oldest and is handed type 8, which the
-//   update removes. The pool is shared with every other effect, hence the cap.
+//   before, until it is one of the oldest. The pool is shared with every other
+//   effect, hence the cap.
+//
+//   Getting rid of one has to go through the game's own update. A particle's
+//   sprite sits in the draw grid, and every update function takes it out of the
+//   grid (FUN_00447BD0) before it decides the particle is finished; the manager
+//   then frees the sprite (FUN_0048C8F0) without looking at the grid at all. So a
+//   particle removed any other way - type 8, which is removed on sight - leaves a
+//   grid node pointing at a freed sprite, and the node pool (FUN_00447350 takes
+//   from it with no check) runs dry: that crashed the game after a few dozen
+//   gibbed bodies. A particle to be removed is made type 1 with a life of 1
+//   instead, and FUN_0048C270 takes it out of the grid and ends it next frame.
 //
 //   The body goes. A dead pedestrian's physics object (ped+0x168) keeps its
 //   sprite (+0x80) on the ground as a corpse. The object draw, FUN_004BE060, is
@@ -54,7 +64,6 @@ namespace {
 using gta2dx9::Log;
 
 bool g_gibs = gta2dx9::kDefaultGibs;
-bool g_gibsStay = gta2dx9::kDefaultGibsStay;
 bool g_gibsCar = gta2dx9::kDefaultGibsCar;
 
 // Deaths already given gibs, so a handler that runs twice for one body does not
@@ -80,8 +89,8 @@ bool AlreadyGibbed(const uint8_t* ped) {
 
 // A type the particle update has no case for: kept, never moved, never removed.
 constexpr int32_t kRestingType = 0x40;
-// The type the update removes on sight.
-constexpr int32_t kRemoveType = 8;
+// The blood spray's own type, whose update clears the grid before ending one.
+constexpr int32_t kSprayType = 1;
 // How many limbs lie about at once. The particle pool is shared with every fire,
 // spark and puff of smoke in the game, so this is kept well short of it.
 constexpr size_t kMaxResting = 36;
@@ -116,6 +125,15 @@ bool IsParticle(const uint8_t* p) {
 
 int32_t ParticleType(const uint8_t* p) {
     return *reinterpret_cast<const int32_t*>(p + game::kParticleType);
+}
+
+// Ends a particle the way the game ends a spray droplet: as type 1 on its last
+// frame, so its update clears it out of the draw grid first. See the note at the
+// top.
+void EndParticle(uint8_t* p) {
+    *reinterpret_cast<int32_t*>(p + game::kParticleType) = kSprayType;
+    *reinterpret_cast<int16_t*>(p + game::kParticleLife) = 1;
+    *reinterpret_cast<int16_t*>(p + game::kParticleLifeStart) = 2;
 }
 
 bool IsGibSprite(const uint8_t* p, int16_t particleBase) {
@@ -197,8 +215,8 @@ void ThrowGibs(const uint8_t* ped) {
                     taken = true;
                     ++limb;
                 } else {
-                    // The other five of the spray; the update removes type 8.
-                    *reinterpret_cast<int32_t*>(particle + game::kParticleType) = kRemoveType;
+                    // The other five of the spray.
+                    EndParticle(particle);
                 }
             }
             particle = game::NextInList(particle, game::kParticleNext);
@@ -303,8 +321,6 @@ namespace gta2dx9 {
 
 void SetGibs(bool on) { g_gibs = on; }
 bool Gibs() { return g_gibs; }
-void SetGibsStay(bool on) { g_gibsStay = on; }
-bool GibsStay() { return g_gibsStay; }
 void SetGibsCar(bool on) { g_gibsCar = on; }
 bool GibsCar() { return g_gibsCar; }
 
@@ -319,7 +335,7 @@ void GibsInstall() {
     }
     Patch(game::kPedDeathHandler, kDeath, sizeof(kDeath), &PedDeathThunk, "the death handler");
     FlushInstructionCache(GetCurrentProcess(), nullptr, 0);
-    Log("gibs: hooked (%s, limbs %s)", g_gibs ? "on" : "off", g_gibsStay ? "stay" : "vanish");
+    Log("gibs: hooked (%s)", g_gibs ? "on" : "off");
 }
 
 void GibsUpdate() {
@@ -338,7 +354,7 @@ void GibsUpdate() {
             continue;
         }
         if (*reinterpret_cast<const int16_t*>(p + game::kParticleLife) <= 2) {
-            if (g_gibsStay && g_gibs) {
+            if (g_gibs) {
                 *reinterpret_cast<int32_t*>(p + game::kParticleType) = kRestingType;
                 g_resting.push_back(p);
             }
@@ -354,9 +370,9 @@ void GibsUpdate() {
     for (auto it = g_resting.begin(); it != g_resting.end();) {
         it = (IsParticle(*it) && ParticleType(*it) == kRestingType) ? it + 1 : g_resting.erase(it);
     }
-    const size_t keep = (g_gibsStay && g_gibs) ? kMaxResting : 0;
+    const size_t keep = g_gibs ? kMaxResting : 0;
     while (g_resting.size() > keep) {
-        *reinterpret_cast<int32_t*>(g_resting.front() + game::kParticleType) = kRemoveType;
+        EndParticle(g_resting.front());
         g_resting.pop_front();
     }
 
