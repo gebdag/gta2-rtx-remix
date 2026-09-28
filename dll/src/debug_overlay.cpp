@@ -858,6 +858,8 @@ void DrawTimeOfDay() {
     if (ImGui::Button("Dusk")) TimeOfDaySetHour(18.0f);
     ImGui::SameLine();
     if (ImGui::Checkbox("Paused", &tod.paused)) SettingsMarkDirty();
+    ImGui::SetItemTooltip("Stops the clock where it is. Kept on, every level starts at the "
+                          "hour below and stays there - a fixed time of day.");
 
     ImGui::SetNextItemWidth(S(300.0f));
     if (ImGui::SliderFloat("Speed", &tod.minutesPerSecond, 0.1f, 60.0f, "%.2f game min/sec",

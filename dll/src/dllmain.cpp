@@ -222,6 +222,9 @@ void LoadConfig() {
     tod.enabled = GetPrivateProfileIntA("timeofday", "enabled", 1, ini) != 0;
     const int start = GetPrivateProfileIntA("timeofday", "start_hhmm", 200, ini);
     tod.startHour = static_cast<float>(start / 100) + static_cast<float>(start % 100) / 60.0f;
+    // The clock stopped: every level then starts and stays at start_hhmm, for
+    // anyone who would rather play at one time of day.
+    tod.paused = GetPrivateProfileIntA("timeofday", "paused", 0, ini) != 0;
     // Tenths, like the camera angles: the ini API only reads integers, and 10 is
     // the default one real second to one game minute.
     tod.minutesPerSecond =
