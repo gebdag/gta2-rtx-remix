@@ -116,6 +116,7 @@ private:
         bool additive;         // quad_flags::kAdditive
         bool pointSample;      // quad_flags::kPointSample or kExpandFromTexture
         bool hud;              // drawn from the game's HUD pass, see hud_pass.h
+        int8_t part;           // which part of the HUD, or -1; see HudPassPart
     };
 
     // Where each draw goes across the screen, as an offset added after scaling.

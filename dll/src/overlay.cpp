@@ -124,6 +124,7 @@ void Overlay::PushTriangleFan(const Vertex* corners, int count, const void* text
     draw.additive = style.additive;
     draw.pointSample = style.pointSample;
     draw.hud = HudPassActive();
+    draw.part = static_cast<int8_t>(HudPassPart());
     draw.first = static_cast<uint32_t>(vertices_.size());
     // A fan of `count` corners is count-2 triangles; the renderer only ever
     // gets 3 or 4, matching the original's DrawPrimitive(D3DPT_TRIANGLEFAN, 4).
@@ -464,23 +465,50 @@ IDirect3DTexture9* Overlay::ResolveMovie(IDirect3DDevice9* device) {
 // from the game: the score sits a quarter of the way in from the right edge of a
 // 16:9 frame, not against it. So the canvas stays 4:3 - one scale for both axes,
 // nothing stretched - and each element of the HUD is slid sideways to the edge
-// it was drawn against: left third stays with the left edge, right third goes
-// with the right edge, anything reaching across the middle stays centred.
+// it was laid out against.
 //
-// An element is not a draw. A line of text is one quad per glyph, and the pager
-// is a frame with text inside it; moved one quad at a time, a line straddling a
-// third would tear in two. So consecutive HUD draws that touch or overlap are
-// one element, decided and moved together.
+// Which edge that is, is read off what the game did rather than guessed from
+// where the element happens to be. Every HUD element is placed one of three
+// ways - from the left margin, back from the right margin (the score at 639, the
+// weapon at 638 less half its width), or centred on 320 (the zone name, the
+// pause screen, a message) - so the element goes with whichever of the three it
+// sits closest to: its left edge to the canvas's, its right edge to the
+// canvas's, or its middle to the canvas's middle. Anything reaching across both
+// outer thirds is centred whatever the numbers say. A wide element laid out from
+// the left stays left however far it reaches, and a short line in a centred box
+// stays centred however little of it there is - which a thirds test could not
+// tell apart.
+//
+// An element is not a draw. A line of text is one quad per glyph, a message is a
+// portrait beside lines of text; moved one quad at a time they would tear apart.
+// So draws are grouped into elements - consecutive draws on the same row or on
+// the next line down, then whatever of those sits within a few pixels of each
+// other - and each element is decided and moved as one.
+//
+// But only within one part of the HUD. The HUD draw is nineteen calls, one per
+// part (hud_pass.cpp), and grouping across them is what let one element decide
+// for another: the zone name, appearing at the top between the corners, joined
+// them into one element spanning the screen, and the corners came in to the
+// middle for as long as it showed. Parts are never grouped together. The parts
+// that place things at a projected world position - the marker over a target,
+// the arrows pointing at one, multiplayer names - always keep the centred
+// placement, which is the one that lines up with the world.
 //
 // Only the HUD moves. Screen-space draws tied to the world - money over a
-// pedestrian, text over an object - keep the centred placement, which is the one
-// that lines up with the world under them; the menus keep it too.
+// pedestrian, text over an object - keep the centred placement too; so do the
+// menus.
 std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const {
     std::vector<float> out(draws_.size(), centred);
     if (g_fit != HudFitMode::Widescreen || centred < 1.0f || scale <= 0.0f) return out;
 
     struct Box {
         float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        void Add(const Box& b) {
+            x0 = (std::min)(x0, b.x0);
+            x1 = (std::max)(x1, b.x1);
+            y0 = (std::min)(y0, b.y0);
+            y1 = (std::max)(y1, b.y1);
+        }
     };
     auto boxOf = [this](const Draw& draw) {
         Box b;
@@ -494,23 +522,26 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
         return b;
     };
 
-    const float third = static_cast<float>(gameWidth_) / 3.0f;
+    const float width = static_cast<float>(gameWidth_);
+    const float third = width / 3.0f;
     const float left = 0.0f;            // the 4:3 canvas against the left edge
     const float right = centred * 2.0f; // against the right edge
 
-    // First the runs of consecutive draws that touch - a line of text, a line
-    // and the next one under it.
+    // First the runs of consecutive draws of one part that touch - a line of
+    // text, a line and the next one under it.
     struct Group {
         size_t start, end;
+        int part;
         Box box;
     };
     std::vector<Group> groups;
     size_t start = 0;
+    int part = -1;
     Box group;
     bool open = false;
     auto close = [&](size_t end) {
         if (!open) return;
-        groups.push_back({start, end, group});
+        groups.push_back({start, end, part, group});
         open = false;
     };
     for (size_t i = 0; i < draws_.size(); ++i) {
@@ -526,33 +557,26 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
         const bool sameRow = b.y0 < group.y1 && b.y1 > group.y0 &&
                              b.x0 <= group.x1 + gap && b.x1 >= group.x0 - gap;
         // Or the next line of the same block: straight below, overlapping it
-        // sideways, no more than a line's spacing down. Without this each line
-        // of a message was an element of its own, so a short last line - one
-        // word, all of it in the left third - went to the left edge and took
-        // the speaker's portrait beside it along.
+        // sideways, no more than a line's spacing down.
         const bool nextLine = b.x0 < group.x1 && b.x1 > group.x0 &&
                               b.y0 >= group.y1 - 1.0f && b.y0 <= group.y1 + gap;
-        const bool joins = open && (sameRow || nextLine);
+        const bool joins = open && draw.part == part && (sameRow || nextLine);
         if (!joins) {
             close(i);
             start = i;
+            part = draw.part;
             group = b;
             open = true;
         } else {
-            group.x0 = (std::min)(group.x0, b.x0);
-            group.x1 = (std::max)(group.x1, b.x1);
-            group.y0 = (std::min)(group.y0, b.y0);
-            group.y1 = (std::max)(group.y1, b.y1);
+            group.Add(b);
         }
     }
     close(draws_.size());
 
-    // Then whatever sits together on screen, whatever order it was drawn in. A
-    // message's portrait is drawn before its text and only shares rows with the
-    // text's first line when the message is three lines or fewer; a fourth line
-    // starts above the portrait, the two never touched in draw order, and the
-    // portrait - all of it in the left third - went to the left edge alone. On
-    // screen it is a few pixels from the text, which is what settles it here.
+    // Then, still within one part, whatever sits together on screen whatever
+    // order it was drawn in: a message's portrait is drawn before its text and
+    // does not share a row with the first line of a four-line message, but it is
+    // a few pixels from the text.
     const float closeBy = 8.0f;
     std::vector<size_t> parent(groups.size());
     for (size_t i = 0; i < groups.size(); ++i) parent[i] = i;
@@ -562,6 +586,7 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
     };
     for (size_t i = 0; i < groups.size(); ++i) {
         for (size_t j = i + 1; j < groups.size(); ++j) {
+            if (groups[i].part != groups[j].part) continue;
             const Box& a = groups[i].box;
             const Box& b = groups[j].box;
             if (a.x0 - closeBy <= b.x1 && b.x0 - closeBy <= a.x1 && a.y0 - closeBy <= b.y1 &&
@@ -571,20 +596,33 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
         }
     }
     std::vector<Box> merged(groups.size());
-    for (size_t i = 0; i < groups.size(); ++i) {
-        Box& m = merged[root(i)];
-        const Box& b = groups[i].box;
-        m.x0 = (std::min)(m.x0, b.x0);
-        m.x1 = (std::max)(m.x1, b.x1);
-        m.y0 = (std::min)(m.y0, b.y0);
-        m.y1 = (std::max)(m.y1, b.y1);
-    }
+    for (size_t i = 0; i < groups.size(); ++i) merged[root(i)].Add(groups[i].box);
+
+    auto anchor = [&](const Box& m) {
+        if (m.x0 < third && m.x1 > 2.0f * third) return centred;   // across the screen
+        const float fromLeft = m.x0;
+        const float fromRight = width - m.x1;
+        const float fromMiddle = std::fabs((m.x0 + m.x1) * 0.5f - width * 0.5f);
+        if (fromMiddle <= fromLeft && fromMiddle <= fromRight) return centred;
+        return fromLeft < fromRight ? left : right;
+    };
+    // Once per part and placement, what was decided and from what: enough to
+    // name the part and the numbers behind any element that ends up somewhere
+    // odd, without a line per frame.
+    static bool s_noted[20][3] = {};
     for (size_t i = 0; i < groups.size(); ++i) {
         const Box& m = merged[root(i)];
-        const float offset = m.x1 <= third           ? left
-                             : m.x0 >= 2.0f * third  ? right
-                                                     : centred;
+        const bool world = HudPartIsWorldAnchored(groups[i].part);
+        const float offset = world ? centred : anchor(m);
         for (size_t d = groups[i].start; d < groups[i].end; ++d) out[d] = offset;
+        const int slot = groups[i].part < 0 ? 19 : groups[i].part;
+        const int how = offset == left ? 0 : (offset == right ? 2 : 1);
+        if (slot < 20 && !s_noted[slot][how]) {
+            s_noted[slot][how] = true;
+            Log("hud: part %d placed %s%s (x %.0f-%.0f, y %.0f-%.0f of %d)", groups[i].part,
+                how == 0 ? "left" : (how == 2 ? "right" : "centred"),
+                world ? " (world)" : "", m.x0, m.x1, m.y0, m.y1, gameWidth_);
+        }
     }
     return out;
 }
