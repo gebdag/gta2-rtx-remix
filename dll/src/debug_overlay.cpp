@@ -14,6 +14,7 @@
 #include "texture_store.h"
 #include "time_of_day.h"
 #include "gibs.h"
+#include "light_bench.h"
 #include "world_view.h"
 
 #include <cmath>
@@ -722,6 +723,21 @@ void DrawExtraLights() {
     if (ImGui::Checkbox("Add lights GTA2 never had", &s.enabled)) SyntheticLightsMarkDirty();
     Help("Gunfire, fires, sparks and headlight beams. GTA2 emits no light for any of them; these "
          "are invented from its live particle and vehicle lists.");
+
+    // How many lights the bridge really carries, measured. See light_bench.h.
+    if (ImGui::CollapsingHeader("Light benchmark")) {
+        if (LightBenchRunning()) {
+            if (ImGui::Button("Stop benchmark")) LightBenchStop();
+        } else if (ImGui::Button("Run light benchmark")) {
+            LightBenchStart();
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(LightBenchStatus());
+        ImGui::TextColored(kDim, "Adds dim lights around the camera in steps up to 6400, still "
+                                 "and then moving, about a minute and a half in all. Stand "
+                                 "somewhere quiet and leave the game alone while it runs. "
+                                 "Results: gta2dx9_lightbench.csv and gta2dx9.log.");
+    }
 
     if (!s.enabled) return;
 

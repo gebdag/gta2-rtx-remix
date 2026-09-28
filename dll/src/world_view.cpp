@@ -12,6 +12,7 @@
 #include "debug_overlay.h"
 #include "frame_limiter.h"
 #include "game_access.h"
+#include "light_bench.h"
 #include "log.h"
 #include "remix_api.h"
 #include "remix_lights.h"
@@ -1047,11 +1048,17 @@ void WorldView::RenderFrame() {
     // its particle and vehicle lists. Before the reconcile, so they are matched
     // and handled in the same pass as the game's own.
     SyntheticLightsUpdate();
+    // The light benchmark's own lights, when one is running. See light_bench.h.
+    LightBenchSubmit();
 
     // The game lists this frame's lights during its own world pass, which runs
     // between gbh_BeginScene and the gbh_EndScene that brought us here - so by
     // now the list is complete and can be matched against what Remix already has.
+    // Timed, for the benchmark: this is where every CreateLight crosses the bridge.
+    LARGE_INTEGER lightTimer[4] = {};
+    QueryPerformanceCounter(&lightTimer[0]);
     LightsReconcile();
+    QueryPerformanceCounter(&lightTimer[1]);
 
     if (renderer_.BeginFrame()) {
         renderer_.DrawWorld(camera_);
@@ -1076,7 +1083,9 @@ void WorldView::RenderFrame() {
         DebugMenuRender();
         // Remix clears its per-frame light list every frame, so a light is in the
         // scene exactly when it is drawn here. Last thing before the flip.
+        QueryPerformanceCounter(&lightTimer[2]);
         LightsDraw();
+        QueryPerformanceCounter(&lightTimer[3]);
         renderer_.EndFrame();
     }
 
@@ -1133,6 +1142,14 @@ void WorldView::RenderFrame() {
     // between 30 fps and none at all, so the number lives here instead. See
     // frame_limiter.h for what a cap above 30 does to the game's speed.
     FrameLimitWait();
+
+    if (LightBenchRunning()) {
+        LARGE_INTEGER frequency;
+        QueryPerformanceFrequency(&frequency);
+        const double toMs = 1000.0 / static_cast<double>(frequency.QuadPart);
+        LightBenchRecord(static_cast<double>(lightTimer[1].QuadPart - lightTimer[0].QuadPart) * toMs,
+                         static_cast<double>(lightTimer[3].QuadPart - lightTimer[2].QuadPart) * toMs);
+    }
 }
 
 }  // namespace gta2dx9
