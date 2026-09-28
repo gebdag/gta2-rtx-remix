@@ -333,6 +333,9 @@ constexpr uintptr_t kParticleLiveHead = 0x04;
 constexpr uintptr_t kParticleNext = 0x3C;
 constexpr uintptr_t kParticleLife = 0x2C;  // int16, frames remaining
 constexpr uintptr_t kParticleLifeStart = 0x2E;  // int16, what the life started at
+// Movement per frame along the ground, x then y, 16.14 fixed (FUN_0048C930 stores
+// them; FUN_0048C270 adds them to the position at +0x08 each frame).
+constexpr uintptr_t kParticleVelocity = 0x14;
 constexpr uintptr_t kParticleType = 0x38;  // int32
 
 // The sprite number the particle bank (object type 0x70, code_obj 305-509) starts
@@ -404,6 +407,8 @@ constexpr int kBrakeLightDelta = 5;
 constexpr uintptr_t kSpriteObjectNumber = 0x22;
 constexpr uintptr_t kSpriteObjectBase = 0x30;
 constexpr int32_t kSpriteBaseCar = 2;
+// What particles set with FUN_004206F0(8): the code_obj base.
+constexpr int32_t kSpriteBaseCodeObj = 8;
 // The occupant. Found by the structure probe correlating pointer fields against
 // which cars actually moved: this one is a pointer on 100% of moving cars and on
 // 0% of parked ones, and it points into the entity heap rather than the

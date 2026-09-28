@@ -525,6 +525,17 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
 
+    // Limbs are drawn larger than their artwork. See gibs.cpp.
+    const float scale = corners == 4 ? GibsCurrentScale() : 1.0f;
+    if (scale != 1.0f) {
+        const float mx = (out[0].x + out[1].x + out[2].x + out[3].x) * 0.25f;
+        const float mz = (out[0].z + out[1].z + out[2].z + out[3].z) * 0.25f;
+        for (int i = 0; i < 4; ++i) {
+            out[i].x = mx + (out[i].x - mx) * scale;
+            out[i].z = mz + (out[i].z - mz) * scale;
+        }
+    }
+
     // Only quads come through here - gbh_DrawQuad and gbh_DrawQuadClipped are the
     // only callers - and Place measures the frame from four corners.
     if (corners != 4) {

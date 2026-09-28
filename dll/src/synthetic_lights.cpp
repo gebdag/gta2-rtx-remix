@@ -202,15 +202,14 @@ void EnsureBinding() {
     head.forwardOffset = 0.40f;
     head.maxLights = 40;
 
-    // Two faint red lamps while a car brakes, day or night: the game shows the
-    // same delta whatever the time, so the light follows it rather than the sun.
-    // A small bulb just behind the tail rather than the global one over the car:
-    // the global sphere is 0.15 tiles and reached into the car and the road. A
-    // smaller sphere and a shorter reach both give less light, which the
-    // brightness makes up.
+    // Two faint red lamps while a car brakes, and only after dark: in daylight
+    // the delta on the sprite says it all. A small bulb just behind the tail
+    // rather than the global one over the car: the global sphere is 0.15 tiles
+    // and reached into the car and the road.
     SyntheticCategorySettings& brake = g_settings.category[kSynthBrake];
+    brake.gate.enabled = true;
     brake.rgb[0] = 1.0f; brake.rgb[1] = 0.06f; brake.rgb[2] = 0.03f;
-    brake.intensity = 8.0f;
+    brake.intensity = 1.2f;
     brake.radius = 0.1f;
     brake.bulbSize = 0.06f;
     brake.forwardOffset = 0.08f;
@@ -222,8 +221,8 @@ void EnsureBinding() {
     // lighting the street, and it crackles rather than burns.
     SyntheticCategorySettings& electric = g_settings.category[kSynthElectric];
     electric.rgb[0] = 0.55f; electric.rgb[1] = 0.68f; electric.rgb[2] = 1.0f;
-    electric.intensity = 1.0f;
-    electric.radius = 2.0f;
+    electric.intensity = 0.045f;
+    electric.radius = 1.3f;
     electric.heightOffset = 0.1f;
     electric.flicker = 0.6f;
     electric.maxLights = 10;

@@ -28,6 +28,10 @@ bool GibsHideCurrentSprite();
 // in. The hook lives here because gibs needed it first.
 const void* GameObjectBeingDrawn();
 
+// How much larger than its artwork the sprite being drawn should be: more than 1
+// for a limb, 1 for everything else.
+float GibsCurrentScale();
+
 // Routes GTA2's ped death handler through us, so a death can be looked at before
 // the game handles it. Leaves a gta2.exe that is not the build these addresses
 // came from alone. The setting is read on every death, so this goes in whether

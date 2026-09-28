@@ -85,6 +85,10 @@ constexpr int32_t kRemoveType = 8;
 constexpr size_t kMaxResting = 36;
 // Bodies hidden at once; a long fight leaves a few, never this many.
 constexpr size_t kMaxHidden = 32;
+// How much larger than the artwork limbs are drawn. The limb sprites are 6 to
+// 20 pixels, drawn as they are beside a body 24 to 30 pixels long they read as
+// crumbs.
+constexpr float kGibScale = 1.5f;
 
 std::vector<uint8_t*> g_flying;     // limbs still in the air
 std::deque<uint8_t*> g_resting;     // limbs on the ground, oldest first
@@ -127,6 +131,13 @@ int16_t ParticleBase() {
     return *reinterpret_cast<const int16_t*>(bank + game::kParticleSpriteBase);
 }
 
+// Our own, so throwing gibs does not draw on the game's random numbers.
+uint32_t Random(uint32_t below) {
+    static uint32_t state = GetTickCount() | 1;
+    state = state * 1664525u + 1013904223u;
+    return below ? (state >> 8) % below : 0;
+}
+
 using BloodSpray = void(__thiscall*)(void* effects, int32_t x, int32_t y, int32_t z,
                                      uint32_t angle);
 using SetSprite = void(__thiscall*)(void* sprite, uint32_t number);
@@ -148,28 +159,48 @@ void ThrowGibs(const uint8_t* ped) {
     spray(effects, x, y, z, 0);
     spray(effects, x, y, z, half);
 
-    // Then one more, whose particles become the limbs. New particles go on the
-    // head of the live list (FUN_0048A900), so they are the ones in front of the
-    // head as it was before.
-    const uint8_t* before = game::ParticleListHead();
-    spray(effects, x, y, z, half / 2);
+    // Then a spray per limb. One spray only fans its six particles a few
+    // degrees either side of its angle (FUN_0048C9C0 adds rand(16) of 1440), so
+    // six limbs out of one spray all flew the same way. Each limb gets its own
+    // spray at an angle of its own instead, keeps the first particle of it and
+    // lets the rest go, and flies at a speed and for a time of its own.
+    //
+    // New particles go on the head of the live list (FUN_0048A900), so a spray's
+    // are the ones in front of the head as it was before.
     int limb = 0;
-    uint8_t* particle = game::ParticleListHead();
-    for (int guard = 0; particle && particle != before && guard < 32; ++guard) {
-        if (ParticleType(particle) == 1) {
-            void* sprite = *reinterpret_cast<void* const*>(particle + game::kParticlePlacementPtr);
-            if (game::PlausiblePointer(sprite)) {
-                setSprite(sprite, static_cast<uint16_t>(particleBase + game::kGibSpriteOffset +
-                                                        limb % game::kGibSprites));
-                // A longer life is a longer arc: the particle climbs for the first
-                // half and falls for the second, so limbs fly further than drops.
-                *reinterpret_cast<int16_t*>(particle + game::kParticleLife) = 24;
-                *reinterpret_cast<int16_t*>(particle + game::kParticleLifeStart) = 24;
-                g_flying.push_back(particle);
-                ++limb;
+    for (int piece = 0; piece < game::kGibSprites; ++piece) {
+        const uint8_t* before = game::ParticleListHead();
+        spray(effects, x, y, z, Random(game::kAngleFullTurn));
+        bool taken = false;
+        uint8_t* particle = game::ParticleListHead();
+        for (int guard = 0; particle && particle != before && guard < 16; ++guard) {
+            if (ParticleType(particle) == 1) {
+                void* sprite =
+                    *reinterpret_cast<void* const*>(particle + game::kParticlePlacementPtr);
+                if (!taken && game::PlausiblePointer(sprite)) {
+                    setSprite(sprite, static_cast<uint16_t>(particleBase + game::kGibSpriteOffset +
+                                                            piece));
+                    // Speed along the ground, 0.6 to 1.8 of the spray's own.
+                    const float speed = 0.6f + static_cast<float>(Random(1200)) / 1000.0f;
+                    int32_t* velocity =
+                        reinterpret_cast<int32_t*>(particle + game::kParticleVelocity);
+                    velocity[0] = static_cast<int32_t>(static_cast<float>(velocity[0]) * speed);
+                    velocity[1] = static_cast<int32_t>(static_cast<float>(velocity[1]) * speed);
+                    // A longer life is a longer arc: the particle climbs for the
+                    // first half and falls for the second.
+                    const int16_t life = static_cast<int16_t>(18 + Random(15));
+                    *reinterpret_cast<int16_t*>(particle + game::kParticleLife) = life;
+                    *reinterpret_cast<int16_t*>(particle + game::kParticleLifeStart) = life;
+                    g_flying.push_back(particle);
+                    taken = true;
+                    ++limb;
+                } else {
+                    // The other five of the spray; the update removes type 8.
+                    *reinterpret_cast<int32_t*>(particle + game::kParticleType) = kRemoveType;
+                }
             }
+            particle = game::NextInList(particle, game::kParticleNext);
         }
-        particle = game::NextInList(particle, game::kParticleNext);
     }
 
     // The body's sprite, so the sprite pass can leave it out.
@@ -351,6 +382,20 @@ void GibsReset() {
 }
 
 const void* GameObjectBeingDrawn() { return g_drawing; }
+
+float GibsCurrentScale() {
+    const uint8_t* object = static_cast<const uint8_t*>(g_drawing);
+    if (!object) return 1.0f;
+    if (*reinterpret_cast<const int32_t*>(object + game::kSpriteObjectBase) !=
+        game::kSpriteBaseCodeObj) {
+        return 1.0f;
+    }
+    const int16_t particleBase = ParticleBase();
+    if (particleBase < 0) return 1.0f;
+    const int number = *reinterpret_cast<const uint16_t*>(object + game::kSpriteObjectNumber);
+    const int first = particleBase + game::kGibSpriteOffset;
+    return (number >= first && number < first + game::kGibSprites) ? kGibScale : 1.0f;
+}
 
 bool GibsHideCurrentSprite() {
     const void* drawing = g_drawing;
