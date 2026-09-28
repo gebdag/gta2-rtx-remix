@@ -11,26 +11,31 @@
 // The parts. The HUD draw is nothing but nineteen calls in a row, one per part
 // of the HUD (FUN_004CA440):
 //
+// Coordinates below are the 640x480 canvas, and the first value each routine
+// computes is y, the second x.
+//
 //    0  FUN_004C6DA0  nothing drawn
-//    1  FUN_004C9C20  score, lives, multiplier, weapon and power-up icons (right);
-//                     the multiplayer score list (left)
+//    1  FUN_004C9C20  score, lives, multiplier (from 639), weapon and ammo (638 less
+//                     half the icon), power-ups leftward from it: right. The
+//                     multiplayer score list (x 16) and timer: left
 //    2  FUN_004C74A0  the marker over a target               - world
 //    3  FUN_004C78A0  multiplayer names over the players     - world
-//    4  FUN_004C7A30  a row of icons
-//    5  FUN_004C74F0  gang respect bars (left)
-//    6  FUN_004C7B70  health hearts (right)
-//    7  FUN_004C9890  a framed message centred on 320 (the zone name)
-//    8  FUN_004C94F0  a centred box
-//    9  FUN_004C9690  a centred line
-//   10  FUN_004C9430  a right-aligned line and its icon
-//   11  FUN_004C92A0  counters in boxes (left)
-//   12  FUN_004C8C80  the text items: messages, the talking head's lines
+//    4  FUN_004C7A30  a row of icons centred on 320           - centred
+//    5  FUN_004C74F0  gang respect bars, x 16-93: left
+//    6  FUN_004C7B70  health hearts from 551: right
+//    7  FUN_004C9890  the zone name, framed, centred on 320   - centred
+//    8  FUN_004C94F0  a box centred on 320                    - centred
+//    9  FUN_004C9690  a line centred on 320                   - centred
+//   10  FUN_004C9430  the talking head: portrait at x 32 near the bottom and
+//                     the subtitle from x 64, stacked up from 480 - centred
+//   11  FUN_004C92A0  counters in boxes near x 0: left
+//   12  FUN_004C8C80  text items at positions of their own
 //   13  FUN_004C84C0  arrows pointing at targets              - world
-//   14  FUN_004C96F0  a centred line
-//   15  FUN_004C8A40  a line at a position of its own
-//   16  FUN_004C9FA0  the pause screen (centred)
-//   17  FUN_004C8910  multiplayer chat (left)
-//   18  FUN_004C8710  the quit prompt (centred), reached by a tail jump
+//   14  FUN_004C96F0  a line centred on 320                   - centred
+//   15  FUN_004C8A40  the big messages                        - centred
+//   16  FUN_004C9FA0  the pause and stats screen              - centred
+//   17  FUN_004C8910  multiplayer chat from x 0: left
+//   18  FUN_004C8710  the quit prompt, reached by a tail jump - centred
 //
 // Each call is pointed at a stub of its own that notes the part and jumps on to
 // the function it replaced, so the overlay can keep parts apart: one part's
@@ -176,5 +181,14 @@ int HudPassPart() {
 }
 
 bool HudPartIsWorldAnchored(int part) { return part == 2 || part == 3 || part == 13; }
+
+bool HudPartIsCentred(int part) {
+    switch (part) {
+        case 4: case 7: case 8: case 9: case 10: case 14: case 15: case 16: case 18:
+            return true;
+        default:
+            return false;
+    }
+}
 
 }  // namespace gta2dx9

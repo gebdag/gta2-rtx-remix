@@ -23,4 +23,10 @@ int HudPassPart();
 // and so have to stay where the world is on any screen.
 bool HudPartIsWorldAnchored(int part);
 
+// Parts the game lays out around the middle of the screen - the zone name, the
+// talking head and its subtitle, the big messages, the pause screen - which stay
+// centred however little of them there is. A two-word subtitle beside its
+// portrait sits nearest the left edge, and is still centred.
+bool HudPartIsCentred(int part);
+
 }  // namespace gta2dx9

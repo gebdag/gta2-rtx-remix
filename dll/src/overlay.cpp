@@ -489,10 +489,17 @@ IDirect3DTexture9* Overlay::ResolveMovie(IDirect3DDevice9* device) {
 // part (hud_pass.cpp), and grouping across them is what let one element decide
 // for another: the zone name, appearing at the top between the corners, joined
 // them into one element spanning the screen, and the corners came in to the
-// middle for as long as it showed. Parts are never grouped together. The parts
-// that place things at a projected world position - the marker over a target,
-// the arrows pointing at one, multiplayer names - always keep the centred
-// placement, which is the one that lines up with the world.
+// middle for as long as it showed. Parts are never grouped together.
+//
+// And most parts need no deciding at all. The ones the game lays out around 320
+// - the zone name, the talking head and its subtitle, the big messages, the
+// pause and quit screens - are centred outright, since a short subtitle beside
+// its portrait sits nearest the left edge and still belongs in the middle. The
+// ones that place things at a projected world position - the marker over a
+// target, the arrows pointing at one, multiplayer names - keep the centred
+// placement too, which is the one that lines up with the world. Only the parts
+// built against an edge - score and weapon, respect bars, hearts, counters,
+// text items, chat - go through the anchor test above.
 //
 // Only the HUD moves. Screen-space draws tied to the world - money over a
 // pedestrian, text over an object - keep the centred placement too; so do the
@@ -613,7 +620,7 @@ std::vector<float> Overlay::HorizontalOffsets(float scale, float centred) const 
     for (size_t i = 0; i < groups.size(); ++i) {
         const Box& m = merged[root(i)];
         const bool world = HudPartIsWorldAnchored(groups[i].part);
-        const float offset = world ? centred : anchor(m);
+        const float offset = (world || HudPartIsCentred(groups[i].part)) ? centred : anchor(m);
         for (size_t d = groups[i].start; d < groups[i].end; ++d) out[d] = offset;
         const int slot = groups[i].part < 0 ? 19 : groups[i].part;
         const int how = offset == left ? 0 : (offset == right ? 2 : 1);
