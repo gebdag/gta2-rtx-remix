@@ -220,6 +220,7 @@ const LiveGeometry::Conform& SpriteConformCounts() { return g_lastConform; }
 
 void LiveGeometry::BeginFrame() {
     sprites_.clear();
+    lastObject_ = nullptr;
     stacks_.clear();
     spriteQuads_ = 0;
     effectQuads_ = 0;
@@ -499,7 +500,7 @@ bool LiveGeometry::Place(const Vertex* world, int corners, const Vec3& centre,
 }
 
 void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* vertices,
-                             int corners) {
+                             int corners, bool lamps) {
     if (!texture || !vertices) return;
     // With this flag only vertex 0 is filled in, so the other three shadow slots
     // still hold whatever the previous draw left there.
@@ -524,6 +525,37 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
 
     Vertex out[4];
     if (!ReadCorners(vertices, corners, texture, game::kSpriteVertexArray, out)) return;
+
+    // A car's lamps, laid on its body.
+    //
+    // The game draws them as a second quad with exactly the body's corners - the
+    // same vertex array, only the texture coordinates set again (FUN_004B9BC0) -
+    // and placed on its own it drifted from the body: a ground fit, a smoothing
+    // history and a stack layer of its own, which on a slope or a kerb left the
+    // lamps inside the car. So it takes the body's placement outright, shape and
+    // transform, and sits a hair above it along the body's own normal, where it
+    // cannot end up anywhere but on top.
+    if (lamps) {
+        const void* object = GameObjectBeingDrawn();
+        if (object && object == lastObject_ && lastSprite_ < sprites_.size() && corners == 4) {
+            Sprite placed = sprites_[lastSprite_];
+            placed.texture = texture;
+            // The quad's own up can face the ground, depending on how the game
+            // wound it; "above" is whichever way its frame's up points in the
+            // world.
+            const float above = placed.objectToWorld.m[1][1] >= 0.0f ? 1.0f : -1.0f;
+            for (int i = 0; i < 4; ++i) {
+                placed.local[i].u = out[i].u;
+                placed.local[i].v = out[i].v;
+                placed.local[i].y += kConformClearance * above;
+            }
+            sprites_.push_back(placed);
+            ++spriteQuads_;
+            ++drops_.accepted;
+            return;
+        }
+        // No body this frame to lay them on; placed like any other sprite.
+    }
 
     // Limbs are drawn larger than their artwork. See gibs.cpp.
     const float scale = corners == 4 ? GibsCurrentScale() : 1.0f;
@@ -812,6 +844,8 @@ void LiveGeometry::AddSprite(unsigned flags, const void* texture, const float* v
         const float nudge = static_cast<float>(bits & 0xFFFF) * (1.0f / 1073741824.0f);
         for (int i = 0; i < placed.corners; ++i) placed.local[i].y += nudge;
     }
+    lastObject_ = GameObjectBeingDrawn();
+    lastSprite_ = sprites_.size();
     sprites_.push_back(placed);
     ++spriteQuads_;
     ++drops_.accepted;

@@ -202,7 +202,12 @@ public:
 
     // A sprite quad or triangle. `vertices` is the game's screen-space array;
     // the world positions are read from its shadow slots.
-    void AddSprite(unsigned flags, const void* texture, const float* vertices, int corners);
+    //
+    // `lamps` marks the second quad the game draws for a car, its lit lamps on
+    // their own (see kObjectDrawLampsReturn). That one is not placed on its own
+    // at all: it takes the car body's placement from the draw just before it.
+    void AddSprite(unsigned flags, const void* texture, const float* vertices, int corners,
+                   bool lamps = false);
 
     void Draw(IDirect3DDevice9* device, const gta2::Camera& camera, int width, int height);
     void ReleaseResources();
@@ -279,6 +284,10 @@ private:
 
     const GroundSampler* ground_ = nullptr;
     std::vector<Sprite> sprites_;
+    // The last sprite placed and the game object it was drawn for, so a car's
+    // lamp quad can be laid on its body.
+    const void* lastObject_ = nullptr;
+    size_t lastSprite_ = 0;
     int spriteQuads_ = 0;
     int effectQuads_ = 0;
     int spriteLogs_ = 0;

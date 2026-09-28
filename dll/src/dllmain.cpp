@@ -593,12 +593,12 @@ __declspec(dllexport) void __stdcall gbh_DrawQuad(unsigned flags, void* texture,
     }
     if (game::IsObjectDraw(_ReturnAddress())) {
         // A car's lamps, drawn apart from its body. Lights take their place when
-        // the car lamp category is on. See kSynthCarLamp.
-        if (reinterpret_cast<uintptr_t>(_ReturnAddress()) == game::kObjectDrawLampsReturn &&
-            gta2dx9::SyntheticCarLampsReplaceQuads()) {
-            return;
-        }
-        g_world.Live().AddSprite(flags, texture, vertices, 4);
+        // the car lamp category is on; otherwise the quad is laid on the body.
+        // See kSynthCarLamp and LiveGeometry::AddSprite.
+        const bool lamps =
+            reinterpret_cast<uintptr_t>(_ReturnAddress()) == game::kObjectDrawLampsReturn;
+        if (lamps && gta2dx9::SyntheticCarLampsReplaceQuads()) return;
+        g_world.Live().AddSprite(flags, texture, vertices, 4, lamps);
         return;
     }
     g_world.GetOverlay().Quad(flags, texture, vertices, shade);
@@ -615,12 +615,12 @@ __declspec(dllexport) void __stdcall gbh_DrawQuadClipped(unsigned flags, void* t
     }
     if (game::IsObjectDraw(_ReturnAddress())) {
         // A car's lamps, drawn apart from its body. Lights take their place when
-        // the car lamp category is on. See kSynthCarLamp.
-        if (reinterpret_cast<uintptr_t>(_ReturnAddress()) == game::kObjectDrawLampsReturn &&
-            gta2dx9::SyntheticCarLampsReplaceQuads()) {
-            return;
-        }
-        g_world.Live().AddSprite(flags, texture, vertices, 4);
+        // the car lamp category is on; otherwise the quad is laid on the body.
+        // See kSynthCarLamp and LiveGeometry::AddSprite.
+        const bool lamps =
+            reinterpret_cast<uintptr_t>(_ReturnAddress()) == game::kObjectDrawLampsReturn;
+        if (lamps && gta2dx9::SyntheticCarLampsReplaceQuads()) return;
+        g_world.Live().AddSprite(flags, texture, vertices, 4, lamps);
         return;
     }
     g_world.GetOverlay().Quad(flags, texture, vertices, shade);

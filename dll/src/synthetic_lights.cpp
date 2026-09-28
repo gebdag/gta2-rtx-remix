@@ -244,7 +244,10 @@ void EnsureBinding() {
     // glowed at all. The beams and the red glow on the road are the headlight and
     // brake light categories; this is the lamp itself. Day and night, as the
     // game shows it.
+    // Off by default: bulbs read soft on a moving car, where the game's own lamp
+    // artwork with an emissive stays crisp.
     SyntheticCategorySettings& lamp = g_settings.category[kSynthCarLamp];
+    lamp.enabled = false;
     lamp.intensity = 1.0f;
     lamp.radius = 0.3f;
     lamp.bulbSize = 0.035f;
