@@ -185,11 +185,12 @@ struct Vec3 {
 
 class MeshBuilder {
 public:
-    // One past the style's own tiles, for the seal - see SealTileIndex.
+    // Two past the style's own tiles, for the seal and the riverbed - see
+    // SealTileIndex and RiverbedTileIndex.
     explicit MeshBuilder(const Style& style) : style_(style) {
         for (int keyed = 0; keyed < 2; ++keyed) {
-            perTile_[keyed].resize(style.TileCount() + 1);
-            perTileTriangle_[keyed].resize(style.TileCount() + 1);
+            perTile_[keyed].resize(style.TileCount() + 2);
+            perTileTriangle_[keyed].resize(style.TileCount() + 2);
         }
     }
 
@@ -197,6 +198,23 @@ public:
     // corners are given anticlockwise seen from the side the normal points at,
     // and the winding is worked out the same way AddFaceUv does it.
     void AddSealQuad(const std::array<Vec3, 4>& corners, Vec3 normal) {
+        // The texture is one flat colour, so the coordinates only have to be
+        // inside it; the corners of the tile keep the mapping obvious.
+        static const std::array<Uv, 4> kUv = {{{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f},
+                                              {0.0f, 1.0f}}};
+        AddPlainQuad(SealTileIndex(style_), corners, normal, kUv);
+    }
+
+    // One cell of riverbed, face up. Its coordinates come from the world, one
+    // repeat per block, so the sand runs on across cells without a seam.
+    void AddRiverbedQuad(const std::array<Vec3, 4>& corners) {
+        std::array<Uv, 4> uv;
+        for (int i = 0; i < 4; ++i) uv[i] = Uv{corners[i].x, corners[i].z};
+        AddPlainQuad(RiverbedTileIndex(style_), corners, {0.0f, 1.0f, 0.0f}, uv);
+    }
+
+    void AddPlainQuad(int slot, const std::array<Vec3, 4>& corners, Vec3 normal,
+                      const std::array<Uv, 4>& uv) {
         const Vec3 edge1{corners[1].x - corners[0].x, corners[1].y - corners[0].y,
                          corners[1].z - corners[0].z};
         const Vec3 edge2{corners[2].x - corners[0].x, corners[2].y - corners[0].y,
@@ -209,14 +227,11 @@ public:
         static const int kForward[4] = {0, 1, 2, 3};
         static const int kReverse[4] = {0, 3, 2, 1};
         const int* order = reversed ? kReverse : kForward;
-        // The texture is one flat colour, so the coordinates only have to be
-        // inside it; the corners of the tile keep the mapping obvious.
-        static const Uv kUv[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
-        std::vector<Vertex>& out = perTile_[0][static_cast<size_t>(SealTileIndex(style_))];
+        std::vector<Vertex>& out = perTile_[0][static_cast<size_t>(slot)];
         for (int i = 0; i < 4; ++i) {
-            const int slot = order[i];
-            out.push_back(Vertex{corners[slot].x, corners[slot].y, corners[slot].z, normal.x,
-                                 normal.y, normal.z, kUv[slot].u, kUv[slot].v});
+            const int corner = order[i];
+            out.push_back(Vertex{corners[corner].x, corners[corner].y, corners[corner].z,
+                                 normal.x, normal.y, normal.z, uv[corner].u, uv[corner].v});
         }
     }
 
@@ -245,6 +260,19 @@ public:
         if (tile <= 0 || tile >= static_cast<int>(perTile_[0].size())) return;
 
         const float push = (face.IsFlat() ? kFlatFaceOffset : 0.0f) + extraPush;
+
+        // Water lids take their coordinates from the world - see
+        // SetWaterUvBlocks. Only lids: a water tile hung on a wall is a
+        // picture of water, and keeps its orientation.
+        std::array<Uv, 4> worldUv;
+        const std::array<Uv, 4>* texcoords = &uv;
+        const float repeat = WaterUvBlocks();
+        if (repeat > 0.0f && normal.y > 0.5f && style_.IsWaterTile(tile)) {
+            for (int i = 0; i < 4; ++i) {
+                worldUv[i] = Uv{corners[i].x / repeat, corners[i].z / repeat};
+            }
+            texcoords = &worldUv;
+        }
 
         // Slot order differs per face, so winding is derived from the geometry
         // rather than assumed: if the corners wind away from the outward normal,
@@ -291,7 +319,7 @@ public:
                                  corners[slot].y + surface.y * push,
                                  corners[slot].z + surface.z * push,
                                  surface.x, surface.y, surface.z,
-                                 uv[slot].u, uv[slot].v});
+                                 (*texcoords)[slot].u, (*texcoords)[slot].v});
         }
     }
 
@@ -953,10 +981,66 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
 
 namespace {
 bool g_seal = true;
+float g_waterUvBlocks = kDefaultWaterUvBlocks;
+float g_riverbedDepth = kDefaultRiverbedDepth;
+
+// See SetRiverbedDepth.
+void AddRiverbed(MeshBuilder* builder, const Map& map, const Style& style, float depth) {
+    constexpr float kNone = 1e9f;
+    std::vector<float> bed(static_cast<size_t>(kMapWidth) * kMapHeight, kNone);
+    for (int y = 0; y < kMapHeight; ++y) {
+        for (int x = 0; x < kMapWidth; ++x) {
+            const Column& column = map.ColumnAt(x, y);
+            for (size_t i = 0; i < column.blocks.size(); ++i) {
+                const uint32_t index = column.blocks[i];
+                if (index >= map.BlockCount()) continue;
+                const Block& block = map.BlockAt(index);
+                if (!block.lid || !style.IsWaterTile(block.lid.Tile())) continue;
+                const float floor =
+                    static_cast<float>(column.offset + static_cast<int>(i)) + 1.0f - depth;
+                for (int dy = -kRiverbedPad; dy <= kRiverbedPad; ++dy) {
+                    for (int dx = -kRiverbedPad; dx <= kRiverbedPad; ++dx) {
+                        const int cx = x + dx, cy = y + dy;
+                        if (cx < 0 || cy < 0 || cx >= kMapWidth || cy >= kMapHeight) continue;
+                        float& at = bed[static_cast<size_t>(cy) * kMapWidth + cx];
+                        if (floor < at) at = floor;
+                    }
+                }
+            }
+        }
+    }
+    for (int y = 0; y < kMapHeight; ++y) {
+        for (int x = 0; x < kMapWidth; ++x) {
+            const float h = bed[static_cast<size_t>(y) * kMapWidth + x];
+            if (h >= kNone) continue;
+            // The same mirroring as AddBlock: map row y is the cell from
+            // kMapHeight - y - 1 to kMapHeight - y in Z.
+            const float xWest = static_cast<float>(x);
+            const float zSouth = static_cast<float>(kMapHeight - y - 1);
+            builder->AddRiverbedQuad({{{xWest, h, zSouth + 1.0f},
+                                       {xWest + 1.0f, h, zSouth + 1.0f},
+                                       {xWest + 1.0f, h, zSouth},
+                                       {xWest, h, zSouth}}});
+        }
+    }
+}
 }  // namespace
+
+void SetRiverbedDepth(float blocks) {
+    // Above the seal, which is kSealDepth below level 0 - a sea-level bed any
+    // deeper would sit under it.
+    const float deepest = kSealDepth + 0.9f;
+    g_riverbedDepth = blocks < 0.0f ? 0.0f : (blocks > deepest ? deepest : blocks);
+}
+float RiverbedDepth() { return g_riverbedDepth; }
 
 void SetWorldSeal(bool on) { g_seal = on; }
 bool WorldSeal() { return g_seal; }
+
+void SetWaterUvBlocks(float blocks) {
+    g_waterUvBlocks = blocks < 0.0f ? 0.0f : (blocks > 64.0f ? 64.0f : blocks);
+}
+float WaterUvBlocks() { return g_waterUvBlocks; }
 
 void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
                     const PartialCuts& cuts, WorldMesh* out) {
@@ -978,6 +1062,7 @@ void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,
             }
         }
     }
+    if (g_riverbedDepth > 0.0f) AddRiverbed(&builder, map, style, g_riverbedDepth);
     if (g_seal) {
         // One quad, face up, below everything and reaching well past the map on
         // every side. Winding is left to AddSealQuad; the normal is what says

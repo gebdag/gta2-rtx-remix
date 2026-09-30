@@ -19,6 +19,7 @@ A Direct3D 9 renderer for GTA2, built for RTX Remix.
 - Translation of the games lights plus generating of lights from game events such as explosions, fires, gunfire
 - Dynamic time of day (Remix Plus only)
 - Emissive maps for some of the game's textures, shipped as a Remix mod
+- Animated water with a sandy riverbed you can see through it, shipped as its own Remix mod
 - Full 16:9: cars and pedestrians no longer pop in and out at the sides of the screen
 - 60fps possible via FG
 - F4 in game settings panel for adjusting lighting and time of day

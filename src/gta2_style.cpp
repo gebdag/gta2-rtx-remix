@@ -56,6 +56,7 @@ bool Style::Load(const std::string& path, std::string* error) {
     spriteGraphics_.clear();
     deltas_.clear();
     deltaStore_.clear();
+    waterTiles_.clear();
     palettes_.clear();
     paletteIndex_.clear();
     tilePalettes_ = 0;
@@ -96,6 +97,20 @@ bool Style::Load(const std::string& path, std::string* error) {
             delxSize = size;
         } else if (!strcmp(tag, "DELS")) {
             deltaStore_.assign(data.begin() + body, data.begin() + body + size);
+        } else if (!strcmp(tag, "SPEC")) {
+            // See IsWaterTile: the third zero-terminated list.
+            constexpr int kWaterList = 2;
+            int list = 0;
+            for (size_t at = body; at + 2 <= body + size; at += 2) {
+                const uint16_t tile = ReadU16(&data[at]);
+                if (!tile) {
+                    if (++list > kWaterList) break;
+                    continue;
+                }
+                if (list != kWaterList) continue;
+                if (tile >= waterTiles_.size()) waterTiles_.resize(tile + 1u, 0);
+                waterTiles_[tile] = 1;
+            }
         }
         offset = body + size;
     }

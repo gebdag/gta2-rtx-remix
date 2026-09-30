@@ -98,6 +98,11 @@ void ResolveSlopeTable(const SlopeInfo* slopes, SlopeInfo* out);
 // real tile's draw call.
 inline int SealTileIndex(const Style& style) { return style.TileCount(); }
 
+// The batch for the riverbed, two past the style's own tiles - see
+// SetRiverbedDepth. Its own texture and so its own stable Remix hash, for a sand
+// material to replace.
+inline int RiverbedTileIndex(const Style& style) { return style.TileCount() + 1; }
+
 // How far below level 0 the seal sits, and how far past the map it reaches. The
 // overhang is what stops a camera near the edge of the city seeing sky under its
 // own feet.
@@ -109,6 +114,44 @@ constexpr float kSealOverhang = 512.0f;
 // change wants a level reload.
 void SetWorldSeal(bool on);
 bool WorldSeal();
+
+// How many blocks one repeat of a water tile's texture spans.
+//
+// GTA2 lays each water tile on its block like any other lid: one whole tile per
+// block, turned however the face word says. Under the original texture that
+// reads as open water. A replacement water material - an animated wave sheet
+// through Remix's sprite_sheet_* inputs - shows it for what it is: the same few
+// metres of waves stamped once per block, a visible grid, with seams wherever a
+// lid is turned. So a water lid (Style::IsWaterTile) instead takes its texture
+// coordinates from its position in the world, one repeat every this many
+// blocks, the same way up everywhere. Remix wraps them itself (frac, with the
+// gradients kept continuous), and so does the D3D9 sampler.
+//
+// A block is about 4 m (rtx.sceneScale), so the default 2.5 makes one repeat
+// 10 m. 0 turns it off and gives water the ordinary per-block coordinates.
+// Read when the mesh is built, so a change wants a level reload.
+constexpr float kDefaultWaterUvBlocks = 2.5f;
+void SetWaterUvBlocks(float blocks);
+float WaterUvBlocks();
+
+// A riverbed under the water, this many blocks below each water lid.
+//
+// GTA2's water is a lid with nothing under it; the original never showed
+// anything through it. Through a translucent water material the path tracer
+// looks straight down to the seal, three blocks below the sea, and the water
+// reads as black. So every water cell gets a sand floor under it - deep enough
+// that a sinking sprite still has water around it before it gets there - and so
+// does every cell within kRiverbedPad of one. The quays have no walls below the
+// waterline, so a view at an angle past a quay edge would otherwise find the
+// black seal under the land. Under land the pad is hidden inside the ground.
+//
+// Where cells of different water heights meet, the lower bed wins, so no water
+// surface ever has sand closer than the depth under it. 0 is no riverbed. Read
+// when the mesh is built, so a change wants a level reload.
+constexpr float kDefaultRiverbedDepth = 1.0f;
+constexpr int kRiverbedPad = 1;
+void SetRiverbedDepth(float blocks);
+float RiverbedDepth();
 
 // slopes may be null, in which case the ramp geometry is derived instead.
 void BuildWorldMesh(const Map& map, const Style& style, const SlopeInfo* slopes,

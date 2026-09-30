@@ -45,8 +45,16 @@ rem The Remix settings GTA2 needs. Kept in package\ like everything else here:
 rem release\ is wiped at the top of this script, so a file only placed there
 rem does not survive the next build.
 copy /y "%~dp0package\rtx.conf" "%OUT%\" >nul || exit /b 1
-rem The Remix mod: emissive maps for the game's own textures, as one
-rem replacement layer (mod.usd) and the ingested masks beside it.
+rem The Remix mods: gta2rtx, emissive maps for the game's own textures, as one
+rem replacement layer (mod.usd) and the ingested masks beside it; gta2water, the
+rem animated water. The water's normal map is over the 1 MB the repository
+rem takes, so it is not checked in - tools\make_water_mod.py builds it - and a
+rem release without it would reference a texture that is not there.
+if not exist "%~dp0package\rtx-remix\mods\gta2water\SubUSDs\water_normal.n.dds" (
+    echo package\rtx-remix\mods\gta2water\SubUSDs\water_normal.n.dds is missing.
+    echo Build it with tools\make_water_mod.py before packaging.
+    exit /b 1
+)
 xcopy "%~dp0package\rtx-remix" "%OUT%\rtx-remix\" /e /i /q /y >nul || exit /b 1
 rem Not README.txt: GTA2 ships a readme.txt and Windows would treat the two as
 rem the same file, so unzipping would overwrite the game's.

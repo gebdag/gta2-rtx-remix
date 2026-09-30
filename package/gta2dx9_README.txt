@@ -14,6 +14,10 @@ Features:
 The mod also comes with emissive maps for some of the games textures,
 including every animation frame of the weapon, vehicle and token pickups.
 
+The water is animated and see-through, with a sandy riverbed underneath.
+It is a separate Remix mod: delete rtx-remix\mods\gta2water for the
+original water.
+
 What you need
 -------------
 
@@ -53,7 +57,8 @@ Uninstalling
 
 1. Put your backed-up d3ddll.dll, Dmavideo.dll and DMAGlide.dll back.
 2. Run uninstall.reg.
-3. Delete the gta2dx9* files and the rtx-remix\mods\gta2rtx folder.
+3. Delete the gta2dx9* files and the rtx-remix\mods\gta2rtx and
+   rtx-remix\mods\gta2water folders.
 4. If you are removing RTX Remix as well, delete rtx.conf and .trex\bridge.conf.
 
 
@@ -86,6 +91,8 @@ Files
     rtx.conf                       Remix settings for GTA2
     .trex\bridge.conf              turns on the Remix API
     rtx-remix\mods\gta2rtx         the emissive maps
+    rtx-remix\mods\gta2water       the animated water; delete this folder to
+                                   get the original water back
     install.reg, uninstall.reg     registry setup, see above
     gta2dx9_LICENSE.txt            MIT licence
     gta2dx9_THIRD_PARTY.txt        third-party notices

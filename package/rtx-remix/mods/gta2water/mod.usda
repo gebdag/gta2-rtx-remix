@@ -1,0 +1,370 @@
+#usda 1.0
+(
+    upAxis = "Y"
+)
+
+over "RootNode"
+{
+    over "Looks"
+    {
+        def Material "mat_A8B83A83052A85C0"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_A8B83A83052A85C0/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_A8B83A83052A85C0/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_A8B83A83052A85C0/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_242CC049392EB1C7"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_242CC049392EB1C7/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_242CC049392EB1C7/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_242CC049392EB1C7/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_8471637CC12C9CCE"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_8471637CC12C9CCE/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_8471637CC12C9CCE/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_8471637CC12C9CCE/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_8D2E06C15AA0A168"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_8D2E06C15AA0A168/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_8D2E06C15AA0A168/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_8D2E06C15AA0A168/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_A41C669D0F88E0FE"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_A41C669D0F88E0FE/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_A41C669D0F88E0FE/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_A41C669D0F88E0FE/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_83DD0D2963D8F8E6"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_83DD0D2963D8F8E6/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_83DD0D2963D8F8E6/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_83DD0D2963D8F8E6/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_27D814B223C008A4"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_27D814B223C008A4/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_27D814B223C008A4/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_27D814B223C008A4/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_EBCCC2CF700A35CE"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_EBCCC2CF700A35CE/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_EBCCC2CF700A35CE/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_EBCCC2CF700A35CE/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_A8EA3821BB08B0BD"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_A8EA3821BB08B0BD/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_A8EA3821BB08B0BD/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_A8EA3821BB08B0BD/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_B2AB657C3297E6E6"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_B2AB657C3297E6E6/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_B2AB657C3297E6E6/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_B2AB657C3297E6E6/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_1CEDF04B826D09CE"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_1CEDF04B826D09CE/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_1CEDF04B826D09CE/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_1CEDF04B826D09CE/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+
+        def Material "mat_9C52D4ABDFF4F6AE"
+        {
+            token outputs:mdl:displacement.connect = </RootNode/Looks/mat_9C52D4ABDFF4F6AE/Shader.outputs:out>
+            token outputs:mdl:surface.connect = </RootNode/Looks/mat_9C52D4ABDFF4F6AE/Shader.outputs:out>
+            token outputs:mdl:volume.connect = </RootNode/Looks/mat_9C52D4ABDFF4F6AE/Shader.outputs:out>
+
+            def Shader "Shader" (
+                kind = "Material"
+            )
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                custom float inputs:ior_constant = 1.33
+                custom asset inputs:normalmap_texture = @./SubUSDs/water_normal.n.dds@ (
+                    colorSpace = "raw"
+                )
+                custom int inputs:sprite_sheet_cols = 12
+                custom int inputs:sprite_sheet_fps = 30
+                custom int inputs:sprite_sheet_rows = 10
+                custom bool inputs:thin_walled = 0
+                custom color3f inputs:transmittance_color = (0.45, 0.75, 0.55)
+                custom float inputs:transmittance_measurement_distance = 1.0
+                custom bool inputs:use_legacy_alpha_state = 0
+                custom int inputs:wrap_mode_u = 0
+                custom int inputs:wrap_mode_v = 0
+                token outputs:out
+            }
+        }
+    }
+}

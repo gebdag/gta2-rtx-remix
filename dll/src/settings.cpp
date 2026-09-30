@@ -199,6 +199,8 @@ void SettingsSaveAll() {
     fprintf(out, "CloseHoles=%d\n", CloseHoles() ? 1 : 0);
     fprintf(out, "CloseHoleMax=%d\n", CloseHoleMax());
     fprintf(out, "WorldSeal=%d\n", gta2::WorldSeal() ? 1 : 0);
+    fprintf(out, "WaterUvBlocks=%.4f\n", gta2::WaterUvBlocks());
+    fprintf(out, "RiverbedDepth=%.4f\n", gta2::RiverbedDepth());
     const EffectSpriteMode mode = EffectSprites().mode;
     fprintf(out, "EffectSprites=%s\n",
             mode == EffectSpriteMode::Additive
@@ -306,6 +308,10 @@ void SettingsLoadAll() {
             SetCloseHoleMax(atoi(value));
         } else if (!_stricmp(key, "WorldSeal")) {
             gta2::SetWorldSeal(atoi(value) != 0);
+        } else if (!_stricmp(key, "WaterUvBlocks")) {
+            gta2::SetWaterUvBlocks(static_cast<float>(atof(value)));
+        } else if (!_stricmp(key, "RiverbedDepth")) {
+            gta2::SetRiverbedDepth(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "EffectSprites")) {
             EffectSprites().mode = !_stricmp(value, "off")
                                        ? EffectSpriteMode::Off

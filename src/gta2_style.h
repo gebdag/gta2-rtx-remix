@@ -44,6 +44,15 @@ public:
     // remap table, so a direct index into the style file can disagree.
     void OverrideTile(int index, const uint32_t* pixels);
 
+    // Whether the game treats a tile as water. SPEC lists tile numbers by
+    // surface type, one zero-terminated list per type in a fixed order - grass
+    // and dirt, special road, water, then the electrified, wood and metal ones -
+    // and the water list is the third: 608-619 in every district, the tiles of
+    // the map's water animation, plus two more in Industrial.
+    bool IsWaterTile(int index) const {
+        return index >= 0 && index < static_cast<int>(waterTiles_.size()) && waterTiles_[index];
+    }
+
     // A sprite's artwork by base and number within the base, from the SPRX,
     // SPRB and SPRG chunks. False when the style has none, or no such sprite.
     bool SpriteArtwork(SpriteBase base, int index, SpriteIndices* out) const;
@@ -77,6 +86,7 @@ private:
                      size_t palOffset, size_t palIndexOffset, size_t palIndexSize);
 
     std::vector<Tile> tiles_;
+    std::vector<uint8_t> waterTiles_;   // by tile number, from SPEC
 
     struct SpriteEntry {
         uint32_t offset;   // into spriteGraphics_, which is 256-wide pages

@@ -61,6 +61,43 @@ constexpr DWORD kAlphaRef = 128;
 
 AlphaMode g_alphaMode = AlphaMode::Test;
 DWORD g_alphaRef = kAlphaRef;
+
+// Sand for the riverbed (RiverbedTileIndex): muddy harbour sand with a little
+// grain and the odd darker pebble. Tileable, since the bed repeats it once per
+// block, and generated from fixed numbers, so the texture - and with it the
+// Remix hash a sand material would key on - is the same on every run.
+uint32_t SandTexel(int x, int y) {
+    auto hash = [](uint32_t a, uint32_t b) {
+        uint32_t h = a * 0x8DA6B343u ^ b * 0xD8163841u ^ 0x5BD1E995u;
+        h ^= h >> 13;
+        h *= 0x5BD1E995u;
+        return (h ^ (h >> 15)) & 0xFFFFu;
+    };
+    // Value noise on a lattice that divides the tile, so it wraps exactly.
+    auto noise = [&](int cells, uint32_t seed) {
+        const float fx = static_cast<float>(x) * cells / kTileSize;
+        const float fy = static_cast<float>(y) * cells / kTileSize;
+        const int x0 = static_cast<int>(fx), y0 = static_cast<int>(fy);
+        const float tx = fx - x0, ty = fy - y0;
+        const float sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+        auto at = [&](int cx, int cy) {
+            return hash(static_cast<uint32_t>(cx % cells) + seed, static_cast<uint32_t>(cy % cells)) /
+                   65535.0f;
+        };
+        const float top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx;
+        const float bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx;
+        return top + (bottom - top) * sy;
+    };
+    const float ripple = noise(4, 11) * 0.5f + noise(8, 23) * 0.3f + noise(16, 37) * 0.2f;
+    const float grain = hash(static_cast<uint32_t>(x), static_cast<uint32_t>(y) + 101u) / 65535.0f;
+    float shade = 0.82f + 0.22f * ripple + 0.08f * (grain - 0.5f);
+    if (noise(32, 53) > 0.86f) shade *= 0.72f;   // pebbles
+    auto channel = [&](float base) {
+        const float v = base * shade;
+        return static_cast<uint32_t>(v < 0.0f ? 0.0f : (v > 255.0f ? 255.0f : v));
+    };
+    return 0xFF000000u | (channel(150.0f) << 16) | (channel(136.0f) << 8) | channel(104.0f);
+}
 }  // namespace
 
 void SetAlphaMode(AlphaMode mode) { g_alphaMode = mode; }
@@ -257,11 +294,12 @@ bool Renderer::UploadWorld(const WorldMesh& mesh, const Style& style, std::strin
     indexBuffer_->Unlock();
 
     // One texture per tile keeps Remix's texture hashes stable and per-tile
-    // replaceable, instead of hiding every surface behind one atlas hash. One
-    // slot past the end for the seal under the world, which has no tile of its
-    // own - see SealTileIndex.
+    // replaceable, instead of hiding every surface behind one atlas hash. Two
+    // slots past the end for the seal under the world and the riverbed, which
+    // have no tile of their own - see SealTileIndex and RiverbedTileIndex.
     const int sealTile = SealTileIndex(style);
-    textures_.assign(static_cast<size_t>(sealTile) + 1, nullptr);
+    const int riverbedTile = RiverbedTileIndex(style);
+    textures_.assign(static_cast<size_t>(riverbedTile) + 1, nullptr);
     for (const TileBatch& batch : batches_) {
         if (textures_[batch.tile]) continue;
 
@@ -281,6 +319,12 @@ bool Renderer::UploadWorld(const WorldMesh& mesh, const Style& style, std::strin
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(rect.pBits) + y * rect.Pitch);
                 for (int x = 0; x < kTileSize; ++x) row[x] = 0xFF000000u;
+            }
+        } else if (batch.tile == riverbedTile) {
+            for (int y = 0; y < kTileSize; ++y) {
+                uint32_t* row = reinterpret_cast<uint32_t*>(
+                    static_cast<uint8_t*>(rect.pBits) + y * rect.Pitch);
+                for (int x = 0; x < kTileSize; ++x) row[x] = SandTexel(x, y);
             }
         } else {
             const Tile& tile = style.GetTile(batch.tile);

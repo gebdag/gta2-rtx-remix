@@ -1223,6 +1223,32 @@ void DrawSprites() {
                           "on every side, so a hole in the map shows black rather than the sky. "
                           "Built with the world, so this takes effect on the next level load.");
 
+    ImGui::SeparatorText("Water");
+    // See SetWaterUvBlocks in world_mesh.h.
+    float waterRepeat = gta2::WaterUvBlocks();
+    if (ImGui::SliderFloat("Water texture repeat", &waterRepeat, 0.0f, 16.0f,
+                           waterRepeat <= 0.0f ? "per block (off)" : "every %.2f blocks")) {
+        gta2::SetWaterUvBlocks(waterRepeat);
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("How many blocks one repeat of the water texture spans. Water lids take "
+                          "their texture coordinates from the world rather than one tile per "
+                          "block, so a replacement wave texture reads as open water instead of a "
+                          "grid. A block is about 4 m. 0 is the game's own per-block tiling. "
+                          "Built with the world, so this takes effect on the next level load.");
+    // See SetRiverbedDepth in world_mesh.h.
+    float bedDepth = gta2::RiverbedDepth();
+    if (ImGui::SliderFloat("Riverbed depth", &bedDepth, 0.0f, 2.9f,
+                           bedDepth <= 0.0f ? "no riverbed" : "%.2f blocks down")) {
+        gta2::SetRiverbedDepth(bedDepth);
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("A sand floor this far under every water surface, reaching one cell "
+                          "past the water on every side so a view past a quay edge finds sand "
+                          "rather than the black floor. Only seen through a translucent water "
+                          "material. A block is about 4 m. Built with the world, so this takes "
+                          "effect on the next level load.");
+
     ImGui::SeparatorText("Ground fit");
     const LiveGeometry::Conform& c = SpriteConformCounts();
     ImGui::Text("last frame: %d grounded, %d airborne, %d without a floor, %d tilt-capped, "
