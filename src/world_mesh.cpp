@@ -111,14 +111,8 @@ float UvAt(float fraction) { return kUvMin + fraction * (kUvMax - kUvMin); }
 // four corners' texture coordinates, and 180 degrees is expressed as "apply both
 // flips" rather than as a rotation. Doing arithmetic on the coordinates instead
 // gives the right artwork in the wrong orientation.
-//
-// Stated in its general form, starting from an arbitrary sub-rectangle of the
-// tile rather than the whole of it: partial blocks need that - a slab a quarter
-// of a cell deep shows a quarter of the tile, not the tile squeezed into a
-// quarter - and the permutation afterwards is identical either way.
-std::array<Uv, 4> FaceUvsRect(const Face& face, const uint8_t (&table)[8], float u0, float u1,
-                              float v0, float v1) {
-    std::array<Uv, 4> uv = {{{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}}};
+std::array<Uv, 4> FaceUvs(const Face& face, const uint8_t (&table)[8]) {
+    std::array<Uv, 4> uv = {{{kUvMin, kUvMin}, {kUvMax, kUvMin}, {kUvMax, kUvMax}, {kUvMin, kUvMax}}};
 
     unsigned flags = table[(face.raw >> 13) & 7];
     switch (flags & 0x60) {
@@ -155,8 +149,34 @@ std::array<Uv, 4> FaceUvsRect(const Face& face, const uint8_t (&table)[8], float
     return uv;
 }
 
-std::array<Uv, 4> FaceUvs(const Face& face, const uint8_t (&table)[8]) {
-    return FaceUvsRect(face, table, kUvMin, kUvMax, kUvMin, kUvMax);
+// The part of a face's tile that a face covering only part of its cell shows:
+// a slab a quarter of a cell deep shows a quarter of the tile, not the tile
+// squeezed into a quarter.
+//
+// Which quarter turns with the tile. The game builds the whole cell's mapping
+// onto the whole tile, orientation included (gta2.exe!FUN_0046bea0), and then
+// passes each corner's *position in the cell* through it (FUN_0046c0c0). So the
+// crop is taken in the face's own space, not the texture's: a north slab whose
+// lid is turned half way round shows the bottom rows of its tile. Cropping the
+// texture first and turning only the crop showed the top rows whatever the
+// rotation - and on the lattice over the first save point, whose top rows are
+// all colour key, that left nothing at all.
+//
+// s runs from the face's slot 0 to slot 1, t from slot 0 to slot 3, both as
+// fractions of the whole face; the corners come back in the face's slot order.
+std::array<Uv, 4> FaceUvsPart(const Face& face, const uint8_t (&table)[8], float s0, float s1,
+                              float t0, float t1) {
+    const std::array<Uv, 4> whole = FaceUvs(face, table);
+    const Uv along{whole[1].u - whole[0].u, whole[1].v - whole[0].v};
+    const Uv across{whole[3].u - whole[0].u, whole[3].v - whole[0].v};
+    const float s[4] = {s0, s1, s1, s0};
+    const float t[4] = {t0, t0, t1, t1};
+    std::array<Uv, 4> uv;
+    for (int i = 0; i < 4; ++i) {
+        uv[i] = Uv{whole[0].u + s[i] * along.u + t[i] * across.u,
+                   whole[0].v + s[i] * along.v + t[i] * across.v};
+    }
+    return uv;
 }
 
 struct Vec3 {
@@ -721,32 +741,32 @@ void AddPartialBlock(MeshBuilder* builder, const Block& block, int slopeType,
         builder->AddFaceUv(block.lid,
                            {{{xWest, top, zN}, {xEast, top, zN}, {xEast, top, zS}, {xWest, top, zS}}},
                            {0.0f, 1.0f, 0.0f},
-                           FaceUvsRect(block.lid, kLidFlags, UvAt(x0), UvAt(x1), UvAt(y0), UvAt(y1)));
+                           FaceUvsPart(block.lid, kLidFlags, x0, x1, y0, y1));
     }
     // Only the axis a face runs along is cropped; its height is always whole.
     if (block.left) {
         builder->AddFaceUv(block.left,
                            {{{xWest, base, zN}, {xWest, top, zN}, {xWest, top, zS}, {xWest, base, zS}}},
                            {-1.0f, 0.0f, 0.0f},
-                           FaceUvsRect(block.left, kLeftFlags, UvAt(y0), UvAt(y1), kUvMin, kUvMax));
+                           FaceUvsPart(block.left, kLeftFlags, 0.0f, 1.0f, y0, y1));
     }
     if (block.right) {
         builder->AddFaceUv(block.right,
                            {{{xEast, top, zN}, {xEast, base, zN}, {xEast, base, zS}, {xEast, top, zS}}},
                            {1.0f, 0.0f, 0.0f},
-                           FaceUvsRect(block.right, kRightFlags, UvAt(y0), UvAt(y1), kUvMin, kUvMax));
+                           FaceUvsPart(block.right, kRightFlags, 0.0f, 1.0f, y0, y1));
     }
     if (block.top) {
         builder->AddFaceUv(block.top,
                            {{{xWest, base, zN}, {xEast, base, zN}, {xEast, top, zN}, {xWest, top, zN}}},
                            {0.0f, 0.0f, 1.0f},
-                           FaceUvsRect(block.top, kTopFlags, UvAt(x0), UvAt(x1), kUvMin, kUvMax));
+                           FaceUvsPart(block.top, kTopFlags, x0, x1, 0.0f, 1.0f));
     }
     if (block.bottom) {
         builder->AddFaceUv(block.bottom,
                            {{{xWest, top, zS}, {xEast, top, zS}, {xEast, base, zS}, {xWest, base, zS}}},
                            {0.0f, 0.0f, -1.0f},
-                           FaceUvsRect(block.bottom, kBottomFlags, UvAt(x0), UvAt(x1), kUvMin, kUvMax));
+                           FaceUvsPart(block.bottom, kBottomFlags, x0, x1, 0.0f, 1.0f));
     }
 }
 
