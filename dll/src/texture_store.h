@@ -179,11 +179,13 @@ const char* TextureDumpDir();
 int         TextureFramesDumped();
 
 // Close the transparent slits and speckles that GTA2's artists drew in the
-// colour-key index, which the original renderers showed as a dark outline and a
-// path tracer shows as a hole with the sky behind it. See CloseArtworkHoles in
-// alpha_bleed.h for what is and is not treated as one. On by default; off is
-// there to see what it was doing. Takes effect on textures built after the
-// change, so it wants a rebuild.
+// colour-key index of a sprite, which the original renderers showed as a dark
+// outline and a path tracer shows as a hole with the sky behind it. See
+// CloseArtworkHoles in alpha_bleed.h for what is and is not treated as one.
+// Sprites only: world tiles are keyed only where the game keys them, which
+// leaves nothing to close (see ColourKeyed in world_mesh.cpp). On by default;
+// off is there to see what it was doing. Takes effect on textures built after
+// the change, so it wants a rebuild.
 void SetCloseHoles(bool on);
 bool CloseHoles();
 

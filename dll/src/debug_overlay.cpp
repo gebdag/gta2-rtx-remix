@@ -1145,17 +1145,20 @@ void DrawSprites() {
 
     ImGui::SeparatorText("Holes in the artwork");
     // GTA2's artists drew outlines in the colour-key index, so there are slits
-    // straight through solid walls. The original showed the black background
-    // behind them; a path tracer shows the sky. See CloseArtworkHoles.
+    // straight through sprites. The original showed the black background behind
+    // them; a path tracer shows the sky. See CloseArtworkHoles. World tiles are
+    // not touched: they are keyed only where the game keys them.
     bool close = CloseHoles();
     if (ImGui::Checkbox("Close slits in the artwork", &close)) {
         SetCloseHoles(close);
         RebuildDeviceTextures();
         SettingsMarkDirty();
     }
-    ImGui::SetItemTooltip("A transparent island that reaches no edge of the tile and is at most "
-                          "two texels across is an outline, not a hole. Windows and grilles are "
-                          "thicker than that and are left alone.");
+    ImGui::SetItemTooltip("Sprites only. A transparent island that reaches no edge of the sprite "
+                          "and is at most two texels across is an outline, not a hole. Windows "
+                          "are thicker than that and are left alone. The world's grilles and "
+                          "fences are never closed: they are see-through exactly where the game "
+                          "draws them see-through.");
     ImGui::SameLine();
     ImGui::TextColored(kDim, "%d texel(s) closed", HolesClosed());
     if (close) {

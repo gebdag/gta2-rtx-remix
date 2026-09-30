@@ -117,8 +117,15 @@ inline void BleedTransparentEdges(uint32_t* pixels, int width, int height, int p
 //
 // Measured over a Remix capture of the shipped districts (1789 textures, 528
 // with transparency, 10133 enclosed islands): 9017 of those islands are two
-// texels across or less, and they are the speckles and the outline slits. The
-// other 1116 include every window and grille, and are left alone.
+// texels across or less, and they are mostly the speckles and the outline
+// slits. The other 1116 include every window, and are left alone.
+//
+// Not every thin island is a slit, though: a fine mesh - a lattice fence, a
+// grated floor, the treads of a fire escape - has gaps one or two texels wide
+// and would be closed solid. That is why world tiles never come through here.
+// The game keys a tile only on a flat face (see ColourKeyed in world_mesh.cpp),
+// which is where the meshes are, and draws it opaque everywhere else, which is
+// where the slits were. Only sprites, which the game always keys, still need it.
 //
 // The honest limit: a *long* slit can be three texels across where it bends, and
 // then it is the same shape as a small window pane - a 30-texel island of one

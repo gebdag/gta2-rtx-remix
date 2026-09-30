@@ -328,12 +328,12 @@ void Style::DecodeTiles(const uint8_t* data, size_t tileOffset, size_t tileSize,
         }
         // See alpha_bleed.h: transparent black is what makes a cutout's edge
         // read as a hard black line once anything filters it.
+        // Nothing is closed: the key only shows through on flat faces, where
+        // the game keys it too - see ColourKeyed in world_mesh.cpp. The live
+        // path in texture_store.cpp does the same; this is the fallback that
+        // parses the .sty itself.
         if (tile.hasTransparency) {
             BleedTransparentEdges(tile.pixels.data(), kTileSize, kTileSize);
-            // And close the ones that are not really holes at all - see
-            // CloseArtworkHoles. The live path in texture_store.cpp does the
-            // same; this is the fallback that parses the .sty itself.
-            CloseArtworkHoles(tile.pixels.data(), kTileSize, kTileSize);
         }
     }
 }

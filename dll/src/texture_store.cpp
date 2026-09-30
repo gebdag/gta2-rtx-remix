@@ -658,11 +658,11 @@ bool ResolveTileImage(int tileNumber, uint32_t* out) {
         }
     }
     gta2::BleedTransparentEdges(out, kTileSize, kTileSize);
-    // A slit through the middle of a wall tile is not a cutout, it is the colour
-    // the artist outlined with - and under a path tracer it shows the night sky.
-    if (CloseHoles()) {
-        g_holesClosed += gta2::CloseArtworkHoles(out, kTileSize, kTileSize, CloseHoleMax());
-    }
+    // No CloseArtworkHoles here. A tile's key texels only let anything through
+    // on a flat face, where the game keys them too, and there the gaps in a
+    // grille are one or two texels wide - exactly what it would close. On a
+    // solid face the draw has no alpha test and the slits are already solid.
+    // See ColourKeyed in world_mesh.cpp.
     return true;
 }
 

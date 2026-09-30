@@ -167,8 +167,10 @@ class MeshBuilder {
 public:
     // One past the style's own tiles, for the seal - see SealTileIndex.
     explicit MeshBuilder(const Style& style) : style_(style) {
-        perTile_.resize(style.TileCount() + 1);
-        perTileTriangle_.resize(style.TileCount() + 1);
+        for (int keyed = 0; keyed < 2; ++keyed) {
+            perTile_[keyed].resize(style.TileCount() + 1);
+            perTileTriangle_[keyed].resize(style.TileCount() + 1);
+        }
     }
 
     // A quad with no tile behind it, for the black seal under the world. The
@@ -190,7 +192,7 @@ public:
         // The texture is one flat colour, so the coordinates only have to be
         // inside it; the corners of the tile keep the mapping obvious.
         static const Uv kUv[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
-        std::vector<Vertex>& out = perTile_[static_cast<size_t>(SealTileIndex(style_))];
+        std::vector<Vertex>& out = perTile_[0][static_cast<size_t>(SealTileIndex(style_))];
         for (int i = 0; i < 4; ++i) {
             const int slot = order[i];
             out.push_back(Vertex{corners[slot].x, corners[slot].y, corners[slot].z, normal.x,
@@ -204,9 +206,12 @@ public:
     // extraPush moves the quad further along its normal than a flat face's own
     // nudge, for a tile the game paints onto a plane something else already
     // occupies.
+    //
+    // panelBack marks the back of a flat panel, which is see-through whatever
+    // its own face word says - see ColourKeyed.
     void AddFace(const Face& face, const std::array<Vec3, 4>& corners, Vec3 normal,
-                 const uint8_t (&table)[8], float extraPush = 0.0f) {
-        AddFaceUv(face, corners, normal, FaceUvs(face, table), extraPush);
+                 const uint8_t (&table)[8], float extraPush = 0.0f, bool panelBack = false) {
+        AddFaceUv(face, corners, normal, FaceUvs(face, table), extraPush, panelBack);
     }
 
     // Ramps bypass the orientation tables entirely: the game writes texture
@@ -214,9 +219,10 @@ public:
     // with the top cropped off, rather than the whole tile squashed into a
     // shorter quad (gta2.exe!FUN_0046c2c0, the DAT_006633b8 = 0x4005 path).
     void AddFaceUv(const Face& face, const std::array<Vec3, 4>& corners, Vec3 normal,
-                   const std::array<Uv, 4>& uv, float extraPush = 0.0f) {
+                   const std::array<Uv, 4>& uv, float extraPush = 0.0f,
+                   bool panelBack = false) {
         const int tile = face.Tile();
-        if (tile <= 0 || tile >= static_cast<int>(perTile_.size())) return;
+        if (tile <= 0 || tile >= static_cast<int>(perTile_[0].size())) return;
 
         const float push = (face.IsFlat() ? kFlatFaceOffset : 0.0f) + extraPush;
 
@@ -255,7 +261,7 @@ public:
             surface = {cross.x * sign / length, cross.y * sign / length, cross.z * sign / length};
         }
 
-        std::vector<Vertex>& out = perTile_[tile];
+        std::vector<Vertex>& out = perTile_[ColourKeyed(face, panelBack)][tile];
         static const int kForward[4] = {0, 1, 2, 3};
         static const int kReverse[4] = {0, 3, 2, 1};
         const int* order = reversed ? kReverse : kForward;
@@ -274,7 +280,7 @@ public:
     void AddTriangle(const Face& face, const std::array<Vec3, 3>& corners,
                      const std::array<Uv, 3>& uv) {
         const int tile = face.Tile();
-        if (tile <= 0 || tile >= static_cast<int>(perTile_.size())) return;
+        if (tile <= 0 || tile >= static_cast<int>(perTile_[0].size())) return;
 
         const Vec3 edge1{corners[1].x - corners[0].x, corners[1].y - corners[0].y,
                          corners[1].z - corners[0].z};
@@ -295,7 +301,7 @@ public:
         static const int kReverse[3] = {0, 2, 1};
         const int* order = flip ? kReverse : kForward;
         // Kept apart from the quads so each can be indexed by its own stride.
-        std::vector<Vertex>& out = perTileTriangle_[tile];
+        std::vector<Vertex>& out = perTileTriangle_[ColourKeyed(face, false)][tile];
         for (int i = 0; i < 3; ++i) {
             const int slot = order[i];
             out.push_back(Vertex{corners[slot].x, corners[slot].y, corners[slot].z, normal.x,
@@ -303,48 +309,71 @@ public:
         }
     }
 
+    // Opaque batches first, then the see-through ones, so a tile used both ways
+    // is two draws sharing one texture.
     void Flatten(WorldMesh* out) const {
-        for (size_t tile = 0; tile < perTile_.size(); ++tile) {
-            const std::vector<Vertex>& quads = perTile_[tile];
-            const std::vector<Vertex>& tris = perTileTriangle_[tile];
-            if (quads.empty() && tris.empty()) continue;
-
-            TileBatch batch;
-            batch.tile = static_cast<int>(tile);
-            batch.vertexStart = static_cast<uint32_t>(out->vertices.size());
-            batch.vertexCount = static_cast<uint32_t>(quads.size() + tris.size());
-            batch.indexStart = static_cast<uint32_t>(out->indices.size());
-            // The seal has no tile in the style and nothing to cut out of it.
-            batch.needsAlphaTest =
-                static_cast<int>(tile) < style_.TileCount()
-                    ? style_.GetTile(static_cast<int>(tile)).hasTransparency
-                    : false;
-
-            out->vertices.insert(out->vertices.end(), quads.begin(), quads.end());
-            // Corners arrive clockwise seen from outside, which is front-facing
-            // under D3DCULL_CCW once the viewport flips Y.
-            for (uint32_t quad = 0; quad < quads.size(); quad += 4) {
-                const uint32_t base = batch.vertexStart + quad;
-                out->indices.insert(out->indices.end(),
-                                    {base + 0, base + 1, base + 2, base + 0, base + 2, base + 3});
+        for (int keyed = 0; keyed < 2; ++keyed) {
+            for (size_t tile = 0; tile < perTile_[keyed].size(); ++tile) {
+                FlattenOne(out, static_cast<int>(tile), keyed != 0);
             }
-
-            const uint32_t triStart = batch.vertexStart + static_cast<uint32_t>(quads.size());
-            out->vertices.insert(out->vertices.end(), tris.begin(), tris.end());
-            for (uint32_t tri = 0; tri < tris.size(); tri += 3) {
-                const uint32_t base = triStart + tri;
-                out->indices.insert(out->indices.end(), {base + 0, base + 1, base + 2});
-            }
-
-            batch.indexCount = static_cast<uint32_t>(out->indices.size()) - batch.indexStart;
-            out->batches.push_back(batch);
         }
     }
 
 private:
+    // Whether the game lets this quad's colour key through. It does only for a
+    // flat face - each face routine ORs 0x80 into the draw flags when the face
+    // word has 0x1000 (gta2.exe!FUN_0046c2c0 and its siblings, the lid in
+    // FUN_0046dfe0) - and for the back of a flat panel, which the game draws
+    // with 0x1000 forced into the word (FUN_00471d60). Every other face goes
+    // out without 0x80, and the original renderer then uploads the tile with
+    // no colour key at all (d3ddll.dll!FUN_00e02810 keys on 0x380): palette
+    // entry 0 is just a colour there, nearly black in every district.
+    //
+    // So a grille on a flat face is see-through, and the same tile on a solid
+    // wall is not. Keying every face alike opened slits through solid walls,
+    // and closing those by shape closed the grilles too.
+    static int ColourKeyed(const Face& face, bool panelBack) {
+        return (face.IsFlat() || panelBack) ? 1 : 0;
+    }
+
+    void FlattenOne(WorldMesh* out, int tile, bool keyed) const {
+        const std::vector<Vertex>& quads = perTile_[keyed][tile];
+        const std::vector<Vertex>& tris = perTileTriangle_[keyed][tile];
+        if (quads.empty() && tris.empty()) return;
+
+        TileBatch batch;
+        batch.tile = tile;
+        batch.vertexStart = static_cast<uint32_t>(out->vertices.size());
+        batch.vertexCount = static_cast<uint32_t>(quads.size() + tris.size());
+        batch.indexStart = static_cast<uint32_t>(out->indices.size());
+        // The seal has no tile in the style and nothing to cut out of it.
+        batch.needsAlphaTest =
+            keyed && tile < style_.TileCount() && style_.GetTile(tile).hasTransparency;
+
+        out->vertices.insert(out->vertices.end(), quads.begin(), quads.end());
+        // Corners arrive clockwise seen from outside, which is front-facing
+        // under D3DCULL_CCW once the viewport flips Y.
+        for (uint32_t quad = 0; quad < quads.size(); quad += 4) {
+            const uint32_t base = batch.vertexStart + quad;
+            out->indices.insert(out->indices.end(),
+                                {base + 0, base + 1, base + 2, base + 0, base + 2, base + 3});
+        }
+
+        const uint32_t triStart = batch.vertexStart + static_cast<uint32_t>(quads.size());
+        out->vertices.insert(out->vertices.end(), tris.begin(), tris.end());
+        for (uint32_t tri = 0; tri < tris.size(); tri += 3) {
+            const uint32_t base = triStart + tri;
+            out->indices.insert(out->indices.end(), {base + 0, base + 1, base + 2});
+        }
+
+        batch.indexCount = static_cast<uint32_t>(out->indices.size()) - batch.indexStart;
+        out->batches.push_back(batch);
+    }
+
     const Style& style_;
-    std::vector<std::vector<Vertex>> perTile_;
-    std::vector<std::vector<Vertex>> perTileTriangle_;
+    // Indexed [ColourKeyed][tile].
+    std::vector<std::vector<Vertex>> perTile_[2];
+    std::vector<std::vector<Vertex>> perTileTriangle_[2];
 };
 
 // Texture coordinates for a corner ramp's diagonal cut.
@@ -872,7 +901,7 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
                            {xWest, base, zNorth},    // v1 bottom (x, y)
                            {xWest, base, zSouth},    // v2 bottom (x, y+1)
                            {xWest, ySW, zSouth}}},   // v3 top    (x, y+1)
-                         kEast, kRightFlags, decalPush(block.left));
+                         kEast, kRightFlags, decalPush(block.left), true);
     }
     if (backOfPanel(block.left, block.right)) {
         builder->AddFace(block.left,
@@ -880,7 +909,7 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
                            {xEast, yNE, zNorth},     // v1 top    (x+1, y)
                            {xEast, ySE, zSouth},     // v2 top    (x+1, y+1)
                            {xEast, base, zSouth}}},  // v3 bottom (x+1, y+1)
-                         kWest, kLeftFlags, decalPush(block.right));
+                         kWest, kLeftFlags, decalPush(block.right), true);
     }
     if (backOfPanel(block.bottom, block.top)) {
         builder->AddFace(block.bottom,
@@ -888,7 +917,7 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
                            {xEast, yNE, zNorth},     // v1 top    (x+1, y)
                            {xEast, base, zNorth},    // v2 bottom (x+1, y)
                            {xWest, base, zNorth}}},  // v3 bottom (x,   y)
-                         kSouth, kBottomFlags, decalPush(block.top));
+                         kSouth, kBottomFlags, decalPush(block.top), true);
     }
     if (backOfPanel(block.top, block.bottom)) {
         builder->AddFace(block.top,
@@ -896,7 +925,7 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
                            {xEast, base, zSouth},    // v1 bottom (x+1, y+1)
                            {xEast, ySE, zSouth},     // v2 top    (x+1, y+1)
                            {xWest, ySW, zSouth}}},   // v3 top    (x,   y+1)
-                         kNorth, kTopFlags, decalPush(block.bottom));
+                         kNorth, kTopFlags, decalPush(block.bottom), true);
     }
 }
 
