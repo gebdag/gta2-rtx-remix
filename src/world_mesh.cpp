@@ -397,6 +397,7 @@ private:
         // The seal has no tile in the style and nothing to cut out of it.
         batch.needsAlphaTest =
             keyed && tile < style_.TileCount() && style_.GetTile(tile).hasTransparency;
+        batch.doubleSided = keyed;
 
         out->vertices.insert(out->vertices.end(), quads.begin(), quads.end());
         // Corners arrive clockwise seen from outside, which is front-facing
@@ -531,6 +532,35 @@ std::array<Uv, 4> SlopedWallUvs(const Face& face, const uint8_t (&table)[8],
     }
     return uv;
 }
+
+// A flat face is a zero-thickness panel rather than one side of a solid block,
+// so when one of an opposing pair is flat the game puts *both* tiles on that one
+// panel, one facing each way (FUN_00471d60 -> FUN_00470060 and its three
+// siblings, and the same again for partial blocks in FUN_00470be0 and its
+// siblings). Drawing only the flat one leaves the panel blank from behind, which
+// is where the gaps in fences and hoardings came from.
+//
+// The game asks whether the opposite face is there by its whole word, not its
+// tile, so a flat flag with no tile (0x1000) still makes a panel. Maps use
+// exactly that to hang a sign or graffiti on the far edge of an empty block,
+// against the neighbour's wall: the tile is drawn on the far plane and nothing
+// on its own edge.
+bool SoloFace(const Face& face, const Face& opposite) {
+    return static_cast<bool>(face) &&
+           (opposite.raw == 0 || !opposite.IsFlat() || face.IsFlat());
+}
+
+// Whenever the opposite face is flat, its panel also carries this face's tile on
+// its back. With both flat that gives four quads - two panels, each double
+// sided - which is exactly what the game emits.
+bool PanelBack(const Face& face, const Face& opposite) {
+    return static_cast<bool>(face) && opposite.raw != 0 && opposite.IsFlat();
+}
+
+// A panel with no tile of its own is only there to carry this one onto a plane
+// the neighbour's wall (or its flat face) already occupies. The game paints it
+// last; here it is lifted clear of that plane instead.
+float DecalPush(const Face& opposite) { return opposite ? 0.0f : 2.0f * kFlatFaceOffset; }
 
 // A diagonal block is a triangular prism: two of its four side walls stay put,
 // the third spans the cut, and the lid becomes a triangle. Which is which comes
@@ -772,29 +802,52 @@ void AddPartialBlock(MeshBuilder* builder, const Block& block, int slopeType,
                            FaceUvsPart(block.lid, kLidFlags, x0, x1, y0, y1));
     }
     // Only the axis a face runs along is cropped; its height is always whole.
-    if (block.left) {
+    // The same pairing as a whole block (SoloFace, PanelBack), on the
+    // footprint's own planes.
+    const std::array<Uv, 4> leftUv = FaceUvsPart(block.left, kLeftFlags, 0.0f, 1.0f, y0, y1);
+    const std::array<Uv, 4> rightUv = FaceUvsPart(block.right, kRightFlags, 0.0f, 1.0f, y0, y1);
+    const std::array<Uv, 4> topUv = FaceUvsPart(block.top, kTopFlags, x0, x1, 0.0f, 1.0f);
+    const std::array<Uv, 4> bottomUv = FaceUvsPart(block.bottom, kBottomFlags, x0, x1, 0.0f, 1.0f);
+    if (SoloFace(block.left, block.right)) {
         builder->AddFaceUv(block.left,
                            {{{xWest, base, zN}, {xWest, top, zN}, {xWest, top, zS}, {xWest, base, zS}}},
-                           {-1.0f, 0.0f, 0.0f},
-                           FaceUvsPart(block.left, kLeftFlags, 0.0f, 1.0f, y0, y1));
+                           {-1.0f, 0.0f, 0.0f}, leftUv);
     }
-    if (block.right) {
+    if (SoloFace(block.right, block.left)) {
         builder->AddFaceUv(block.right,
                            {{{xEast, top, zN}, {xEast, base, zN}, {xEast, base, zS}, {xEast, top, zS}}},
-                           {1.0f, 0.0f, 0.0f},
-                           FaceUvsPart(block.right, kRightFlags, 0.0f, 1.0f, y0, y1));
+                           {1.0f, 0.0f, 0.0f}, rightUv);
     }
-    if (block.top) {
+    if (SoloFace(block.top, block.bottom)) {
         builder->AddFaceUv(block.top,
                            {{{xWest, base, zN}, {xEast, base, zN}, {xEast, top, zN}, {xWest, top, zN}}},
-                           {0.0f, 0.0f, 1.0f},
-                           FaceUvsPart(block.top, kTopFlags, x0, x1, 0.0f, 1.0f));
+                           {0.0f, 0.0f, 1.0f}, topUv);
     }
-    if (block.bottom) {
+    if (SoloFace(block.bottom, block.top)) {
         builder->AddFaceUv(block.bottom,
                            {{{xWest, top, zS}, {xEast, top, zS}, {xEast, base, zS}, {xWest, base, zS}}},
-                           {0.0f, 0.0f, -1.0f},
-                           FaceUvsPart(block.bottom, kBottomFlags, x0, x1, 0.0f, 1.0f));
+                           {0.0f, 0.0f, -1.0f}, bottomUv);
+    }
+    // The backs of the panels, in each tile's own slot order - see AddBlock.
+    if (PanelBack(block.right, block.left)) {
+        builder->AddFaceUv(block.right,
+                           {{{xWest, top, zN}, {xWest, base, zN}, {xWest, base, zS}, {xWest, top, zS}}},
+                           {1.0f, 0.0f, 0.0f}, rightUv, DecalPush(block.left), true);
+    }
+    if (PanelBack(block.left, block.right)) {
+        builder->AddFaceUv(block.left,
+                           {{{xEast, base, zN}, {xEast, top, zN}, {xEast, top, zS}, {xEast, base, zS}}},
+                           {-1.0f, 0.0f, 0.0f}, leftUv, DecalPush(block.right), true);
+    }
+    if (PanelBack(block.bottom, block.top)) {
+        builder->AddFaceUv(block.bottom,
+                           {{{xWest, top, zN}, {xEast, top, zN}, {xEast, base, zN}, {xWest, base, zN}}},
+                           {0.0f, 0.0f, -1.0f}, bottomUv, DecalPush(block.top), true);
+    }
+    if (PanelBack(block.top, block.bottom)) {
+        builder->AddFaceUv(block.top,
+                           {{{xWest, base, zS}, {xEast, base, zS}, {xEast, top, zS}, {xWest, top, zS}}},
+                           {0.0f, 0.0f, 1.0f}, topUv, DecalPush(block.bottom), true);
     }
 }
 
@@ -829,34 +882,6 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
     const float ySE = base + h[2];
     const float ySW = base + h[3];
     const bool ramp = slope.direction >= 1 && slope.direction <= 4 && slope.steps != 0;
-
-    // A flat face is a zero-thickness panel rather than one side of a solid
-    // block, so when one of an opposing pair is flat the game puts *both* tiles
-    // on that one panel, one facing each way (FUN_00471d60 -> FUN_00470060 and
-    // its three siblings). Drawing only the flat one leaves the panel blank from
-    // behind, which is where the gaps in fences and hoardings came from.
-    //
-    // The game asks whether the opposite face is there by its whole word, not
-    // its tile, so a flat flag with no tile (0x1000) still makes a panel. Maps
-    // use exactly that to hang a sign or graffiti on the far edge of an empty
-    // block, against the neighbour's wall: the tile is drawn on the far plane
-    // and nothing on its own edge.
-    auto solo = [](const Face& face, const Face& opposite) {
-        return static_cast<bool>(face) &&
-               (opposite.raw == 0 || !opposite.IsFlat() || face.IsFlat());
-    };
-    // Whenever the opposite face is flat, its panel also carries this face's
-    // tile on its back. With both flat that gives four quads - two panels, each
-    // double sided - which is exactly what the game emits.
-    auto backOfPanel = [](const Face& face, const Face& opposite) {
-        return static_cast<bool>(face) && opposite.raw != 0 && opposite.IsFlat();
-    };
-    // A panel with no tile of its own is only there to carry this one onto a
-    // plane the neighbour's wall (or its flat face) already occupies. The game
-    // paints it last; here it is lifted clear of that plane instead.
-    auto decalPush = [](const Face& opposite) {
-        return opposite ? 0.0f : 2.0f * kFlatFaceOffset;
-    };
 
     // Vertex slots below follow the original's own ordering per face, recovered
     // from which slot each projection call writes.
@@ -919,16 +944,16 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
     const float southHeights[2] = {h[3], h[2]};
     const int southU[4] = {0, 1, 1, 0};
 
-    if (solo(block.left, block.right)) {
+    if (SoloFace(block.left, block.right)) {
         addWall(block.left, leftCorners, kWest, kLeftFlags, leftTop, leftHeights, leftU);
     }
-    if (solo(block.right, block.left)) {
+    if (SoloFace(block.right, block.left)) {
         addWall(block.right, rightCorners, kEast, kRightFlags, rightTop, rightHeights, rightU);
     }
-    if (solo(block.top, block.bottom)) {
+    if (SoloFace(block.top, block.bottom)) {
         addWall(block.top, topCorners, kNorth, kTopFlags, northTop, northHeights, northU);
     }
-    if (solo(block.bottom, block.top)) {
+    if (SoloFace(block.bottom, block.top)) {
         addWall(block.bottom, bottomCorners, kSouth, kBottomFlags, southTop, southHeights, southU);
     }
 
@@ -943,37 +968,37 @@ void AddBlock(MeshBuilder* builder, const Block& block, const SlopeInfo& slope,
     // down. The game keeps them straight by giving each side its own helper:
     // FUN_00470060 draws the left tile in left order, FUN_00470250 the right
     // tile in right order.
-    if (backOfPanel(block.right, block.left)) {
+    if (PanelBack(block.right, block.left)) {
         builder->AddFace(block.right,
                          {{{xWest, yNW, zNorth},     // v0 top    (x, y)
                            {xWest, base, zNorth},    // v1 bottom (x, y)
                            {xWest, base, zSouth},    // v2 bottom (x, y+1)
                            {xWest, ySW, zSouth}}},   // v3 top    (x, y+1)
-                         kEast, kRightFlags, decalPush(block.left), true);
+                         kEast, kRightFlags, DecalPush(block.left), true);
     }
-    if (backOfPanel(block.left, block.right)) {
+    if (PanelBack(block.left, block.right)) {
         builder->AddFace(block.left,
                          {{{xEast, base, zNorth},    // v0 bottom (x+1, y)
                            {xEast, yNE, zNorth},     // v1 top    (x+1, y)
                            {xEast, ySE, zSouth},     // v2 top    (x+1, y+1)
                            {xEast, base, zSouth}}},  // v3 bottom (x+1, y+1)
-                         kWest, kLeftFlags, decalPush(block.right), true);
+                         kWest, kLeftFlags, DecalPush(block.right), true);
     }
-    if (backOfPanel(block.bottom, block.top)) {
+    if (PanelBack(block.bottom, block.top)) {
         builder->AddFace(block.bottom,
                          {{{xWest, yNW, zNorth},     // v0 top    (x,   y)
                            {xEast, yNE, zNorth},     // v1 top    (x+1, y)
                            {xEast, base, zNorth},    // v2 bottom (x+1, y)
                            {xWest, base, zNorth}}},  // v3 bottom (x,   y)
-                         kSouth, kBottomFlags, decalPush(block.top), true);
+                         kSouth, kBottomFlags, DecalPush(block.top), true);
     }
-    if (backOfPanel(block.top, block.bottom)) {
+    if (PanelBack(block.top, block.bottom)) {
         builder->AddFace(block.top,
                          {{{xWest, base, zSouth},    // v0 bottom (x,   y+1)
                            {xEast, base, zSouth},    // v1 bottom (x+1, y+1)
                            {xEast, ySE, zSouth},     // v2 top    (x+1, y+1)
                            {xWest, ySW, zSouth}}},   // v3 top    (x,   y+1)
-                         kNorth, kTopFlags, decalPush(block.bottom), true);
+                         kNorth, kTopFlags, DecalPush(block.bottom), true);
     }
 }
 

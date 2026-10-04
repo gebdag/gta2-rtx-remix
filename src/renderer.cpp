@@ -570,6 +570,7 @@ void Renderer::DrawWorld(const Camera& camera) {
     device_->SetIndices(indexBuffer_);
 
     bool alphaTestEnabled = false;
+    bool doubleSided = false;   // see TileBatch::doubleSided
     device_->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
     device_->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
     device_->SetRenderState(D3DRS_ALPHAREF, g_alphaRef);
@@ -589,12 +590,17 @@ void Renderer::DrawWorld(const Camera& camera) {
             device_->SetRenderState(D3DRS_ALPHABLENDENABLE,
                                     (blending && alphaTestEnabled) ? TRUE : FALSE);
         }
+        if (batch.doubleSided != doubleSided) {
+            doubleSided = batch.doubleSided;
+            device_->SetRenderState(D3DRS_CULLMODE, doubleSided ? D3DCULL_NONE : cullMode_);
+        }
         device_->SetTexture(0, textures_[batch.tile]);
         device_->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, batch.vertexStart, batch.vertexCount,
                                       batch.indexStart, batch.indexCount / 3);
         stats_.drawCalls++;
         stats_.triangles += static_cast<int>(batch.indexCount / 3);
     }
+    if (doubleSided) device_->SetRenderState(D3DRS_CULLMODE, cullMode_);
 }
 
 }  // namespace gta2

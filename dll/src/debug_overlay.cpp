@@ -375,6 +375,20 @@ void DrawGeneral() {
     const char* scene = LightsScene();
     ImGui::TextColored(scene[0] ? kGood : kDim, "District: %s",
                        scene[0] ? scene : "not identified yet");
+    if (Adv()) {
+        // Where the camera is centred, in the map's own frame: x east, y south,
+        // one unit per block - the cell numbers the map file and the mesh builder
+        // use. The camera follows the player, so this is where the player is.
+        float camX = 0.0f, camY = 0.0f;
+        if (game::CameraStruct() && game::CameraPosition(&camX, &camY)) {
+            ImGui::Text("Camera: x %.2f  y %.2f   (cell %d, %d)", camX, camY,
+                        static_cast<int>(camX), static_cast<int>(camY));
+            ImGui::SetItemTooltip("The map cell the view is centred on, x east and y south, one "
+                                  "per block. Handy for reporting where something looks wrong.");
+        } else {
+            ImGui::TextColored(kDim, "Camera: no level loaded");
+        }
+    }
 
     ImGui::SeparatorText("Frame rate");
 

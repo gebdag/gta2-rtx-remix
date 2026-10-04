@@ -32,6 +32,12 @@ struct TileBatch {
     uint32_t vertexStart = 0;
     uint32_t vertexCount = 0;
     bool needsAlphaTest = false;
+    // Drawn without culling. GTA2's own renderer culls nothing
+    // (d3ddll.dll!0x00E01A97 sets D3DRENDERSTATE_CULLMODE to D3DCULL_NONE), so
+    // a lone fence or grille shows from both sides; a solid wall is one side of
+    // a closed block and nobody sees behind it. So only the see-through faces -
+    // flat ones and the backs of panels, ColourKeyed - are drawn both ways.
+    bool doubleSided = false;
 };
 
 struct WorldMesh {
