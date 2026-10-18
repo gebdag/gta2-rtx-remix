@@ -350,6 +350,14 @@ void LightsAddRaw(const void* descriptor) {
     // The renderer's own conversion: the byte holds radius*32, and 255 maps to
     // the 8-tile maximum.
     d.radius = static_cast<float>((packed >> 8) & 0xFFu) / 255.0f * 8.0f;
+    // The byte is the radius times 32, stored without a clamp
+    // (gta2.exe!FUN_00463EF0), so a light the map gives the largest radius, 8
+    // tiles, wraps to 256 = 0 and lights nothing - in the original renderer as
+    // well. That is 145 of the 1743 lights in ste.gmp, several of the lamps in
+    // two of the Downtown bonus maps, and a handful elsewhere. No shipped map
+    // light has a radius small enough to quantise to 0 honestly, so 0 is read
+    // as the 8 tiles it was.
+    if (((packed >> 8) & 0xFFu) == 0) d.radius = 8.0f;
     d.rgb[0] = static_cast<float>((rgb >> 16) & 0xFFu) / 255.0f;
     d.rgb[1] = static_cast<float>((rgb >> 8) & 0xFFu) / 255.0f;
     d.rgb[2] = static_cast<float>(rgb & 0xFFu) / 255.0f;
