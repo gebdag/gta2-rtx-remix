@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "../../src/gta2_style.h"
@@ -272,9 +274,59 @@ std::vector<uint8_t> FileBlockArray(const std::string& path) {
     return {};
 }
 
-// The game does not keep the style filename anywhere obvious, so the district is
-// identified by matching its live blocks against the .gmp files on disk; the
-// style shares the map's basename.
+// Which style each map is played with, from the game's own level lists: the
+// single-player sequence (test1.seq, MainOrBonus / GMPFile / STYFile entries)
+// and the multiplayer maps (*.mmp, the same keys under [MapFiles]). A district's
+// map shares its style's basename, but its bonus levels do not - lorne2e.gmp is
+// played with wil.sty, mike1e.gmp with ste.sty, mike2e.gmp with bil.sty - and
+// neither do the multiplayer maps (MP1-comp.gmp is bil.sty). Keys are the
+// lowercased map filename.
+std::map<std::string, std::string> MapStyles(const std::string& dataDir) {
+    std::map<std::string, std::string> styles;
+    auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    auto trim = [](std::string s) {
+        const size_t first = s.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return std::string();
+        return s.substr(first, s.find_last_not_of(" \t\r\n") - first + 1);
+    };
+    for (const char* pattern : {"\\*.seq", "\\*.mmp"}) {
+        WIN32_FIND_DATAA find = {};
+        HANDLE handle = FindFirstFileA((dataDir + pattern).c_str(), &find);
+        if (handle == INVALID_HANDLE_VALUE) continue;
+        do {
+            FILE* file = fopen((dataDir + "\\" + find.cFileName).c_str(), "rb");
+            if (!file) continue;
+            std::string map;
+            char line[512];
+            while (fgets(line, sizeof(line), file)) {
+                std::string text = line;
+                const size_t equals = text.find('=');
+                if (equals == std::string::npos) continue;
+                const std::string key = lower(trim(text.substr(0, equals)));
+                const std::string value = trim(text.substr(equals + 1));
+                // GMPFile comes first in every entry; the STYFile after it is
+                // that map's style.
+                if (key == "gmpfile") {
+                    map = lower(value);
+                } else if (key == "styfile" && !map.empty() && !value.empty()) {
+                    styles.emplace(map, value);
+                    map.clear();
+                }
+            }
+            fclose(file);
+        } while (FindNextFileA(handle, &find));
+        FindClose(handle);
+    }
+    return styles;
+}
+
+// The game does not keep the style filename anywhere obvious, so the map is
+// identified by matching its live blocks against the .gmp files on disk, and
+// its style looked up in the game's level lists (MapStyles). A map they do not
+// mention is taken to share its style's basename, which every district does.
 std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir) {
     const uint8_t* blocks = *reinterpret_cast<const uint8_t* const*>(mapObject + gta2::kMapObjectBlocksPtr);
     if (!blocks) return {};
@@ -303,6 +355,15 @@ std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir
     FindClose(handle);
 
     if (bestScore < 0.9 || bestName.empty()) return {};
+    std::string lowerName = bestName;
+    for (char& c : lowerName) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    const std::map<std::string, std::string> styles = MapStyles(dataDir);
+    const auto listed = styles.find(lowerName);
+    if (listed != styles.end()) {
+        Log("map %s is played with %s (from the game's level lists)", bestName.c_str(),
+            listed->second.c_str());
+        return dataDir + "\\" + listed->second;
+    }
     std::string stem = bestName.substr(0, bestName.find_last_of('.'));
     const size_t dash = stem.find('-');
     if (dash != std::string::npos) stem = stem.substr(0, dash);
