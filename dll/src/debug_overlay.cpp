@@ -586,6 +586,15 @@ void DrawLighting() {
     ImGui::SliderFloat("Reference reach", &s.referenceRadius, 0.5f, 8.0f, "%.2f");
     ImGui::SetItemTooltip("The reach that lands exactly on the brightness above. 3 tiles is the "
                           "commonest radius in the shipped maps.");
+    if (ImGui::SliderFloat("Buried light lift", &s.buriedLift, 0.0f, 4.0f,
+                           s.buriedLift <= 0.0f ? "off (left in the ground)" : "%.2f tiles up")) {
+        SettingsMarkDirty();
+    }
+    ImGui::SetItemTooltip("About half of GTA2's map lights sit half a block under the road, which "
+                          "the original's lighting never noticed and the path tracer does: the "
+                          "road is in the way and they light nothing. They are put this far above "
+                          "the surface instead. 0.5 keeps their original distance to it; higher "
+                          "spreads their light wider and softer. 0 leaves them buried.");
     ImGui::SliderFloat("Intensity floor", &s.minIntensity, 0.0f, 0.2f, "%.4f");
     ImGui::SetItemTooltip("Dimmer lights are dropped. GTA2 blinks a light by taking its intensity "
                           "to zero, so without a floor a traffic light glows red, amber and green "

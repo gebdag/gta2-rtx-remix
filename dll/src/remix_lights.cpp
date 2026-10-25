@@ -32,17 +32,18 @@ const GroundSampler* g_ground = nullptr;
 // counts - so the road above was lit all the same. A path tracer finds the lid
 // in the way and the lamp lights nothing.
 //
-// So a light inside a block that has a lid above it is reflected to the same
-// distance above that lid. The surface it was lighting sees it at the same
-// distance, nothing is in the way, and a light in open air is never moved. Only
-// the block the light is in counts, so a bridge or a roof a storey up does not
-// pull a lamp onto it.
+// So a light inside a block that has a lid above it is put that lid plus
+// g_settings.buriedLift above it - by default half a block, the distance it had
+// below, so the surface it was lighting sees it at the same distance with
+// nothing in the way. A light in open air is never moved. Only the block the
+// light is in counts, so a bridge or a roof a storey up does not pull a lamp
+// onto it.
 void LiftOutOfGround(float x, float* y, float z) {
-    if (!g_ground || !g_ground->Ready()) return;
+    if (g_settings.buriedLift <= 0.0f || !g_ground || !g_ground->Ready()) return;
     const float level = std::floor(*y);
     float surface = 0.0f;
     if (!g_ground->SurfaceAt(x, z, level + 1.0f, &surface)) return;
-    if (surface > *y && surface >= level) *y = 2.0f * surface - *y;
+    if (surface > *y && surface >= level) *y = surface + g_settings.buriedLift;
 }
 
 std::vector<RemixTrackedLight>         g_tracked;

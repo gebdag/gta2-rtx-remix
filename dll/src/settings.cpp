@@ -70,6 +70,7 @@ void Fields(FloatField** floats, int* floatCount, BoolField** bools, int* boolCo
     f[nf++] = {"lights", "MinIntensity", &ls.minIntensity};
     f[nf++] = {"lights", "AmbientFillScale", &ls.ambientFillScale};
     f[nf++] = {"lights", "ConeSoftness", &ls.coneSoftness};
+    f[nf++] = {"lights", "BuriedLift", &ls.buriedLift};
 
     for (int c = 0; c < kGameLightClassCount; ++c) {
         // The section name is the class name, so the file reads as

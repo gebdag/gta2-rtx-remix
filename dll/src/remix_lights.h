@@ -205,6 +205,13 @@ struct RemixLightSettings {
 
     // Softness of the headlight cone edge, 0 is a hard rim.
     float coneSoftness = 0.35f;
+
+    // How far above the ground a map light buried in it is put, in tiles. The
+    // maps place about half their lamps half a block under the road, which the
+    // original's distance-only lighting never noticed and a path tracer does -
+    // see LiftOutOfGround in remix_lights.cpp. 0 leaves them where the map put
+    // them, dark; 0.5 is the distance they were from the surface, mirrored.
+    float buriedLift = 0.5f;
 };
 
 void LightsInit(const char* overridePath);
