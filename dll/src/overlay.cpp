@@ -338,10 +338,28 @@ int Overlay::BlitImage(int image, int srcX1, int srcY1, int srcX2, int srcY2, in
     const float v0 = static_cast<float>(srcY1);
     const float u1 = static_cast<float>(srcX2);
     const float v1 = static_cast<float>(srcY2);
-    const float x0 = static_cast<float>(dstX);
-    const float y0 = static_cast<float>(dstY);
-    const float x1 = x0 + (u1 - u0);
-    const float y1 = y0 + (v1 - v0);
+    float x0 = static_cast<float>(dstX);
+    float y0 = static_cast<float>(dstY);
+    float x1 = x0 + (u1 - u0);
+    float y1 = y0 + (v1 - v0);
+
+    // The front end is a 640x480 canvas: its screen is 640x480 and its panels
+    // are blitted at their places on it (FUN_00453020). Plugins for the original
+    // game that run it at the desktop's resolution leave the panels at those
+    // places while the screen grows, and made up for it by patching the original
+    // renderer's blit - which this renderer replaces. So when the screen is
+    // larger than the canvas, the canvas is scaled to the screen's height and
+    // centred across it, the sides left black, as those patches did. The
+    // unmodified game never gets here: it blits only in the front end, and its
+    // front end is always 640x480.
+    if (gameHeight_ > 480 && gameWidth_ > 640) {
+        const float scale = static_cast<float>(gameHeight_) / 480.0f;
+        const float offset = (static_cast<float>(gameWidth_) - 640.0f * scale) * 0.5f;
+        x0 = x0 * scale + offset;
+        x1 = x1 * scale + offset;
+        y0 *= scale;
+        y1 *= scale;
+    }
 
     const float xy[4][2] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
     const float uv[4][2] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};

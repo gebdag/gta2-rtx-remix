@@ -857,12 +857,73 @@ PASSTHROUGH_2(gbh_Convert16BitGraphic, int, int)
 
 }  // extern "C"
 
+// The original renderer's blit, for plugins that patch it.
+//
+// Plugins written for the original game patch d3ddll.dll as well as gta2.exe:
+// when a module of that name loads they find "89 7C 24 28 89 74 24 2C" in it -
+// two stores in the original gbh_BlitImage - and hook it to rescale the front
+// end's backgrounds. At least one widely used one takes the first match without
+// checking there is one, so a d3ddll.dll that is not the original - this one,
+// under that name - has it read through a null pointer, and the game dies on
+// boot before this DLL's DllMain even runs.
+//
+// So the sequence is here, once, in a function nothing calls. The plugin finds
+// it, hooks it, and carries on; the hook does nothing, which is right, because
+// the blit it was correcting is the original renderer's, and this renderer
+// rescales the front end itself (Overlay::BlitImage).
+//
+// Kept referenced so the linker cannot drop it, and counted at attach: if the
+// compiler ever emits the same two stores in real code ahead of this, a plugin
+// would patch that instead, and the log says so.
+extern "C" __declspec(naked) void OriginalBlitStores() {
+    __asm {
+        mov dword ptr [esp + 0x28], edi
+        mov dword ptr [esp + 0x2C], esi
+        ret
+    }
+}
+extern "C" void (*volatile g_originalBlitStores)() = OriginalBlitStores;
+
+namespace {
+
+// How often the pattern occurs in this DLL's code, and whether the first
+// occurrence is the copy above - which is what a plugin will patch.
+void CheckOriginalBlitStores(HMODULE module) {
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(module);
+    const IMAGE_DOS_HEADER* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const IMAGE_NT_HEADERS* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const uint8_t* begin = base + nt->OptionalHeader.BaseOfCode;
+    const size_t size = nt->OptionalHeader.SizeOfCode;
+    static const uint8_t kPattern[] = {0x89, 0x7C, 0x24, 0x28, 0x89, 0x74, 0x24, 0x2C};
+    int count = 0;
+    const uint8_t* first = nullptr;
+    for (size_t i = 0; i + sizeof(kPattern) <= size; ++i) {
+        if (memcmp(begin + i, kPattern, sizeof(kPattern)) == 0) {
+            if (!first) first = begin + i;
+            ++count;
+        }
+    }
+    const uint8_t* copy = reinterpret_cast<const uint8_t*>(g_originalBlitStores);
+    // A jump where the copy starts is a plugin's hook: it got there first, which
+    // is the whole point.
+    if (copy[0] == 0xE9 && count == 0) {
+        Log("a plugin hooked the original blit's stores here, as intended");
+        return;
+    }
+    if (count == 1 && first == copy) return;
+    Log("original blit stores: pattern found %d time(s), first %s the copy - a plugin "
+        "would patch live code", count, first == copy ? "is" : "is NOT");
+}
+
+}  // namespace
+
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         g_self = module;
         DisableThreadLibraryCalls(module);
         gta2dx9::OpenLog();
         Log("gta2dx9.dll attached to pid %lu", GetCurrentProcessId());
+        CheckOriginalBlitStores(module);
     } else if (reason == DLL_PROCESS_DETACH) {
         gta2dx9::CloseLog();
     }

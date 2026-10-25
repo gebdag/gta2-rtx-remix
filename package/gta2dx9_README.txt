@@ -77,6 +77,10 @@ gta2dx9.log and gta2dx9_vid.log beside gta2.exe say what happened.
   supported. The game runs without street lights. Use Remix Plus 1.5 or newer.
 * Menus or HUD missing or drawn wrong: use Remix Plus 1.5.1.
 * Crash at startup: set intro=0 in gta2dx9.ini to skip the intro movie.
+* Widescreen patches for the original game work alongside this mod. With one
+  installed the game runs at your desktop resolution and the patch lays out
+  the HUD and menus itself, so the "Widescreen HUD" setting in the F4 menu has
+  nothing left to do.
 
 
 Files
