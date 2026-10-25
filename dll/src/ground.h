@@ -47,6 +47,11 @@ public:
     // or a sprite below the bottom of its column.
     bool SurfaceAt(float x, float z, float ceiling, float* outY) const;
 
+    // The underside of the lowest covering block in the column that starts at
+    // or above `floor` - one with a lid or a solid wall: an overpass deck, a
+    // bridge, a roof, a pole. False when the column is open above that height.
+    bool UndersideAbove(float x, float z, float floor, float* outY) const;
+
     // Fits a plane to the lid under `count` points. Needs three that resolve;
     // below that there is no plane and the caller falls back.
     GroundPlane Fit(const float* xs, const float* zs, int count, float ceiling,

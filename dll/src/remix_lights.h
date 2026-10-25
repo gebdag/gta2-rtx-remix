@@ -210,8 +210,10 @@ struct RemixLightSettings {
     // maps place about half their lamps half a block under the road, which the
     // original's distance-only lighting never noticed and a path tracer does -
     // see LiftOutOfGround in remix_lights.cpp. 0 leaves them where the map put
-    // them, dark; 0.5 is the distance they were from the surface, mirrored.
-    float buriedLift = 0.5f;
+    // them, dark; 0.5 is the distance they were from the surface, mirrored. A
+    // whole tile spreads them into a softer pool. Capped below anything over
+    // the lamp, so it never ends up inside an overpass.
+    float buriedLift = 1.0f;
 };
 
 void LightsInit(const char* overridePath);

@@ -74,6 +74,34 @@ bool GroundSampler::SurfaceAt(float x, float z, float ceiling, float* outY) cons
     return found;
 }
 
+bool GroundSampler::UndersideAbove(float x, float z, float floor, float* outY) const {
+    if (!Ready()) return false;
+    const int bx = static_cast<int>(std::floor(x));
+    const int by = static_cast<int>(std::floor(static_cast<float>(gta2::kMapHeight) - z));
+    if (bx < 0 || bx >= gta2::kMapWidth || by < 0 || by >= gta2::kMapHeight) return false;
+
+    const gta2::Column& column = map_->ColumnAt(bx, by);
+    for (size_t i = 0; i < column.blocks.size(); ++i) {
+        const int level = column.offset + static_cast<int>(i);
+        if (static_cast<float>(level) < floor - 1e-3f) continue;
+        const uint32_t index = column.blocks[i];
+        if (index >= map_->BlockCount()) continue;
+        const gta2::Block& block = map_->BlockAt(index);
+        // Something a light would show through: a lid - a deck, a roof - or a
+        // solid wall, which is a pillar or a pole. A block of nothing but flat
+        // faces is a fence or a sign at the kerb and covers nothing.
+        auto solid = [](const gta2::Face& f) { return f.raw != 0 && !f.IsFlat(); };
+        if (!block.lid && !solid(block.left) && !solid(block.right) && !solid(block.top) &&
+            !solid(block.bottom)) {
+            continue;
+        }
+        // Blocks are stored bottom up, so the first one found is the lowest.
+        if (outY) *outY = static_cast<float>(level);
+        return true;
+    }
+    return false;
+}
+
 GroundPlane GroundSampler::Fit(const float* xs, const float* zs, int count, float ceiling,
                                float centreX, float centreZ) const {
     GroundPlane plane;
