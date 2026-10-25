@@ -225,6 +225,12 @@ void LightsBeginCollect();
 //   +0x10 u32   0x00RRGGBB
 void LightsAddRaw(const void* descriptor);
 
+class GroundSampler;
+// The map's floors, for lifting the game's lights out of the ground they were
+// authored in - see LiftOutOfGround in remix_lights.cpp. Held, not copied; it
+// lives in WorldView for the whole process. Empty until a map is loaded.
+void LightsSetGround(const GroundSampler* ground);
+
 // gbh_SetAmbient, in the game's own 0..1 scale.
 void LightsSetAmbient(float ambient);
 

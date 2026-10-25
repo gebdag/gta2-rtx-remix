@@ -1,5 +1,6 @@
 #include "remix_lights.h"
 
+#include "ground.h"
 #include "log.h"
 #include "remix_api.h"
 #include "time_of_day.h"
@@ -19,6 +20,30 @@ namespace gta2dx9 {
 namespace {
 
 RemixLightSettings g_settings;
+const GroundSampler* g_ground = nullptr;
+
+// Half the map's lights are inside the ground.
+//
+// The maps put a lamp at the middle of the block whose lid is the street, half
+// a block *under* the road: in ste.gmp the white street lamps along x 182 stand
+// at z 1.5 on a road at 2.0, and about half of all map lights in every district
+// sit like that. The original renderer never noticed - it lights each vertex by
+// its distance to the light (d3ddll.dll!FUN_00E02A80) and nothing in between
+// counts - so the road above was lit all the same. A path tracer finds the lid
+// in the way and the lamp lights nothing.
+//
+// So a light inside a block that has a lid above it is reflected to the same
+// distance above that lid. The surface it was lighting sees it at the same
+// distance, nothing is in the way, and a light in open air is never moved. Only
+// the block the light is in counts, so a bridge or a roof a storey up does not
+// pull a lamp onto it.
+void LiftOutOfGround(float x, float* y, float z) {
+    if (!g_ground || !g_ground->Ready()) return;
+    const float level = std::floor(*y);
+    float surface = 0.0f;
+    if (!g_ground->SurfaceAt(x, z, level + 1.0f, &surface)) return;
+    if (surface > *y && surface >= level) *y = 2.0f * surface - *y;
+}
 
 std::vector<RemixTrackedLight>         g_tracked;
 std::vector<RemixLightDesc>            g_pending;     // this frame's list, as the game gave it
@@ -373,11 +398,14 @@ void LightsAddRaw(const void* descriptor) {
     d.pos[0] = x;
     d.pos[1] = z;
     d.pos[2] = static_cast<float>(gta2::kMapHeight) - y;
+    LiftOutOfGround(d.pos[0], &d.pos[1], d.pos[2]);
 
     g_pending.push_back(d);
 }
 
 void LightsSetAmbient(float ambient) { g_ambient = ambient; }
+
+void LightsSetGround(const GroundSampler* ground) { g_ground = ground; }
 
 void LightsBeginExtra() { g_extra.clear(); }
 

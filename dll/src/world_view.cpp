@@ -560,6 +560,7 @@ bool WorldView::Initialize(HWND window, int width, int height, std::string* erro
     // Both live here, so the pointer is good for the process. The sampler stays
     // empty until a map is loaded, and the sprite pass falls back until it is.
     live_.SetGround(&ground_);
+    LightsSetGround(&ground_);
     // The first frames the game draws are the front end, which is the same 2D
     // stream the menus use later. Traced once so a broken menu can be compared
     // against a working one.
