@@ -23,6 +23,8 @@
 #include <d3d9.h>
 #include <vector>
 
+#include "plugin_draw.h"
+
 namespace gta2dx9 {
 
 // How GTA2's own screen is fitted to a back buffer of a different shape.
@@ -95,6 +97,15 @@ public:
     void MovieFrame(const void* pixels, int width, int height, int pitch);
     void EndMovie();
 
+    // What a plugin draws through the stand-in DirectX 6 device - see
+    // plugin_draw.h. Its textures live in a table of their own, so the game's
+    // image table, which it frees and refills per level, never sees them.
+    int CreatePluginImage(int width, int height, const uint32_t* argb);
+    void UpdatePluginImage(int id, int width, int height, const uint32_t* argb);
+    void ReleasePluginImage(int id);
+    void PluginPrimitives(PluginPrimitive type, const PluginVertex* vertices, int count, int image,
+                          bool additive, bool linear);
+
     void Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight);
     void ReleaseResources();
 
@@ -117,6 +128,7 @@ private:
         bool pointSample;      // quad_flags::kPointSample or kExpandFromTexture
         bool hud;              // drawn from the game's HUD pass, see hud_pass.h
         int8_t part;           // which part of the HUD, or -1; see HudPassPart
+        int pluginImage = -1;  // a plugin texture, see CreatePluginImage
     };
 
     // Where each draw goes across the screen, as an offset added after scaling.
@@ -148,6 +160,8 @@ private:
     std::vector<Vertex> vertices_;
     std::vector<Draw> draws_;
     std::vector<Image> images_;
+    std::vector<Image> pluginImages_;   // see CreatePluginImage; empty pixels = free
+    IDirect3DTexture9* ResolvePluginImage(IDirect3DDevice9* device, int id);
     // The movie frame, kept out of the image table: the game frees and resizes
     // that table itself.
     Image movie_;

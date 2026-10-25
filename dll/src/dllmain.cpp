@@ -486,6 +486,9 @@ __declspec(dllexport) int __stdcall gbh_Init(int param) {
         Log("world view init deferred: %s", error.c_str());
     }
     HookWindowClose(window);
+    // Plugins drawing through the original renderer's device - see
+    // plugin_d3d6.cpp. Here because by now every plugin the game loads is in.
+    gta2dx9::PluginD3D6Install();
     return 0;
 }
 
@@ -916,6 +919,21 @@ void CheckOriginalBlitStores(HMODULE module) {
 }
 
 }  // namespace
+
+// plugin_draw.h, for plugin_d3d6.cpp, which cannot see the overlay's headers.
+namespace gta2dx9 {
+int PluginImageCreate(int width, int height, const uint32_t* argb) {
+    return g_world.GetOverlay().CreatePluginImage(width, height, argb);
+}
+void PluginImageUpdate(int id, int width, int height, const uint32_t* argb) {
+    g_world.GetOverlay().UpdatePluginImage(id, width, height, argb);
+}
+void PluginImageRelease(int id) { g_world.GetOverlay().ReleasePluginImage(id); }
+void PluginDraw(PluginPrimitive type, const PluginVertex* vertices, int count, int image,
+                bool additive, bool linear) {
+    g_world.GetOverlay().PluginPrimitives(type, vertices, count, image, additive, linear);
+}
+}  // namespace gta2dx9
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {

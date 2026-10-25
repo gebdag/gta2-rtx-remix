@@ -81,6 +81,9 @@ gta2dx9.log and gta2dx9_vid.log beside gta2.exe say what happened.
   installed the game runs at your desktop resolution and the patch lays out
   the HUD and menus itself, so the "Widescreen HUD" setting in the F4 menu has
   nothing left to do.
+* Plugins built on the GTA2 plugin SDK that draw with the original renderer's
+  DirectX device - a minimap, for instance - draw through this renderer
+  instead. Its corner rounding is not reproduced.
 
 
 Files

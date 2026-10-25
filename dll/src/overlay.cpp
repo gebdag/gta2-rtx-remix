@@ -224,6 +224,113 @@ void Overlay::FlatRect(const float* v, uint32_t colour) {
     PushTriangleFan(corners, 4, nullptr, -1, Style{});
 }
 
+int Overlay::CreatePluginImage(int width, int height, const uint32_t* argb) {
+    if (width <= 0 || height <= 0 || !argb) return -1;
+    size_t slot = 0;
+    while (slot < pluginImages_.size() && !pluginImages_[slot].pixels.empty()) ++slot;
+    if (slot == pluginImages_.size()) pluginImages_.emplace_back();
+    Image& image = pluginImages_[slot];
+    image.width = width;
+    image.height = height;
+    image.pixels.assign(argb, argb + static_cast<size_t>(width) * height);
+    return static_cast<int>(slot);
+}
+
+void Overlay::UpdatePluginImage(int id, int width, int height, const uint32_t* argb) {
+    if (id < 0 || static_cast<size_t>(id) >= pluginImages_.size() || !argb) return;
+    Image& image = pluginImages_[id];
+    if (image.texture) image.texture->Release();
+    image.texture = nullptr;
+    image.width = width;
+    image.height = height;
+    image.pixels.assign(argb, argb + static_cast<size_t>(width) * height);
+}
+
+void Overlay::ReleasePluginImage(int id) {
+    if (id < 0 || static_cast<size_t>(id) >= pluginImages_.size()) return;
+    Image& image = pluginImages_[id];
+    if (image.texture) image.texture->Release();
+    image = Image{};
+}
+
+IDirect3DTexture9* Overlay::ResolvePluginImage(IDirect3DDevice9* device, int id) {
+    if (id < 0 || static_cast<size_t>(id) >= pluginImages_.size()) return nullptr;
+    Image& image = pluginImages_[id];
+    if (image.texture) return image.texture;
+    if (image.pixels.empty()) return nullptr;
+    if (FAILED(device->CreateTexture(image.width, image.height, 1, 0, D3DFMT_A8R8G8B8,
+                                     D3DPOOL_MANAGED, &image.texture, nullptr))) {
+        image.texture = nullptr;
+        return nullptr;
+    }
+    D3DLOCKED_RECT locked;
+    if (SUCCEEDED(image.texture->LockRect(0, &locked, nullptr, 0))) {
+        for (int y = 0; y < image.height; ++y) {
+            memcpy(static_cast<uint8_t*>(locked.pBits) + y * locked.Pitch,
+                   &image.pixels[static_cast<size_t>(y) * image.width],
+                   static_cast<size_t>(image.width) * 4);
+        }
+        image.texture->UnlockRect(0);
+    }
+    return image.texture;
+}
+
+// A plugin's primitives as the overlay's fans, in the order they were drawn, so
+// they layer with the game's HUD exactly as they did over the original renderer.
+void Overlay::PluginPrimitives(PluginPrimitive type, const PluginVertex* in, int count, int image,
+                               bool additive, bool linear) {
+    if (!in || count <= 0) return;
+    auto vertex = [&](int i) {
+        Vertex v = {};
+        v.x = in[i].x;
+        v.y = in[i].y;
+        v.rhw = 1.0f;
+        v.colour = in[i].colour;
+        v.u = in[i].u;
+        v.v = in[i].v;
+        return v;
+    };
+    Style style;
+    style.additive = additive;
+    style.pointSample = !linear;
+    auto push = [&](const Vertex* corners, int n) {
+        const size_t before = draws_.size();
+        PushTriangleFan(corners, n, nullptr, -1, style);
+        if (draws_.size() > before) draws_.back().pluginImage = image;
+    };
+    switch (type) {
+        case PluginPrimitive::TriangleFan: {
+            std::vector<Vertex> fan;
+            for (int i = 0; i < count; ++i) fan.push_back(vertex(i));
+            push(fan.data(), count);
+            break;
+        }
+        case PluginPrimitive::TriangleList:
+            for (int i = 0; i + 2 < count; i += 3) {
+                const Vertex t[3] = {vertex(i), vertex(i + 1), vertex(i + 2)};
+                push(t, 3);
+            }
+            break;
+        case PluginPrimitive::TriangleStrip:
+            for (int i = 0; i + 2 < count; ++i) {
+                // Every other triangle of a strip winds the other way; the overlay
+                // does not cull, so the order only has to name the right corners.
+                const Vertex t[3] = {vertex(i), vertex(i + 1), vertex(i + 2)};
+                push(t, 3);
+            }
+            break;
+        case PluginPrimitive::LineList:
+        case PluginPrimitive::LineStrip: {
+            const int step = type == PluginPrimitive::LineList ? 2 : 1;
+            for (int i = 0; i + 1 < count; i += step) {
+                Line(static_cast<int>(in[i].x), static_cast<int>(in[i].y),
+                     static_cast<int>(in[i + 1].x), static_cast<int>(in[i + 1].y), in[i].colour);
+            }
+            break;
+        }
+    }
+}
+
 void Overlay::Line(int x1, int y1, int x2, int y2, uint32_t colour) {
     // Drawn as a thin quad: a line list would need its own primitive type for
     // one or two debug overlays a frame.
@@ -705,7 +812,8 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
         // Whether this draw asked for artwork at all. FlatRect and Line do not;
         // everything the game blits does.
         const bool movie = draw.image == kMovieImage;
-        const bool wantsArtwork = draw.image >= 0 || movie || draw.texture != nullptr;
+        const bool wantsArtwork =
+            draw.image >= 0 || movie || draw.texture != nullptr || draw.pluginImage >= 0;
         if (movie) {
             texture = ResolveMovie(device);
             invU = movie_.width ? 1.0f / movie_.width : 1.0f;
@@ -715,6 +823,9 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
             const Image& image = images_[draw.image];
             invU = image.width ? 1.0f / image.width : 1.0f;
             invV = image.height ? 1.0f / image.height : 1.0f;
+        } else if (draw.pluginImage >= 0) {
+            // Plugins give coordinates 0..1, not texels.
+            texture = ResolvePluginImage(device, draw.pluginImage);
         } else if (draw.texture) {
             texture = DeviceTextureFor(device, draw.texture);
             const TextureRecord* record = static_cast<const TextureRecord*>(draw.texture);
@@ -749,6 +860,8 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
                         movie_.height);
                 } else if (draw.image >= 0) {
                     Log("overlay drop: blit image=%d, table holds %zu", draw.image, images_.size());
+                } else if (draw.pluginImage >= 0) {
+                    Log("overlay drop: plugin image %d of %zu", draw.pluginImage, pluginImages_.size());
                 } else {
                     const TextureRecord* r = static_cast<const TextureRecord*>(draw.texture);
                     Log("overlay drop: tex=%p %dx%d palette=%u rev=%u flags=%02X pixels=%p",
@@ -923,6 +1036,11 @@ void Overlay::Flush(IDirect3DDevice9* device, int targetWidth, int targetHeight)
 
 void Overlay::ReleaseResources() {
     FreeImageTable();
+    // The pixels stay: the plugin that made them will not make them again.
+    for (Image& image : pluginImages_) {
+        if (image.texture) image.texture->Release();
+        image.texture = nullptr;
+    }
     EndMovie();
     vertices_.clear();
     draws_.clear();
