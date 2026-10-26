@@ -33,9 +33,14 @@ enum class PluginPrimitive { LineList, LineStrip, TriangleList, TriangleStrip, T
 void PluginDraw(PluginPrimitive type, const PluginVertex* vertices, int count, int image,
                 bool additive, bool linear);
 
-// Installs the stand-in: patches the import of GetModuleHandleA in every
-// plugin module loaded so far, so their lookup of the original renderer's state
-// finds ours. Called once the renderer is up. See plugin_d3d6.cpp.
+// Builds the stand-in device and puts the pointer to it where the plugin SDK
+// looks, at this DLL's base + 0x485E0. From DllMain, so it is there before any
+// plugin can ask. `module` is this DLL's HMODULE. See plugin_d3d6.cpp.
+void PluginD3D6Init(void* module);
+
+// Installed under another name than d3ddll.dll, points the plugins' lookup of
+// d3ddll.dll at this DLL. Called once the renderer is up, by when the plugins
+// loaded with the game are in.
 void PluginD3D6Install();
 
 }  // namespace gta2dx9

@@ -14,6 +14,8 @@ rem x86: gta2.exe is a 32-bit process, and the naked thunks are x86 inline asm.
 call "%VSPATH%\VC\Auxiliary\Build\vcvars32.bat" >nul || exit /b 1
 
 if not exist build mkdir build
+rem plugin_slot.asm is a block of code space at a fixed offset; see the file.
+ml /nologo /c /Fo build\plugin_slot.obj src\plugin_slot.asm >nul || exit /b 1
 rem The world renderer, mesh builder and file loaders live in ..\src.
 rem No d3d9.lib on the link line: the renderer resolves Direct3DCreate9 with
 rem LoadLibrary so the RTX Remix bridge client does not start under the loader lock.
@@ -27,7 +29,7 @@ cl /nologo /std:c++17 /EHsc /O2 /W3 /MT /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS ^
    src\dllmain.cpp src\world_view.cpp src\log.cpp src\texture_store.cpp src\overlay.cpp ^
    src\live_geometry.cpp src\ground.cpp src\remix_api.cpp src\remix_lights.cpp src\debug_overlay.cpp ^
    src\synthetic_lights.cpp src\settings.cpp src\frame_limiter.cpp src\time_of_day.cpp ^
-   src\intro_movie.cpp src\hud_pass.cpp src\gibs.cpp src\light_bench.cpp src\plugin_d3d6.cpp ^
+   src\intro_movie.cpp src\hud_pass.cpp src\gibs.cpp src\light_bench.cpp src\plugin_d3d6.cpp build\plugin_slot.obj ^
    deps\imgui\imgui.cpp deps\imgui\imgui_draw.cpp deps\imgui\imgui_tables.cpp ^
    deps\imgui\imgui_widgets.cpp deps\imgui\backends\imgui_impl_dx9.cpp ^
    deps\imgui\backends\imgui_impl_win32.cpp ^

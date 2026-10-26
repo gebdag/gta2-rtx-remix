@@ -10,20 +10,21 @@
 // DrawPrimitive of pre-transformed D3DTLVERTEX (FVF 0x1C4). A minimap plugin in
 // common use does all of its drawing that way.
 //
-// Here d3ddll.dll is this renderer, so +0x485E0 is just bytes of its code, and
-// such a plugin read a garbage device pointer and crashed on the first map. This
-// file is what it finds instead:
+// Here d3ddll.dll is this renderer, so +0x485E0 was just bytes of its code, and
+// such a plugin read a garbage device pointer and crashed - a minimap on the
+// first map, a front-end plugin at the menu. This file is what they find
+// instead:
 //
-//   - each plugin module's import of GetModuleHandleA is patched, and a call
-//     that asks for "d3ddll.dll" and returns straight into `add eax, 0x485E0`
-//     (05 E0 85 04 00) - the SDK's GetGBH, nothing else - gets a base address
-//     from which +0x485E0 holds a pointer to a stand-in state whose +0x28 is the
-//     device below. Every other call goes through untouched;
-//   - the device, its DirectDraw, surfaces and textures implement what that
-//     loader and that drawing need, keep textures in system memory (DXT1, DXT3,
-//     DXT5 or 32-bit ARGB, the formats the SDK's .dds files come in), and hand
-//     the draws to the overlay through plugin_draw.h, in the order they are
-//     made, among the game's own HUD draws.
+//   - this DLL's own +0x485E0 holds a pointer to a stand-in state whose +0x28
+//     is the device below (see PlaceGraphicsPointer). Every build of the SDK
+//     reads that one address, however it gets there;
+//   - installed as gta2dx9.dll, where there is no d3ddll.dll to find, plugin
+//     modules asking GetModuleHandleA for it are told this DLL instead;
+//   - the device, its DirectDraw, surfaces and textures implement what the
+//     SDK's loaders and drawing need - .dds files in DXT1, DXT3, DXT5 or 32-bit
+//     RGB, and bitmaps copied in through GetDC and Blt - keep the textures in
+//     system memory, and hand the draws to the overlay through plugin_draw.h,
+//     in the order they are made, among the game's own 2D draws.
 //
 // Everything else in the four interfaces answers DDERR_UNSUPPORTED. What it
 // cannot do: depth. The SDK's radar masks its corners round by writing depth
@@ -40,7 +41,6 @@
 #include <ddraw.h>
 #include <d3d.h>
 #include <psapi.h>
-#include <intrin.h>
 
 #include <cstdint>
 #include <cstring>
@@ -49,12 +49,15 @@
 #include "log.h"
 #include "plugin_draw.h"
 
+// plugin_slot.asm: the block over base + 0x485E0.
+extern "C" const uint8_t g_reservedForRendererState[];
+
 namespace gta2dx9 {
 namespace {
 
 // --- Pixel data -------------------------------------------------------------
 
-enum class Format { Unknown, Argb32, Dxt1, Dxt3, Dxt5 };
+enum class Format { Unknown, Argb32, Xrgb32, Dxt1, Dxt3, Dxt5 };
 
 Format FormatOf(const DDPIXELFORMAT& pf) {
     if (pf.dwFlags & DDPF_FOURCC) {
@@ -67,7 +70,9 @@ Format FormatOf(const DDPIXELFORMAT& pf) {
             default: return Format::Unknown;
         }
     }
-    if ((pf.dwFlags & DDPF_RGB) && pf.dwRGBBitCount == 32) return Format::Argb32;
+    if ((pf.dwFlags & DDPF_RGB) && pf.dwRGBBitCount == 32) {
+        return (pf.dwFlags & DDPF_ALPHAPIXELS) ? Format::Argb32 : Format::Xrgb32;
+    }
     return Format::Unknown;
 }
 
@@ -114,8 +119,11 @@ void DecodeColourBlock(const uint8_t* block, bool dxt1, uint32_t out[16]) {
 // A level, decoded to 0xAARRGGBB rows of `w`.
 std::vector<uint32_t> Decode(Format f, const uint8_t* data, uint32_t w, uint32_t h) {
     std::vector<uint32_t> out(static_cast<size_t>(w) * h, 0);
-    if (f == Format::Argb32) {
+    if (f == Format::Argb32 || f == Format::Xrgb32) {
         memcpy(out.data(), data, out.size() * 4);
+        if (f == Format::Xrgb32) {
+            for (uint32_t& texel : out) texel |= 0xFF000000u;
+        }
         return out;
     }
     const uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
@@ -191,6 +199,10 @@ bool SameGuid(REFIID a, const GUID& b) { return memcmp(&a, &b, sizeof(GUID)) == 
     Texture* texture_ = nullptr;   /* the IDirect3DTexture2 face, created on demand */ \
     int image_ = -1;               /* the overlay's copy of the top level */ \
     bool dirty_ = true; \
+    HDC dc_ = nullptr;             /* GetDC's memory DC, over a DIB section */ \
+    HBITMAP dib_ = nullptr; \
+    HGDIOBJ dibPrevious_ = nullptr; \
+    void* dibBits_ = nullptr; \
     int Image();
 #define TEXTURE_FIELDS \
     explicit Texture(Surface* surface) : surface_(surface) {} \
@@ -286,7 +298,7 @@ public:
     ULONG STDMETHODCALLTYPE Release() override;
     HRESULT STDMETHODCALLTYPE AddAttachedSurface(LPDIRECTDRAWSURFACE4 a0) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE AddOverlayDirtyRect(LPRECT a0) override { return DDERR_UNSUPPORTED; }
-    HRESULT STDMETHODCALLTYPE Blt(LPRECT a0, LPDIRECTDRAWSURFACE4 a1, LPRECT a2, DWORD a3, LPDDBLTFX a4) override { return DDERR_UNSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE Blt(LPRECT a0, LPDIRECTDRAWSURFACE4 a1, LPRECT a2, DWORD a3, LPDDBLTFX a4) override;
     HRESULT STDMETHODCALLTYPE BltBatch(LPDDBLTBATCH a0, DWORD a1, DWORD a2) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE BltFast(DWORD a0, DWORD a1, LPDIRECTDRAWSURFACE4 a2, LPRECT a3, DWORD a4) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE DeleteAttachedSurface(DWORD a0, LPDIRECTDRAWSURFACE4 a1) override { return DDERR_UNSUPPORTED; }
@@ -298,7 +310,7 @@ public:
     HRESULT STDMETHODCALLTYPE GetCaps(LPDDSCAPS2 a0) override;
     HRESULT STDMETHODCALLTYPE GetClipper(LPDIRECTDRAWCLIPPER* a0) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE GetColorKey(DWORD a0, LPDDCOLORKEY a1) override { return DDERR_UNSUPPORTED; }
-    HRESULT STDMETHODCALLTYPE GetDC(HDC * a0) override { return DDERR_UNSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE GetDC(HDC * a0) override;
     HRESULT STDMETHODCALLTYPE GetFlipStatus(DWORD a0) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE GetOverlayPosition(LPLONG a0, LPLONG a1) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE GetPalette(LPDIRECTDRAWPALETTE* a0) override { return DDERR_UNSUPPORTED; }
@@ -307,7 +319,7 @@ public:
     HRESULT STDMETHODCALLTYPE Initialize(LPDIRECTDRAW a0, LPDDSURFACEDESC2 a1) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE IsLost() override;
     HRESULT STDMETHODCALLTYPE Lock(LPRECT a0, LPDDSURFACEDESC2 a1, DWORD a2, HANDLE a3) override;
-    HRESULT STDMETHODCALLTYPE ReleaseDC(HDC a0) override { return DDERR_UNSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE ReleaseDC(HDC a0) override;
     HRESULT STDMETHODCALLTYPE Restore() override;
     HRESULT STDMETHODCALLTYPE SetClipper(LPDIRECTDRAWCLIPPER a0) override { return DDERR_UNSUPPORTED; }
     HRESULT STDMETHODCALLTYPE SetColorKey(DWORD a0, LPDDCOLORKEY a1) override { return DDERR_UNSUPPORTED; }
@@ -380,7 +392,8 @@ HRESULT Device::EnumTextureFormats(LPD3DENUMPIXELFORMATSCALLBACK a0, LPVOID a1) 
     // Exactly the formats the textures are stored in, so the loader always finds
     // an exact match and never takes its conversion path (which blits through a
     // surface pointer it never sets).
-    DDPIXELFORMAT formats[4] = {};
+    // The bitmap path asks for 32 bits with or without alpha, by bit count.
+    DDPIXELFORMAT formats[5] = {};
     for (DDPIXELFORMAT& f : formats) f.dwSize = sizeof(DDPIXELFORMAT);
     formats[0].dwFlags = DDPF_RGB | DDPF_ALPHAPIXELS;
     formats[0].dwRGBBitCount = 32;
@@ -388,12 +401,17 @@ HRESULT Device::EnumTextureFormats(LPD3DENUMPIXELFORMATSCALLBACK a0, LPVOID a1) 
     formats[0].dwGBitMask = 0x0000FF00;
     formats[0].dwBBitMask = 0x000000FF;
     formats[0].dwRGBAlphaBitMask = 0xFF000000;
-    formats[1].dwFlags = DDPF_FOURCC;
-    formats[1].dwFourCC = MAKEFOURCC('D', 'X', 'T', '1');
+    formats[1].dwFlags = DDPF_RGB;
+    formats[1].dwRGBBitCount = 32;
+    formats[1].dwRBitMask = 0x00FF0000;
+    formats[1].dwGBitMask = 0x0000FF00;
+    formats[1].dwBBitMask = 0x000000FF;
     formats[2].dwFlags = DDPF_FOURCC;
-    formats[2].dwFourCC = MAKEFOURCC('D', 'X', 'T', '3');
+    formats[2].dwFourCC = MAKEFOURCC('D', 'X', 'T', '1');
     formats[3].dwFlags = DDPF_FOURCC;
-    formats[3].dwFourCC = MAKEFOURCC('D', 'X', 'T', '5');
+    formats[3].dwFourCC = MAKEFOURCC('D', 'X', 'T', '3');
+    formats[4].dwFlags = DDPF_FOURCC;
+    formats[4].dwFourCC = MAKEFOURCC('D', 'X', 'T', '5');
     for (DDPIXELFORMAT& f : formats) {
         if (a0(&f, a1) != D3DENUMRET_OK) break;
     }
@@ -473,6 +491,62 @@ HRESULT Surface::Lock(LPRECT, LPDDSURFACEDESC2 a1, DWORD, HANDLE) {
 }
 
 HRESULT Surface::Unlock(LPRECT) {
+    dirty_ = true;
+    return DD_OK;
+}
+
+// The SDK's bitmap path BitBlts its bitmap into a temporary surface through
+// GetDC: a DIB section of the surface's size stands in for the surface's
+// memory for the length of the DC, and ReleaseDC copies it back.
+HRESULT Surface::GetDC(HDC* a0) {
+    if (!a0) return DDERR_INVALIDPARAMS;
+    if (dc_ || renderTarget_ || Compressed(format_) || format_ == Format::Unknown) {
+        return DDERR_CANTCREATEDC;
+    }
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = static_cast<LONG>(desc_.dwWidth);
+    info.bmiHeader.biHeight = -static_cast<LONG>(desc_.dwHeight);   // top-down, as the surface
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    dc_ = CreateCompatibleDC(nullptr);
+    dib_ = dc_ ? CreateDIBSection(dc_, &info, DIB_RGB_COLORS, &dibBits_, nullptr, 0) : nullptr;
+    if (!dib_) {
+        if (dc_) DeleteDC(dc_);
+        dc_ = nullptr;
+        return DDERR_CANTCREATEDC;
+    }
+    memcpy(dibBits_, data_.data(), data_.size());
+    dibPrevious_ = SelectObject(dc_, dib_);
+    *a0 = dc_;
+    return DD_OK;
+}
+
+HRESULT Surface::ReleaseDC(HDC a0) {
+    if (!dc_ || a0 != dc_) return DDERR_INVALIDPARAMS;
+    GdiFlush();
+    memcpy(data_.data(), dibBits_, data_.size());
+    SelectObject(dc_, dibPrevious_);
+    DeleteObject(dib_);
+    DeleteDC(dc_);
+    dc_ = nullptr;
+    dib_ = nullptr;
+    dibBits_ = nullptr;
+    dirty_ = true;
+    return DD_OK;
+}
+
+// The whole of one surface onto the whole of another of the same size and
+// format, which is the only Blt the SDK's texture loader makes.
+HRESULT Surface::Blt(LPRECT a0, LPDIRECTDRAWSURFACE4 a1, LPRECT a2, DWORD, LPDDBLTFX) {
+    Surface* source = static_cast<Surface*>(a1);
+    if (a0 || a2 || !source || source->renderTarget_ || renderTarget_) return DDERR_UNSUPPORTED;
+    if (source->desc_.dwWidth != desc_.dwWidth || source->desc_.dwHeight != desc_.dwHeight ||
+        source->data_.size() != data_.size()) {
+        return DDERR_UNSUPPORTED;
+    }
+    data_ = source->data_;
     dirty_ = true;
     return DD_OK;
 }
@@ -703,36 +777,44 @@ struct StandInGraphics {
     uint8_t after[0x100];
 };
 StandInGraphics g_graphics = {};
-StandInGraphics* g_graphicsPointer = &g_graphics;
+
+// The pointer itself has to be at this DLL's base + 0x485E0, because that is
+// where every build of the SDK looks: some call GetModuleHandleA and add the
+// offset on the spot, some cache the handle and add it later, some add it to the
+// game's own base, and none of that can be recognised reliably from outside. So
+// the start of this DLL's code is a block that covers the offset - see
+// plugin_slot.asm - and the pointer is written into it at load. The rest of the
+// block is zeros, which a plugin reading other fields of the original's state
+// finds as null pointers rather than as code.
+constexpr size_t kReservedBytes = 0x49000;
+
+// Writes the pointer. False when the block did not land over the offset - more
+// than 0x485E0 bytes of something ahead of it - in which case the stand-in is
+// unreachable and the log says so.
+bool PlaceGraphicsPointer(HMODULE self) {
+    uint8_t* slot = reinterpret_cast<uint8_t*>(self) + kGraphicsOffset;
+    const uint8_t* begin = g_reservedForRendererState;
+    if (slot < begin || slot + sizeof(void*) > begin + kReservedBytes) return false;
+    DWORD old = 0;
+    if (!VirtualProtect(slot, sizeof(void*), PAGE_EXECUTE_READWRITE, &old)) return false;
+    StandInGraphics* graphics = &g_graphics;
+    memcpy(slot, &graphics, sizeof(graphics));
+    VirtualProtect(slot, sizeof(void*), old, &old);
+    return true;
+}
 
 using GetModuleHandleAFn = HMODULE(WINAPI*)(LPCSTR);
 GetModuleHandleAFn g_realGetModuleHandleA = nullptr;
+HMODULE g_self = nullptr;
 
-// `add eax, 0x485E0` - the SDK's GetGBH, returned straight into.
-bool ReturnsIntoGraphicsLookup(const void* returnAddress) {
-    static const uint8_t kAddEax[] = {0x05, 0xE0, 0x85, 0x04, 0x00};
-    __try {
-        return memcmp(returnAddress, kAddEax, sizeof(kAddEax)) == 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
+// Installed as gta2dx9.dll there is no d3ddll.dll at all, and the SDK would
+// look for the original's state at an address that is not mapped. Asked for
+// d3ddll.dll and finding none, a plugin is told this DLL, whose +0x485E0 is
+// the pointer above.
 HMODULE WINAPI PluginGetModuleHandleA(LPCSTR name) {
-    if (name && lstrcmpiA(name, "d3ddll.dll") == 0) {
-        if (ReturnsIntoGraphicsLookup(_ReturnAddress())) {
-            return reinterpret_cast<HMODULE>(reinterpret_cast<uintptr_t>(&g_graphicsPointer) -
-                                             kGraphicsOffset);
-        }
-        // Installed as gta2dx9.dll there is no d3ddll.dll at all, and the SDK
-        // would conclude there is no renderer to draw with.
-        HMODULE real = g_realGetModuleHandleA(name);
-        if (!real) GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                      GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                      reinterpret_cast<LPCSTR>(&PluginGetModuleHandleA), &real);
-        return real;
-    }
-    return g_realGetModuleHandleA(name);
+    HMODULE real = g_realGetModuleHandleA(name);
+    if (!real && name && lstrcmpiA(name, "d3ddll.dll") == 0) return g_self;
+    return real;
 }
 
 // Points one module's import of kernel32's GetModuleHandleA at ours.
@@ -766,14 +848,11 @@ bool PatchImport(HMODULE module) {
 
 }  // namespace
 
-void PluginD3D6Install() {
-    static bool installed = false;
-    if (installed) return;
-    installed = true;
-
-    g_realGetModuleHandleA = reinterpret_cast<GetModuleHandleAFn>(
-        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetModuleHandleA"));
-    if (!g_realGetModuleHandleA) return;
+void PluginD3D6Init(void* module) {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    g_self = static_cast<HMODULE>(module);
 
     static Device device;
     static DDraw ddraw;
@@ -800,6 +879,23 @@ void PluginD3D6Install() {
     device.states_[D3DRENDERSTATE_DESTBLEND] = D3DBLEND_INVSRCALPHA;
     g_graphics.device = &device;
 
+    if (!PlaceGraphicsPointer(g_self)) {
+        Log("plugin d3d6: the reserved block does not cover +0x%X; plugins that draw through the "
+            "original renderer's device will not find this one", static_cast<unsigned>(kGraphicsOffset));
+    }
+}
+
+void PluginD3D6Install() {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+
+    g_realGetModuleHandleA = reinterpret_cast<GetModuleHandleAFn>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetModuleHandleA"));
+    if (!g_realGetModuleHandleA || !g_self) return;
+    // Only needed when this DLL is not itself called d3ddll.dll.
+    if (g_realGetModuleHandleA("d3ddll.dll") == g_self) return;
+
     // Every module from the game's own folder, other than the game and this
     // renderer: the plugins loaded with the game. Overlays and other software
     // injected from elsewhere are left alone.
@@ -807,26 +903,20 @@ void PluginD3D6Install() {
     GetModuleFileNameA(nullptr, folder, MAX_PATH);
     if (char* slash = strrchr(folder, '\\')) slash[1] = '\0';
     const size_t folderLength = strlen(folder);
-    HMODULE self = nullptr;
-    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                       reinterpret_cast<LPCSTR>(&PluginD3D6Install), &self);
     HMODULE modules[512];
     DWORD bytes = 0;
     if (!EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &bytes)) return;
-    int patched = 0;
     for (DWORD i = 0; i < bytes / sizeof(HMODULE) && i < 512; ++i) {
         HMODULE module = modules[i];
-        if (module == self || module == GetModuleHandleW(nullptr)) continue;
+        if (module == g_self || module == GetModuleHandleW(nullptr)) continue;
         char path[MAX_PATH] = "";
         if (!GetModuleFileNameA(module, path, MAX_PATH)) continue;
         if (!folderLength || _strnicmp(path, folder, folderLength) != 0) continue;
         if (PatchImport(module)) {
-            ++patched;
             const char* leaf = strrchr(path, '\\');
-            Log("plugin d3d6: GetModuleHandleA routed in %s", leaf ? leaf + 1 : path);
+            Log("plugin d3d6: %s is told this DLL is d3ddll.dll", leaf ? leaf + 1 : path);
         }
     }
-    if (!patched) Log("plugin d3d6: no plugin imports GetModuleHandleA; nothing to stand in for");
 }
 
 }  // namespace gta2dx9
