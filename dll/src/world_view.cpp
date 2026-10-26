@@ -411,12 +411,38 @@ std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir
 // drops back down. A child window is always painted above its parent's client
 // area, so there is no ordering to lose, and it can never take the focus or the
 // input away from the game either.
+HWND g_presentGameWindow = nullptr;
+
+// The present window covers the game's, so the mouse is over ours, and a click
+// there is ours: the game never hears of it, and a click on another top-level
+// window takes the activation away from the game, which then pauses itself.
+// The game does not use the mouse, but plugins for it do - a front end driven by
+// the mouse reads it off the game's window. So a click is refused the
+// activation, and the mouse messages go on to the game's window, at the place
+// under the cursor in its own client area: exactly what it would have been sent
+// with nothing of ours in the way. Not while the F4 menu has the mouse, which
+// reads it for itself.
+LRESULT CALLBACK PresentWndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    const bool mouse = message >= WM_MOUSEFIRST && message <= WM_MOUSELAST
+                       && message != WM_MOUSEWHEEL && message != WM_MOUSEHWHEEL;
+    if (mouse && g_presentGameWindow && !DebugMenuWantsMouse()) {
+        POINT p = {static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+        ClientToScreen(window, &p);
+        ScreenToClient(g_presentGameWindow, &p);
+        PostMessageA(g_presentGameWindow, message, wparam,
+                     MAKELPARAM(static_cast<short>(p.x), static_cast<short>(p.y)));
+        return 0;
+    }
+    return DefWindowProcA(window, message, wparam, lparam);
+}
+
 HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow mode) {
     static bool registered = false;
     HINSTANCE instance = GetModuleHandleA(nullptr);
     if (!registered) {
         WNDCLASSA wc = {};
-        wc.lpfnWndProc = DefWindowProcA;
+        wc.lpfnWndProc = PresentWndProc;
         wc.hInstance = instance;
         wc.hCursor = LoadCursorA(nullptr, IDC_ARROW);
         wc.lpszClassName = "gta2dx9_present";
@@ -424,6 +450,7 @@ HWND CreatePresentWindow(HWND gameWindow, int width, int height, PresentWindow m
         registered = true;
     }
     if (!gameWindow) return nullptr;
+    g_presentGameWindow = gameWindow;
 
     // Without this the game's window is free to paint its own background over
     // the child.

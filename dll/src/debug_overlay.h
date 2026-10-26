@@ -41,6 +41,10 @@ void DebugMenuRender();
 
 bool DebugMenuVisible();
 
+// Whether the panel is open with the mouse over it or busy with it, so a click
+// is the panel's and not the game's.
+bool DebugMenuWantsMouse();
+
 // How much bigger than ImGui's 1080p defaults to draw the panel; 0 follows the
 // display, which is what puts it at 2x on a 4K screen. Saved with the rest of
 // the settings, hence the reference - see settings.cpp.

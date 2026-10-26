@@ -1797,6 +1797,11 @@ void DebugMenuPoll() {
 
 bool DebugMenuVisible() { return g_visible; }
 
+bool DebugMenuWantsMouse() {
+    return g_initialised && g_visible && ImGui::GetCurrentContext()
+        && ImGui::GetIO().WantCaptureMouse;
+}
+
 void DebugMenuRender() {
     if (!g_initialised || !g_visible) return;
 
