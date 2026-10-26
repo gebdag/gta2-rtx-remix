@@ -15,12 +15,34 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace gta2dx9 {
 namespace {
 
 RemixLightSettings g_settings;
 const GroundSampler* g_ground = nullptr;
+std::unordered_set<uint64_t> g_mapLights;   // MapLightKey of every lamp in the map file
+bool g_reliftPending = false;
+
+uint64_t MapLightKey(uint32_t x, uint32_t y, uint32_t z) {
+    return static_cast<uint64_t>(x) | static_cast<uint64_t>(y) << 16 | static_cast<uint64_t>(z) << 32;
+}
+
+// Whether a light stands exactly where the map file puts one of its lamps. The
+// game's positions are the file's 1/128 units converted exactly, so a map lamp
+// matches to the bit and nothing else lands on one by chance.
+bool IsMapLight(const float* pos) {
+    // Back from the mesh axes to the game's: x east, y south, z up.
+    const float game[3] = {pos[0], static_cast<float>(gta2::kMapHeight) - pos[2], pos[1]};
+    uint32_t units[3];
+    for (int i = 0; i < 3; ++i) {
+        const float u = game[i] * 128.0f;
+        if (u < 0.0f || u > 65535.0f || u != std::floor(u)) return false;
+        units[i] = static_cast<uint32_t>(u);
+    }
+    return g_mapLights.count(MapLightKey(units[0], units[1], units[2])) != 0;
+}
 
 // Half the map's lights are inside the ground.
 //
@@ -32,7 +54,7 @@ const GroundSampler* g_ground = nullptr;
 // counts - so the road above was lit all the same. A path tracer finds the lid
 // in the way and the lamp lights nothing.
 //
-// So a light inside a block that has a lid above it is put
+// So a map lamp inside a block that has a lid above it is put
 // g_settings.buriedLift above that lid instead - by default a tile, which
 // spreads it into a softer pool than the hard disc a lamp just off the road
 // makes. A light in open air is never moved. Only the block the light is in
@@ -43,6 +65,13 @@ const GroundSampler* g_ground = nullptr;
 // no higher than kUndersideClearance below the underside. A gap lower than
 // kMinimumGap is no gap: the lamp is inside a wall or a building that stands on
 // the surface, lifting cannot get it out, and it is left where the map put it.
+//
+// Done where a light is described to Remix, not where the game lists it: the
+// tracking works on the game's own positions, which do not change when the
+// floors arrive a frame after the first lights or when the lift is retuned - a
+// lamp that seemed to move would be taken for a car's. And only to the map's
+// own lamps (IsMapLight): a car's lamps sit on the road, and on a ramp or next
+// to a partial block our floor can read a hair above them.
 constexpr float kUndersideClearance = 0.25f;
 constexpr float kMinimumGap = 0.5f;
 
@@ -193,10 +222,13 @@ void Apply(RemixTrackedLight& t) {
     const RemixLightOverride* ov = LightsFindOverride(t.key);
     const bool identified = t.key != 0 && t.key == g_identify;
 
-    float pos[3];
+    float pos[3] = {t.def.pos[0], t.def.pos[1], t.def.pos[2]};
+    if (t.def.source == kLightSourceGame && !t.moving && IsMapLight(pos)) {
+        LiftOutOfGround(pos[0], &pos[1], pos[2]);
+    }
     float rgb[3];
     for (int i = 0; i < 3; ++i) {
-        pos[i] = t.def.pos[i] + (ov ? ov->offset[i] : 0.0f);
+        pos[i] += ov ? ov->offset[i] : 0.0f;
         rgb[i] = (ov && ov->recolor) ? ov->color[i] : t.def.rgb[i];
     }
 
@@ -323,7 +355,7 @@ bool SameSettings(const RemixLightSettings& a, const RemixLightSettings& b) {
         && a.radiusExponent == b.radiusExponent && a.emitterRadius == b.emitterRadius
         && a.minIntensity == b.minIntensity && a.saturation == b.saturation
         && a.ambientFill == b.ambientFill && a.ambientFillScale == b.ambientFillScale
-        && a.coneSoftness == b.coneSoftness
+        && a.coneSoftness == b.coneSoftness && a.buriedLift == b.buriedLift
         && memcmp(a.gameClass, b.gameClass, sizeof(a.gameClass)) == 0;
 }
 
@@ -416,7 +448,6 @@ void LightsAddRaw(const void* descriptor) {
     d.pos[0] = x;
     d.pos[1] = z;
     d.pos[2] = static_cast<float>(gta2::kMapHeight) - y;
-    LiftOutOfGround(d.pos[0], &d.pos[1], d.pos[2]);
 
     g_pending.push_back(d);
 }
@@ -424,6 +455,14 @@ void LightsAddRaw(const void* descriptor) {
 void LightsSetAmbient(float ambient) { g_ambient = ambient; }
 
 void LightsSetGround(const GroundSampler* ground) { g_ground = ground; }
+
+void LightsSetMapLights(const std::vector<uint16_t>& xyz) {
+    g_mapLights.clear();
+    for (size_t i = 0; i + 3 <= xyz.size(); i += 3) {
+        g_mapLights.insert(MapLightKey(xyz[i], xyz[i + 1], xyz[i + 2]));
+    }
+    g_reliftPending = true;
+}
 
 void LightsBeginExtra() { g_extra.clear(); }
 
@@ -711,6 +750,11 @@ void LightsReconcile() {
         g_settingsDirtyAt = 0;
         applyAll = true;
     }
+    // A new map's lamps and floors: lift every light again from those.
+    if (g_reliftPending) {
+        g_reliftPending = false;
+        applyAll = true;
+    }
 
     // --- Create, redefine, suppress ----------------------------------------
     g_stats.suppressedByOverride = 0;
@@ -804,9 +848,14 @@ void LightsReconcile() {
             RemixApiAvailable() ? "available" : "ABSENT");
     }
     if ((g_frame & 0xFF) == 0 && (g_stats.submittedLastFrame || g_stats.tracked)) {
-        Log("remix lights @%u: submitted %d, tracked %d (%d moving), drawn %d, ambient %.3f, "
-            "created %u updated %u destroyed %u failures %u",
-            g_frame, g_stats.submittedLastFrame, g_stats.tracked, g_stats.moving,
+        // A map lamp counted as moving would be lit and gated as a car's.
+        int movingLamps = 0;
+        for (const RemixTrackedLight& t : g_tracked) {
+            if (t.moving && t.def.source == kLightSourceGame && IsMapLight(t.def.pos)) ++movingLamps;
+        }
+        Log("remix lights @%u: submitted %d, tracked %d (%d moving, %d of them map lamps), "
+            "drawn %d, ambient %.3f, created %u updated %u destroyed %u failures %u",
+            g_frame, g_stats.submittedLastFrame, g_stats.tracked, g_stats.moving, movingLamps,
             g_stats.drawnLastFrame, g_ambient, g_stats.created, g_stats.updated,
             g_stats.destroyed, g_stats.applyFailures);
     }

@@ -240,6 +240,13 @@ class GroundSampler;
 // lives in WorldView for the whole process. Empty until a map is loaded.
 void LightsSetGround(const GroundSampler* ground);
 
+// The current map's own lamps, as its file lists them: x, y, z per lamp in the
+// file's units, 128 to a tile. Only a light standing exactly on one of these is
+// lifted; the lamps the game hangs on every vehicle go through gbh_AddLight
+// as well and are never moved. Called once the map and its floors are in, and
+// redefines every light so each is lifted from the floors it now has.
+void LightsSetMapLights(const std::vector<uint16_t>& xyz);
+
 // gbh_SetAmbient, in the game's own 0..1 scale.
 void LightsSetAmbient(float ambient);
 

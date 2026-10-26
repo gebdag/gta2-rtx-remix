@@ -240,7 +240,9 @@ bool ReadLiveMap(const uint8_t* mapObject, gta2::Map* map, std::string* error) {
                              (static_cast<size_t>(maxBlock) + 1) * 12, error);
 }
 
-std::vector<uint8_t> FileBlockArray(const std::string& path) {
+// One chunk of a .gmp file, by its four-letter tag; empty if the file or the
+// chunk is missing.
+std::vector<uint8_t> FileChunk(const std::string& path, const char* tag) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return {};
     fseek(f, 0, SEEK_END);
@@ -256,22 +258,42 @@ std::vector<uint8_t> FileBlockArray(const std::string& path) {
         uint32_t chunk;
         memcpy(&chunk, &data[offset + 4], 4);
         const size_t body = offset + 8;
-        if (memcmp(&data[offset], "DMAP", 4) == 0) {
-            const size_t pool = body + gta2::kDmapBaseBytes;
-            if (pool + 4 > data.size()) return {};
-            uint32_t words;
-            memcpy(&words, &data[pool], 4);
-            const size_t countAt = pool + 4 + static_cast<size_t>(words) * 4;
-            if (countAt + 4 > data.size()) return {};
-            uint32_t count;
-            memcpy(&count, &data[countAt], 4);
-            const size_t start = countAt + 4;
-            const size_t bytes = (std::min)(static_cast<size_t>(count) * 12, data.size() - start);
-            return std::vector<uint8_t>(data.begin() + start, data.begin() + start + bytes);
+        if (body + chunk > data.size()) return {};
+        if (memcmp(&data[offset], tag, 4) == 0) {
+            return std::vector<uint8_t>(data.begin() + body, data.begin() + body + chunk);
         }
         offset = body + chunk;
     }
     return {};
+}
+
+std::vector<uint8_t> FileBlockArray(const std::string& path) {
+    const std::vector<uint8_t> dmap = FileChunk(path, "DMAP");
+    const size_t pool = gta2::kDmapBaseBytes;
+    if (pool + 4 > dmap.size()) return {};
+    uint32_t words;
+    memcpy(&words, &dmap[pool], 4);
+    const size_t countAt = pool + 4 + static_cast<size_t>(words) * 4;
+    if (countAt + 4 > dmap.size()) return {};
+    uint32_t count;
+    memcpy(&count, &dmap[countAt], 4);
+    const size_t start = countAt + 4;
+    const size_t bytes = (std::min)(static_cast<size_t>(count) * 12, dmap.size() - start);
+    return std::vector<uint8_t>(dmap.begin() + start, dmap.begin() + start + bytes);
+}
+
+// The map's own lamps (LGHT: 16 bytes each - ARGB, then x, y, z and radius at
+// 128 to a tile, then intensity, shape, on and off time), as x, y, z.
+std::vector<uint16_t> FileLightPositions(const std::string& path) {
+    const std::vector<uint8_t> lght = FileChunk(path, "LGHT");
+    std::vector<uint16_t> xyz;
+    xyz.reserve(lght.size() / 16 * 3);
+    for (size_t i = 0; i + 16 <= lght.size(); i += 16) {
+        uint16_t v[3];
+        memcpy(v, &lght[i + 4], sizeof(v));
+        xyz.insert(xyz.end(), v, v + 3);
+    }
+    return xyz;
 }
 
 // Which style each map is played with, from the game's own level lists: the
@@ -327,7 +349,8 @@ std::map<std::string, std::string> MapStyles(const std::string& dataDir) {
 // identified by matching its live blocks against the .gmp files on disk, and
 // its style looked up in the game's level lists (MapStyles). A map they do not
 // mention is taken to share its style's basename, which every district does.
-std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir) {
+std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir,
+                            std::string* mapPath) {
     const uint8_t* blocks = *reinterpret_cast<const uint8_t* const*>(mapObject + gta2::kMapObjectBlocksPtr);
     if (!blocks) return {};
 
@@ -355,6 +378,7 @@ std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir
     FindClose(handle);
 
     if (bestScore < 0.9 || bestName.empty()) return {};
+    *mapPath = dataDir + "\\" + bestName;
     std::string lowerName = bestName;
     for (char& c : lowerName) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
     const std::map<std::string, std::string> styles = MapStyles(dataDir);
@@ -719,7 +743,8 @@ bool WorldView::EnsureWorldLoaded() {
         return false;
     }
 
-    const std::string stylePath = DetectStylePath(mapObject, dataDir_);
+    std::string mapPath;
+    const std::string stylePath = DetectStylePath(mapObject, dataDir_, &mapPath);
     gta2::Style style;
     if (stylePath.empty()) {
         Log("could not identify the district for map object %p", mapObject);
@@ -852,6 +877,13 @@ bool WorldView::EnsureWorldLoaded() {
     std::array<gta2::SlopeInfo, gta2::kSlopeTypeCount> resolvedSlopes = {};
     gta2::ResolveSlopeTable(slopes.data(), resolvedSlopes.data());
     ground_.Reset(&map_, resolvedSlopes.data());
+    // Which of the lights the game lists are the map's own lamps, the only ones
+    // lifted onto these floors.
+    {
+        const std::vector<uint16_t> mapLights = FileLightPositions(mapPath);
+        LightsSetMapLights(mapLights);
+        Log("map lamps: %u in %s", static_cast<unsigned>(mapLights.size() / 3), mapPath.c_str());
+    }
 
     // Where a partial or corner block is cut, likewise straight from the game
     // rather than assumed. The two outer constants are a sanity check: they must
