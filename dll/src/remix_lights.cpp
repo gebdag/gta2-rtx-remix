@@ -578,6 +578,7 @@ void LightsReconcile() {
 
     g_stats.submittedLastFrame = static_cast<int>(g_working.size());
     g_stats.suppressedByClass = 0;
+    g_stats.suppressedByDaylight = 0;
     g_stats.suppressedByIntensity = 0;
 
     // --- Match this frame's list onto the tracked set ---------------------
@@ -749,6 +750,7 @@ void LightsReconcile() {
             // nothing: an invisible light is still a handle on the far side of
             // the bridge and still a light the path tracer samples.
             ++g_stats.suppressedByClass;
+            if (GameClassDaylight(t.gameClass) <= kGateFloor) ++g_stats.suppressedByDaylight;
             suppressed = true;
         } else if (t.def.intensity < g_settings.minIntensity && !identified) {
             // The game blinks a light by taking its intensity to zero, so this is

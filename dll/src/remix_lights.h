@@ -304,6 +304,7 @@ struct RemixLightStats {
     int moving = 0;
     int suppressedByOverride = 0;
     int suppressedByClass = 0;
+    int suppressedByDaylight = 0;  // ...of those, put out by the time of day
     int suppressedByIntensity = 0;
     int bySource[kLightSourceCount] = {};   // tracked lights, by where they came from
     int byClass[kGameLightClassCount] = {}; // the game's own lights, by what kind they are

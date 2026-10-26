@@ -319,6 +319,8 @@ void DrawSaveBar() {
     ImGui::SetItemTooltip("Shows the diagnostics and the tuning this port was built with.");
 }
 
+void HourText(float hour, char* out, size_t size);
+
 // Only speaks up when something is actually wrong. The running totals that used
 // to live here are on the Diagnostics tab.
 void DrawWarnings() {
@@ -334,7 +336,17 @@ void DrawWarnings() {
     }
     const RemixLightStats& st = LightsStats();
     if (st.tracked > 0 && st.drawnLastFrame == 0 && LightsSettings().enabled) {
-        ImGui::TextColored(kBad, "Lights are being tracked but none reached Remix.");
+        // In daytime every light that only burns at night is out on purpose, and
+        // with no traffic light in view that leaves nothing to draw. Not a fault.
+        const int suppressed =
+            st.suppressedByOverride + st.suppressedByClass + st.suppressedByIntensity;
+        if (st.suppressedByDaylight > 0 && suppressed >= st.tracked) {
+            char on[8];
+            HourText(TimeOfDay().lightsOnHour, on, sizeof(on));
+            ImGui::TextColored(kDim, "Daytime: the night-only lights are off until %s.", on);
+        } else {
+            ImGui::TextColored(kBad, "Lights are being tracked but none reached Remix.");
+        }
         any = true;
     }
     if (st.applyFailures) {
