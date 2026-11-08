@@ -445,9 +445,14 @@ class Plateau:
 
     def zones(self):
         """The first zone in the layout is the main one, covering the map; the
-        rest are local areas inside it."""
+        rest are local areas inside it. The main zone takes the whole grid,
+        ring road and border included: a zone's width is one byte, so it ends
+        at cell 254, and cell 255 is the grass border."""
         out = []
         for i, (name, west, south, east, north) in enumerate(layout.ZONES):
+            if i == 0:
+                out.append((gmp.ZONE_NAVIGATION, 0, 0, 255, 255, name))
+                continue
             x0, y0, x1, y1 = self.grid.rect(west, south, east, north)
             if x0 <= x1 and y0 <= y1:
                 kind = gmp.ZONE_NAVIGATION if i == 0 else gmp.ZONE_LOCAL_NAVIGATION
@@ -565,14 +570,18 @@ def load_palette(path):
         sys.exit('palette %s has no tile for: %s' % (path, ', '.join(missing)))
     palette = {}
     for k in PALETTE_KEYS:
-        try:
-            palette[k] = int(tiles[k])
-        except (TypeError, ValueError):
-            sys.exit('palette %s: tile for %s is not a number: %r' % (path, k, tiles[k]))
+        v = tiles[k]
+        if isinstance(v, bool) or not isinstance(v, (int, str)) or \
+                (isinstance(v, str) and not v.strip().isdigit()):
+            sys.exit('palette %s: tile for %s is not a whole number: %r' % (path, k, v))
+        palette[k] = int(v)
+    style = data.get('style')
+    if style is not None and (not isinstance(style, str) or not style.lower().endswith('.sty')):
+        sys.exit('palette %s: "style" must be a .sty file name: %r' % (path, style))
     bad = [k for k, v in palette.items() if not 0 < v < 1024]
     if bad:
         sys.exit('palette %s: tile numbers must be 1-1023: %s' % (path, ', '.join(bad)))
-    return palette, data.get('style')
+    return palette, style
 
 
 def main(argv=None):

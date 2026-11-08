@@ -87,8 +87,9 @@ ways to get into the Plateau:
 season. Open it for the steps. In short: change the five values in the
 `[timeofday]` section of `gta2dx9.ini` to the ones in the file. Change them,
 do not add a second copy. If you have saved settings from the F4 menu before,
-`gta2dx9_settings.ini` wins over `gta2dx9.ini`, so set the same values in the
-F4 menu and press Save.
+`gta2dx9_settings.ini` wins over `gta2dx9.ini`. Then set the values in the F4
+menu instead: tick Advanced first, or the Latitude and Season sliders do not
+show. The file lists the menu's own names and values.
 
 The renderer's clock is solar time, with no daylight-saving time. A Montreal
 summer sunset at 20:45 on a clock is about 19:45 on the renderer's clock.
@@ -117,7 +118,8 @@ check that:
 - every storey of every building has a solid wall on each open side
 - no building stands right at the kerb
 - the block list is padded to 4,000
-- the navigation zones are one main zone with local areas inside it
+- the navigation zones are one main zone, holding every road and sidewalk,
+  with local areas inside it
 - `pick_tiles.py` finds all twelve tiles in a map where the answer is known
 
 With a C++ compiler on the PATH they also load the map with the renderer's own

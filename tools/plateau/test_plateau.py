@@ -100,6 +100,14 @@ class PlateauTest(unittest.TestCase):
             at += 6 + zone[at + 5]
         self.assertEqual(kinds[0], gmp.ZONE_NAVIGATION)
         self.assertTrue(all(k == gmp.ZONE_LOCAL_NAVIGATION for k in kinds[1:]))
+        # The main zone holds every road and sidewalk, the ring road included.
+        _, x, y, w, h = zone[0:5]
+        p = self.plateau
+        for cy in range(gmp.MAP_H):
+            for cx in range(gmp.MAP_W):
+                if p.mat[p.at(cx, cy)] in (make_plateau_map.ROAD, make_plateau_map.SIDEWALK):
+                    self.assertTrue(x <= cx < x + w and y <= cy < y + h,
+                                    'cell %d,%d is outside the main zone' % (cx, cy))
 
     def test_no_building_at_the_kerb(self):
         """Every road has a sidewalk, grass or another road beside it; no

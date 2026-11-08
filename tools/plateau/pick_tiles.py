@@ -132,8 +132,13 @@ def surface_counts(columns, blocks):
                 if offset + i <= ground:
                     continue
                 b = blocks[index]
-                for side in (b.left, b.right, b.top, b.bottom):
-                    if side & gmp.WALL and side & 0x3FF and not side & gmp.FLAT:
+                # A flat face is a see-through panel, and so is the face
+                # opposite it: the game draws both sides of one panel.
+                for side, opposite in ((b.left, b.right), (b.right, b.left),
+                                       (b.top, b.bottom), (b.bottom, b.top)):
+                    if side & gmp.FLAT or opposite & gmp.FLAT:
+                        continue
+                    if side & gmp.WALL and side & 0x3FF:
                         use['wall'][side & 0x3FF] += 1
     return use, ground
 
