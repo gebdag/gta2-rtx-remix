@@ -8,8 +8,9 @@ to play with this renderer.
 ## What is in the map
 
 - The street grid from avenue du Parc to rue Cartier, and from rue Sherbrooke to
-  boulevard Saint-Joseph. Montreal's own grid is used: "north" is up the
-  mountain, as on the city's street signs.
+  boulevard Saint-Joseph. Montreal's own grid is used, as on the city's street
+  signs: "north" runs along Saint-Laurent, away from the river. That puts
+  Mount Royal on the west edge of the map.
 - Traffic arrows that follow the real one-way streets on the main roads:
   Saint-Laurent goes north, Saint-Urbain and Saint-Dominique go south, and
   Saint-Denis, Mont-Royal, Rachel, Laurier, Sherbrooke, Parc and Papineau are
@@ -21,7 +22,7 @@ to play with this renderer.
   Mount Royal with the George-Etienne Cartier monument, the Carre Saint-Louis
   with its fountain, and the pedestrian part of rue Prince-Arthur.
 - The Eglise Saint-Jean-Baptiste on Rachel, and the Mont-Royal and Sherbrooke
-  metro entrances.
+  metro entrances. Landmarks stand behind the sidewalk, never on it.
 - About 1,800 street lamps in the warm white of Montreal's LED lamps (3000 K).
   The renderer turns them into RTX Remix lights like the game's own.
 - A two-lane ring road around the edge, so that no street ends in a wall.
@@ -56,6 +57,11 @@ You need Python 3.8 or newer, with numpy and Pillow.
    `out` then holds `plateau.gmp`, `plateau.mmp`, `plateau.mis`, a preview
    picture and a report.
 
+   The map uses fewer than 200 kinds of block, but the file holds 4,000: the
+   rest are unused padding. Renderer builds made before this map came out
+   compare 4,000 block records when they work out which map is loaded, and a
+   shorter list would make them read past its end.
+
 3. Copy `plateau.gmp` and `plateau.mmp` into the GTA2 `data` folder.
 
 The renderer needs no change: it reads whatever map the game has loaded, and it
@@ -78,7 +84,14 @@ ways to get into the Plateau:
 ## Montreal sun
 
 `montreal_timeofday.ini` sets the renderer's sun to Montreal's latitude and the
-season. Copy its lines into the `[timeofday]` section of `gta2dx9.ini`.
+season. Open it for the steps. In short: change the five values in the
+`[timeofday]` section of `gta2dx9.ini` to the ones in the file. Change them,
+do not add a second copy. If you have saved settings from the F4 menu before,
+`gta2dx9_settings.ini` wins over `gta2dx9.ini`, so set the same values in the
+F4 menu and press Save.
+
+The renderer's clock is solar time, with no daylight-saving time. A Montreal
+summer sunset at 20:45 on a clock is about 19:45 on the renderer's clock.
 
 ## Options
 
@@ -86,7 +99,7 @@ season. Copy its lines into the `[timeofday]` section of `gta2dx9.ini`.
 | --- | --- |
 | `--palette palette.json` | Tiles from `pick_tiles.py`. Without it the map uses placeholder tiles and the textures are wrong. |
 | `--style ste.sty` | The style named in `plateau.mmp`. Default: the palette's. |
-| `--nav-zones` | Adds named areas (plateau, stlaur, stdenis, parcfont, mntroyal). GTA2 shows an area's name from its text file, which does not have these names, so they may show blank. Off by default. |
+| `--nav-zones` | Adds named areas: one main zone (plateau) over the whole map, and local areas inside it (mntroyal, stlaur, stdenis, parcfont). GTA2 shows an area's name from its text file, which does not have these names, so they may show blank. Off by default. |
 | `--no-lights` | Leaves out the street lamps. |
 
 ## Tests
@@ -101,12 +114,17 @@ check that:
 - every cell has ground and no building goes above level 7
 - every traffic arrow leads to another road cell
 - a car can drive from any road cell to any other one
-- buildings have solid walls
-- `pick_tiles.py` finds the right tiles in a map where the answer is known
+- every storey of every building has a solid wall on each open side
+- no building stands right at the kerb
+- the block list is padded to 4,000
+- the navigation zones are one main zone with local areas inside it
+- `pick_tiles.py` finds all twelve tiles in a map where the answer is known
 
 With a C++ compiler on the PATH they also load the map with the renderer's own
 parser and mesh builder (`src/gta2_map.cpp`, `src/world_mesh.cpp`, through
-`tools/dump_block.cpp audit`) and check that no block's triangle leaves its cell.
+`tools/dump_block.cpp audit`) and check that no triangle is wider than one
+block. The one exception is the seal: a single quad the mesh builder lays under
+every map.
 
 ## Files
 

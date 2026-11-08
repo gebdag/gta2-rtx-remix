@@ -46,12 +46,20 @@ PALETTE_KEYS = ['road', 'sidewalk', 'alley', 'plaza', 'grass', 'water', 'roof', 
 # Used when no palette is given. Valid tile numbers, wrong pictures.
 PLACEHOLDER_PALETTE = {key: i + 1 for i, key in enumerate(PALETTE_KEYS)}
 
-# Montreal's street lamps are 3000 K LEDs since the city's 2017-2019 change-over.
+# Montreal's LED street lamps are 3000 K.
 LAMP_RGB = (255, 180, 107)
+
+# The renderer finds which .gmp the game has loaded by comparing the first 4000
+# block records of each map in the data folder with the game's own block array
+# (kMatchBlocks in dll/src/world_view.cpp). Renderer builds before that check
+# learned the live map's length read 4000 records whatever the map held, past
+# the end of a small map's array. Padding the block list to 4000 keeps those
+# builds inside the array.
+MIN_BLOCKS = 4000
 
 
 def stable_hash(*parts):
-    return zlib.crc32(repr(parts).encode('ascii'))
+    return zlib.crc32(repr(parts).encode('utf-8'))
 
 
 class Grid:
@@ -258,7 +266,8 @@ class Plateau:
             for y in range(y0, y1 + 1):
                 for x in range(x0, x1 + 1):
                     k = self.at(x, y)
-                    if self.mat[k] in (ROAD, WATER):
+                    # A landmark stands behind the sidewalk, never on it.
+                    if self.mat[k] in (ROAD, WATER, SIDEWALK):
                         continue
                     levels = mark['levels']
                     if tower and tower[0] <= x <= tower[2] and tower[1] <= y <= tower[3]:
@@ -435,11 +444,14 @@ class Plateau:
         return writer
 
     def zones(self):
+        """The first zone in the layout is the main one, covering the map; the
+        rest are local areas inside it."""
         out = []
-        for name, west, south, east, north in layout.ZONES:
+        for i, (name, west, south, east, north) in enumerate(layout.ZONES):
             x0, y0, x1, y1 = self.grid.rect(west, south, east, north)
             if x0 <= x1 and y0 <= y1:
-                out.append((gmp.ZONE_NAVIGATION, x0, y0, x1 - x0 + 1, y1 - y0 + 1, name))
+                kind = gmp.ZONE_NAVIGATION if i == 0 else gmp.ZONE_LOCAL_NAVIGATION
+                out.append((kind, x0, y0, x1 - x0 + 1, y1 - y0 + 1, name))
         return out
 
     def spawn(self):
@@ -512,19 +524,18 @@ def write_preview(path, plateau, scale=4):
         lanes, _, _ = plateau.cross_cells(street)
         real = [c for c in lanes if c is not None]
         lo, hi = plateau.spans(street)[0]
-        mid = (lo + hi) // 2
+        # Stagger labels so neighbouring streets do not overprint.
+        mid = lo + (hi - lo) * (1 + stable_hash(street['name']) % 6) // 8
         if street['axis'] == 'ns':
-            # Stagger labels so neighbouring streets do not overprint.
-            mid = lo + (hi - lo) * (1 + stable_hash(street['name']) % 6) // 8
             text = Image.new('RGBA', (len(street['name']) * 6 + 4, 11), (0, 0, 0, 160))
             ImageDraw.Draw(text).text((2, 0), street['name'], (255, 255, 255))
             text = text.rotate(90, expand=True)
             img.paste(text, (int(real[0] * scale), int(mid * scale)), text)
         else:
-            draw.rectangle([lo * scale + 40, real[0] * scale - 1,
-                            lo * scale + 44 + len(street['name']) * 6, real[0] * scale + 10],
+            draw.rectangle([mid * scale, real[0] * scale - 1,
+                            mid * scale + 4 + len(street['name']) * 6, real[0] * scale + 10],
                            (0, 0, 0))
-            draw.text((lo * scale + 42, real[0] * scale - 1), street['name'], (255, 255, 255))
+            draw.text((mid * scale + 2, real[0] * scale - 1), street['name'], (255, 255, 255))
     for name, (cx, cy) in plateau.labels.items():
         draw.text((cx * scale + 6, cy * scale - 4), name, (255, 240, 200))
     for park in layout.PARKS:
@@ -544,11 +555,20 @@ def load_palette(path):
         return dict(PLACEHOLDER_PALETTE), None
     with open(path) as f:
         data = json.load(f)
+    if not isinstance(data, dict):
+        sys.exit('palette %s: expected a JSON object' % path)
     tiles = data.get('tiles', data)
+    if not isinstance(tiles, dict):
+        sys.exit('palette %s: "tiles" must be a JSON object' % path)
     missing = [k for k in PALETTE_KEYS if k not in tiles]
     if missing:
         sys.exit('palette %s has no tile for: %s' % (path, ', '.join(missing)))
-    palette = {k: int(tiles[k]) for k in PALETTE_KEYS}
+    palette = {}
+    for k in PALETTE_KEYS:
+        try:
+            palette[k] = int(tiles[k])
+        except (TypeError, ValueError):
+            sys.exit('palette %s: tile for %s is not a number: %r' % (path, k, tiles[k]))
     bad = [k for k, v in palette.items() if not 0 < v < 1024]
     if bad:
         sys.exit('palette %s: tile numbers must be 1-1023: %s' % (path, ', '.join(bad)))
@@ -575,7 +595,7 @@ def main(argv=None):
     plateau.build()
     writer = plateau.to_map(palette)
 
-    chunks = [('DMAP', writer.dmap())]
+    chunks = [('DMAP', writer.dmap(MIN_BLOCKS))]
     if args.nav_zones:
         chunks.append(('ZONE', gmp.zone_chunk(plateau.zones())))
     if not args.no_lights:

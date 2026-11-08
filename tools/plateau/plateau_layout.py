@@ -54,21 +54,27 @@ NORTH_SOUTH = [
     dict(name='Rue Berri', pos=1030, lanes=1, dir='s', kind='residential'),
     dict(name='Rue Saint-Hubert', pos=1110, lanes=2, dir='two', kind='residential'),
     dict(name='Rue Saint-Andre', pos=1195, lanes=1, dir='n', kind='residential'),
-    dict(name='Avenue Christophe-Colomb', pos=1285, lanes=2, dir='two', kind='residential',
+    # Position and name not checked against a map: a street between
+    # Saint-Andre and Christophe-Colomb, so the blocks there are not too wide.
+    dict(name='Rue de La Roche', pos=1290, lanes=1, dir='s', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
+    # The park's west edge. North of Rachel the same road is avenue
+    # Christophe-Colomb.
     dict(name='Avenue du Parc-La Fontaine', pos=1380, lanes=2, dir='two', kind='residential',
          spans=[('Ring road (south)', 'Rue Rachel')]),
-    dict(name='Rue Boyer', pos=1380, lanes=1, dir='s', kind='residential',
+    dict(name='Avenue Christophe-Colomb', pos=1380, lanes=2, dir='two', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
-    dict(name='Rue de Mentana', pos=1465, lanes=1, dir='n', kind='residential',
+    dict(name='Rue Boyer', pos=1460, lanes=1, dir='s', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
-    dict(name='Rue de Brebeuf', pos=1555, lanes=1, dir='s', kind='residential',
+    dict(name='Rue de Mentana', pos=1540, lanes=1, dir='n', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
-    dict(name='Rue Garnier', pos=1645, lanes=1, dir='n', kind='residential',
+    dict(name='Rue de Brebeuf', pos=1620, lanes=1, dir='s', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
-    dict(name='Rue Fabre', pos=1735, lanes=1, dir='s', kind='residential',
+    dict(name='Rue Garnier', pos=1700, lanes=1, dir='n', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
-    dict(name='Rue de Lanaudiere', pos=1825, lanes=1, dir='n', kind='residential',
+    dict(name='Rue Fabre', pos=1780, lanes=1, dir='s', kind='residential',
+         spans=[('Rue Rachel', 'Ring road (north)')]),
+    dict(name='Rue de Lanaudiere', pos=1860, lanes=1, dir='n', kind='residential',
          spans=[('Rue Rachel', 'Ring road (north)')]),
     dict(name='Avenue Papineau', pos=1930, lanes=4, dir='two', kind='boulevard'),
     dict(name='Rue Cartier', pos=2040, lanes=1, dir='s', kind='residential'),
@@ -125,19 +131,24 @@ PLAZAS = [
     dict(name='Monument George-Etienne Cartier', rect=(-75, 540, 0, 640)),
 ]
 
-# Buildings that stand out. levels counts storeys above the street.
+# Buildings that stand out. levels counts storeys above the street. A landmark
+# never covers a road or a sidewalk: the generator leaves those cells alone.
 LANDMARKS = [
-    dict(name='Eglise Saint-Jean-Baptiste', rect=(715, 615, 800, 700), levels=5,
-         wall='wall_stone', tower=(715, 615, 740, 640), tower_levels=6),
-    dict(name='Monument George-Etienne Cartier', rect=(-45, 575, -25, 605), levels=4,
+    # On Rachel, east of Henri-Julien.
+    dict(name='Eglise Saint-Jean-Baptiste', rect=(782, 596, 862, 690), levels=5,
+         wall='wall_stone', tower=(782, 596, 806, 620), tower_levels=6),
+    dict(name='Monument George-Etienne Cartier', rect=(-52, 575, -32, 605), levels=4,
          wall='wall_stone'),
     dict(name='Chalet du parc La Fontaine', rect=(1630, 300, 1700, 345), levels=2,
          wall='wall_stone'),
-    dict(name='Metro Mont-Royal', rect=(975, 950, 1010, 985), levels=2, wall='wall_commercial'),
+    # South side of avenue du Mont-Royal, between Rivard and Berri.
+    dict(name='Metro Mont-Royal', rect=(958, 880, 1022, 932), levels=2, wall='wall_commercial'),
     dict(name='Metro Sherbrooke', rect=(1045, 105, 1085, 140), levels=2, wall='wall_commercial'),
 ]
 
 # Named areas for the game's navigation zones: (name, west, south, east, north).
+# The first one is the main zone and covers the whole map; the others are local
+# areas inside it.
 # GTA2 shows a zone's name from its text file (.gxt) when you drive in; a name
 # that file does not know may show blank. The generator writes these only when
 # asked (--nav-zones).

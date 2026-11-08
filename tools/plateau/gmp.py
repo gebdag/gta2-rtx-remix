@@ -34,7 +34,10 @@ LEFT, RIGHT, UP, DOWN = 1, 2, 4, 8
 # The grid step each green arrow points along.
 ARROW_STEP = {LEFT: (-1, 0), RIGHT: (1, 0), UP: (0, -1), DOWN: (0, 1)}
 
+# A main navigation zone names an area. Main zones must not overlap; a smaller
+# named area inside one is a local navigation zone.
 ZONE_NAVIGATION = 1
+ZONE_LOCAL_NAVIGATION = 15
 
 
 def face(tile, wall=False, rotation=0, flip=False, flat=False):
@@ -81,7 +84,9 @@ class MapWriter:
         indices = tuple(self.add_block(r) for r in records)
         self.cells[y * MAP_W + x] = (offset, indices) if indices else None
 
-    def dmap(self):
+    def dmap(self, min_blocks=0):
+        """min_blocks pads the block list with unused air blocks up to that
+        count. Nothing refers to the padding."""
         pool = []
         where = {}
         base = []
@@ -100,9 +105,11 @@ class MapWriter:
         out += struct.pack('<%dI' % len(base), *base)
         out += struct.pack('<I', len(pool))
         out += struct.pack('<%dI' % len(pool), *pool)
-        out += struct.pack('<I', len(self.blocks))
+        padding = max(0, min_blocks - len(self.blocks))
+        out += struct.pack('<I', len(self.blocks) + padding)
         for record in self.blocks:
             out += record
+        out += AIR_BLOCK * padding
         return bytes(out)
 
 

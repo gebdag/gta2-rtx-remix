@@ -7,7 +7,8 @@ road cell sends traffic somewhere, the road network is one connected loop
 system, buildings stay inside GTA2's eight levels, and pick_tiles.py finds the
 right tiles again in a map it knows the answer for. When a C++ compiler is on
 the PATH it also loads the map with the renderer's own parser and mesh builder
-(tools/dump_block.cpp, audit mode) and checks no block's triangle leaves its cell.
+(tools/dump_block.cpp, audit mode) and checks that no triangle is wider than one
+block, apart from the renderer's own seal under the map.
 """
 import json
 import os
@@ -84,6 +85,35 @@ class PlateauTest(unittest.TestCase):
         self.assertEqual(len(chunks['LGHT']) % 16, 0)
         self.assertGreater(len(chunks['LGHT']) // 16, 500)
 
+    def test_block_list_is_padded(self):
+        """Older renderer builds compare 4000 block records whatever the map
+        holds (dll/src/world_view.cpp, kMatchBlocks)."""
+        self.assertGreaterEqual(len(self.blocks), make_plateau_map.MIN_BLOCKS)
+
+    def test_zones(self):
+        """One main navigation zone over the map; the named areas inside it
+        are local navigation zones."""
+        zone = gmp.read_chunks(self.gmp_path)['ZONE']
+        kinds, at = [], 0
+        while at < len(zone):
+            kinds.append(zone[at])
+            at += 6 + zone[at + 5]
+        self.assertEqual(kinds[0], gmp.ZONE_NAVIGATION)
+        self.assertTrue(all(k == gmp.ZONE_LOCAL_NAVIGATION for k in kinds[1:]))
+
+    def test_no_building_at_the_kerb(self):
+        """Every road has a sidewalk, grass or another road beside it; no
+        building, landmarks included, stands on the kerb."""
+        p = self.plateau
+        for y in range(gmp.MAP_H):
+            for x in range(gmp.MAP_W):
+                if p.mat[p.at(x, y)] != make_plateau_map.ROAD:
+                    continue
+                for dx, dy in gmp.ARROW_STEP.values():
+                    if p.inside(x + dx, y + dy):
+                        self.assertNotEqual(p.mat[p.at(x + dx, y + dy)], make_plateau_map.BUILDING,
+                                            'building on the kerb at %d,%d' % (x + dx, y + dy))
+
     def test_every_cell_has_ground(self):
         for y in range(gmp.MAP_H):
             for x in range(gmp.MAP_W):
@@ -139,18 +169,30 @@ class PlateauTest(unittest.TestCase):
                          % (len(stuck), sorted(stuck)[:5]))
 
     def test_buildings_have_walls(self):
+        """Every storey of every building has a solid wall on each side where
+        the cell beside it is lower, and no wall where it is not."""
         walls = 0
         for y in range(1, gmp.MAP_H - 1):
             for x in range(1, gmp.MAP_W - 1):
-                level, top = self.top_block(x, y)
-                if level <= make_plateau_map.GROUND_LEVEL:
-                    continue
-                self.assertLessEqual(level, 7)
-                left_level, _ = self.top_block(x - 1, y)
-                if left_level < level:
-                    self.assertTrue(top.left & gmp.WALL, 'open wall at %d,%d' % (x, y))
-                    walls += 1
-        self.assertGreater(walls, 1000)
+                offset, indices = self.columns[y][x]
+                for i, index in enumerate(indices):
+                    level = offset + i
+                    if level <= make_plateau_map.GROUND_LEVEL:
+                        continue
+                    self.assertLessEqual(level, 7)
+                    b = self.blocks[index]
+                    for name, (dx, dy) in (('left', (-1, 0)), ('right', (1, 0)),
+                                           ('top', (0, -1)), ('bottom', (0, 1))):
+                        side = getattr(b, name)
+                        beside, _ = self.top_block(x + dx, y + dy)
+                        if beside < level:
+                            self.assertTrue(side & gmp.WALL, 'open %s wall at %d,%d level %d'
+                                            % (name, x, y, level))
+                            walls += 1
+                        else:
+                            self.assertEqual(side, 0, 'hidden %s face at %d,%d level %d'
+                                             % (name, x, y, level))
+        self.assertGreater(walls, 10000)
 
     def test_pick_tiles_finds_the_placeholders(self):
         data = os.path.join(self.dir, 'data')
@@ -161,10 +203,7 @@ class PlateauTest(unittest.TestCase):
         pick_tiles.main([self.dir, '--out', out])
         with open(out) as f:
             tiles = json.load(f)['tiles']
-        expected = make_plateau_map.PLACEHOLDER_PALETTE
-        for key in ('road', 'sidewalk', 'grass', 'water', 'roof', 'wall_brick', 'wall_stone',
-                    'wall_commercial'):
-            self.assertEqual(tiles.get(key), expected[key], key)
+        self.assertEqual(tiles, make_plateau_map.PLACEHOLDER_PALETTE)
         # And the map builds with that palette.
         make_plateau_map.main([os.path.join(self.dir, 'second'), '--palette', out,
                                '--no-preview'])

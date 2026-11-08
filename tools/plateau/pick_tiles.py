@@ -88,8 +88,7 @@ class Style:
         rgba = self.tile(index)
         rgb = rgba[..., :3].reshape(-1, 3).astype(float)
         mean = rgb.mean(0)
-        return dict(mean=mean, spread=float(rgb.std(0).mean()),
-                    transparent=bool((rgba[..., 3] == 0).any()))
+        return dict(mean=mean, spread=float(rgb.std(0).mean()))
 
 
 def surface_counts(columns, blocks):
@@ -101,7 +100,7 @@ def surface_counts(columns, blocks):
             for i in range(len(indices) - 1, -1, -1):
                 b = blocks[indices[i]]
                 tile = b.lid & 0x3FF
-                if tile and tile != 0x3FF:
+                if tile and tile != 0x3FF and not b.lid & gmp.FLAT:
                     top[(x, y)] = (offset + i, b.ground, tile)
                     break
 
@@ -134,7 +133,7 @@ def surface_counts(columns, blocks):
                     continue
                 b = blocks[index]
                 for side in (b.left, b.right, b.top, b.bottom):
-                    if side & gmp.WALL and side & 0x3FF:
+                    if side & gmp.WALL and side & 0x3FF and not side & gmp.FLAT:
                         use['wall'][side & 0x3FF] += 1
     return use, ground
 
@@ -144,8 +143,11 @@ def pick(use, style):
     chosen, why = {}, {}
     taken = set()
 
+    # Colour 0 is see-through only on flat faces, and surface_counts() leaves
+    # flat faces out, so a tile with some colour-0 pixels is still a solid wall
+    # or floor.
     def usable(tile):
-        return 0 < tile < style.count and not style.stats(tile)['transparent']
+        return 0 < tile < style.count
 
     def plainest(counter, key, label):
         """The least patterned of the commonly used ones: plain asphalt rather
@@ -225,8 +227,9 @@ def contact_sheet(style, chosen, path, columns=32, cell=40):
         labels[tile].append(key)
     for i in range(style.count):
         x, y = (i % columns) * cell, (i // columns) * cell
-        img = Image.fromarray(style.tile(i), 'RGBA').resize((cell - 8, cell - 8))
-        sheet.paste(img, (x + 4, y + 2), img)
+        # Drawn opaque: colour 0 is see-through only on flat faces.
+        img = Image.fromarray(style.tile(i)[..., :3].copy(), 'RGB').resize((cell - 8, cell - 8))
+        sheet.paste(img, (x + 4, y + 2))
         draw.text((x + 2, y + cell - 11), str(i), (255, 255, 255))
         if i in labels:
             draw.rectangle([x, y, x + cell - 1, y + cell - 1], outline=(255, 0, 255), width=2)
