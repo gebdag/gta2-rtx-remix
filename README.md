@@ -24,6 +24,14 @@ A Direct3D 9 renderer for GTA2, built for RTX Remix.
 - 60fps possible via FG
 - F4 in game settings panel for adjusting lighting and time of day
 
+## Plateau-Mont-Royal map
+
+`tools/plateau` builds a GTA2 map of Montreal's Plateau-Mont-Royal: the street
+grid from avenue du Parc to rue Cartier and from Sherbrooke to Saint-Joseph,
+Parc La Fontaine, rows of plexes with their lanes, and Montreal's warm street
+lamps. It uses the tiles of your own copy of GTA2. See
+[tools/plateau/README.md](tools/plateau/README.md).
+
 ## Requirements
 
 - GTA2 (built and tested against the freely available v9.6 release; v11.44 should work too, started with gta2.exe)
@@ -57,7 +65,7 @@ dll/        gta2dx9.dll, the renderer
 vid/        gta2dx9_vid.dll, the video device shim
 src/        map, style, mesh, camera and D3D9 renderer code used by the DLL
 package/    release files: settings, registry files, player README, tuned ini files
-tools/      development tools
+tools/      development tools; tools/plateau builds the Plateau-Mont-Royal map
 docs/       research notes
 ```
 
