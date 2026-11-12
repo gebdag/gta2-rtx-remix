@@ -11,3 +11,6 @@ release/
 
 # Local shortcuts
 *.lnk
+
+# Python
+__pycache__/

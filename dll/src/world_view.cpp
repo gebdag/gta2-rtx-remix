@@ -349,8 +349,11 @@ std::map<std::string, std::string> MapStyles(const std::string& dataDir) {
 // identified by matching its live blocks against the .gmp files on disk, and
 // its style looked up in the game's level lists (MapStyles). A map they do not
 // mention is taken to share its style's basename, which every district does.
-std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir,
-                            std::string* mapPath) {
+// liveBlockCount is how many blocks the live map holds (Map::BlockCount after
+// ReadLiveMap): the game's block array is only that long, and a small custom
+// map has far fewer than kMatchBlocks.
+std::string DetectStylePath(const uint8_t* mapObject, size_t liveBlockCount,
+                            const std::string& dataDir, std::string* mapPath) {
     const uint8_t* blocks = *reinterpret_cast<const uint8_t* const*>(mapObject + gta2::kMapObjectBlocksPtr);
     if (!blocks) return {};
 
@@ -362,7 +365,8 @@ std::string DetectStylePath(const uint8_t* mapObject, const std::string& dataDir
     double bestScore = 0.0;
     do {
         const std::vector<uint8_t> fileBlocks = FileBlockArray(dataDir + "\\" + find.cFileName);
-        const size_t common = (std::min)(kMatchBlocks * 12, fileBlocks.size());
+        const size_t common =
+            (std::min)((std::min)(kMatchBlocks, liveBlockCount) * 12, fileBlocks.size());
         if (common < 12) continue;
 
         size_t same = 0;
@@ -771,7 +775,7 @@ bool WorldView::EnsureWorldLoaded() {
     }
 
     std::string mapPath;
-    const std::string stylePath = DetectStylePath(mapObject, dataDir_, &mapPath);
+    const std::string stylePath = DetectStylePath(mapObject, map_.BlockCount(), dataDir_, &mapPath);
     gta2::Style style;
     if (stylePath.empty()) {
         Log("could not identify the district for map object %p", mapObject);
